@@ -1,0 +1,112 @@
+[
+    {
+        "market": "CSCO",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 70.25,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 11.63,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    },
+    {
+        "market": "CSCO",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 70.25,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 12.94,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "buy_limit",
+        "timeframe": "15m",
+        "entry_price": 12.9,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 11.63,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    },
+    {
+        "market": "CSCO",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 72.41,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "CSCO",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 70.25,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 12.75,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    },
+    {
+        "market": "AALG",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 11.63,
+        "volume": 1,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "bybit1"
+    }
+]

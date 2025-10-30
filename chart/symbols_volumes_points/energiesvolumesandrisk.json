@@ -1,0 +1,145 @@
+[
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 57.971,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 60.141,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 60.011,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "15m",
+        "entry_price": 60.036,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 60.049,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 57.971,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "USOUSD",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 60.363,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.001,
+        "tick_value": 1.0,
+        "broker": "bybit1"
+    },
+    {
+        "market": "USOUSD",
+        "limit_order": "buy_limit",
+        "timeframe": "15m",
+        "entry_price": 60.478,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.001,
+        "tick_value": 1.0,
+        "broker": "bybit1"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 59.927,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "US Oil",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 57.971,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.001,
+        "tick_value": 0.001,
+        "broker": "deriv"
+    },
+    {
+        "market": "USOUSD",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 60.328,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.001,
+        "tick_value": 1.0,
+        "broker": "bybit1"
+    },
+    {
+        "market": "USOUSD",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 60.363,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.001,
+        "tick_value": 1.0,
+        "broker": "bybit1"
+    },
+    {
+        "market": "USOUSD",
+        "limit_order": "buy_limit",
+        "timeframe": "15m",
+        "entry_price": 60.478,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.001,
+        "tick_value": 1.0,
+        "broker": "bybit1"
+    }
+]

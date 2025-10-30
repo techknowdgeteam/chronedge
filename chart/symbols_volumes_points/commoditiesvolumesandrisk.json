@@ -1,0 +1,145 @@
+[
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "5m",
+        "entry_price": 36.33,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 35.77,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.72,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.77,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 41.0,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "5m",
+        "entry_price": 36.33,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.72,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.77,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 41.0,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "5m",
+        "entry_price": 36.33,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.72,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 35.77,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "COMUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 41.0,
+        "volume": 2,
+        "riskusd_amount": 2.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    }
+]

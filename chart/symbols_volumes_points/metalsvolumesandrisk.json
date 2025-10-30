@@ -1,0 +1,68 @@
+[
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "1h",
+        "entry_price": 4053.68,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    },
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 4219.07,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    },
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "1h",
+        "entry_price": 4053.68,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    },
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 4219.07,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    },
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "1h",
+        "entry_price": 4053.68,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    },
+    {
+        "market": "XAUUSD",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 4219.07,
+        "volume": 0.01,
+        "riskusd_amount": 16.0,
+        "tick_size": 0.01,
+        "tick_value": 1.0,
+        "broker": "deriv"
+    }
+]

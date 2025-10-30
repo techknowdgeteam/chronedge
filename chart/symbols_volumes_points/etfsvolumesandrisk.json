@@ -1,0 +1,178 @@
+[
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 101.18,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "30m",
+        "entry_price": 100.32,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 100.97,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "1h",
+        "entry_price": 100.09,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 100.34,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 101.18,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 100.97,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "1h",
+        "entry_price": 100.09,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 100.34,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 100.97,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 100.97,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "1h",
+        "entry_price": 100.09,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "AGG.US",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 100.34,
+        "volume": 2,
+        "riskusd_amount": 0.5,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "EEM.US",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 56.11,
+        "volume": 1,
+        "riskusd_amount": 1.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "ARKK.US",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 78.75,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    },
+    {
+        "market": "DIA.US",
+        "limit_order": "buy_limit",
+        "timeframe": "1h",
+        "entry_price": 462.08,
+        "volume": 1,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.01,
+        "tick_value": 0.01,
+        "broker": "deriv"
+    }
+]

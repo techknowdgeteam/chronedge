@@ -1,0 +1,8 @@
+[
+    {
+        "timestamp": "2025-10-10 16:38:45.860510+01:00",
+        "symbol": "CONG",
+        "broker": "DerivSVG-Server-02",
+        "reason": "Symbol not in allowed risk markets"
+    }
+]

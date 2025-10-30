@@ -1,0 +1,134 @@
+[
+    {
+        "market": "AUD Basket",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 865.999,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "AUD Basket",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 865.999,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "EUR Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "5m",
+        "entry_price": 1091.729,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "EUR Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "15m",
+        "entry_price": 1091.802,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "EUR Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 1093.945,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "AUD Basket",
+        "limit_order": "buy_limit",
+        "timeframe": "4h",
+        "entry_price": 865.999,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "EUR Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 1093.945,
+        "volume": 0.01,
+        "riskusd_amount": 4.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "GBP Basket",
+        "limit_order": "buy_limit",
+        "timeframe": "5m",
+        "entry_price": 993.198,
+        "volume": 0.02,
+        "riskusd_amount": 8.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "GBP Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 1004.11,
+        "volume": 0.02,
+        "riskusd_amount": 8.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "GBP Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "30m",
+        "entry_price": 1004.609,
+        "volume": 0.02,
+        "riskusd_amount": 8.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "GBP Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "1h",
+        "entry_price": 1004.11,
+        "volume": 0.02,
+        "riskusd_amount": 8.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    },
+    {
+        "market": "GBP Basket",
+        "limit_order": "sell_limit",
+        "timeframe": "4h",
+        "entry_price": 1001.183,
+        "volume": 0.02,
+        "riskusd_amount": 8.0,
+        "tick_size": 0.001,
+        "tick_value": 0.1,
+        "broker": "deriv"
+    }
+]

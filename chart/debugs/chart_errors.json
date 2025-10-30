@@ -1,0 +1,7 @@
+[
+    {
+        "timestamp": "2025-10-30 21:22:07.510165+01:00",
+        "error": "Failed to initialize MT5: (-10005, 'IPC timeout')",
+        "broker": "DerivSVG-Server-02"
+    }
+]

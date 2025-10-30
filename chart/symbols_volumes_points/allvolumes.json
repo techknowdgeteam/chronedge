@@ -1,0 +1,23 @@
+{
+  "symbols": [
+    "AAL", "AGG.US", "AVAUSD", "APTUSD", "DOTUSD", "ETCUSD", "FILUSD", "IMXUSD", "NEOUSD", "NERUSD",
+    "TONUSD", "TRUUSD", "UNIUSD", "Volatility 150 (1s) Index", "ZECUSD", "AUDNZD", "BAC", "BAY", "DSHUSD",
+    "EEM.US", "FETUSD", "NETH25", "SANUSD", "USOIL", "Volatility 250 (1s) Index", "XMRUSD", "ADAUSD", "AIG",
+    "AIR", "AIRF", "AMAZON", "AMZN", "APEUSD", "ARKK.US", "AUD Basket", "AUDCAD", "AUDCHF", "AUDJPY",
+    "AUDUSD", "AUS200", "BATUSD", "BIIB", "BMW", "BNBUSD", "C", "CADCHF", "CADJPY", "CHFJPY",
+    "CHINA H SHARES", "CISCO", "CITI", "COMUSD", "CONG", "CSCO", "DAL", "DBK", "DEX 1500 DOWN INDEX",
+    "DIS", "EU50", "EUR Basket", "EURAUD", "EURCAD", "EURCHF", "EURGBP", "EURJPY", "EURNZD", "EURUSD",
+    "ERX.US", "FOX", "GBPCAD", "GBPCHF", "GBPJPY", "GBPNZD", "GBPUSD", "IOTUSD", "LTCUSD", "MLNUSD",
+    "NZDCAD", "NZDJPY", "NZDUSD", "SOLUSD", "SP500", "SPI200", "STOXX50", "US SMALL CAP 2000",
+    "US SP 500", "US2000", "US500", "USDCAD", "USDCHF", "USDJPY", "Volatility 75 (1s) Index",
+    "Volatility 75 Index", "XTZUSD", "ZM", "ABNB", "ALGUSD", "ALIBABA", "AMAT", "AMD", "BA", "BABA",
+    "BOEING", "DIA.US", "DRIFT SWITCH INDEX 20", "DRIFT SWITCH INDEX 30", "ETHUSD", "FDX", "FR40",
+    "GBP AUD", "GBP Basket", "GBPAUD", "GOLD RSI PULLBACK INDEX", "LINKUSD", "Volatility 50 Index",
+    "XRPUSD", "AAVEUSD", "BCHUSD", "CRM", "DE30", "DEX 1500 UP INDEX", "DEX 600 DOWN INDEX",
+    "DEX 600 UP INDEX", "DJ30", "DOGUSD", "GER40", "GOLD RSI REBOUND INDEX", "META", "NAS100", "SWI20",
+    "TREK DOWN INDEX", "TREK UP INDEX", "TSLA", "US TECH 100", "US30", "VolSwitch High Vol Index",
+    "VolSwitch Low Vol Index", "Volatility 10 (1s) Index", "Volatility 10 Index", "Volatility 15 (1s) Index",
+    "Volatility 25 Index", "Volatility 30 (1s) Index", "Volatility 100 (1s) Index", "Wall Street 30",
+    "XAUUSD", "XLMUSD"
+  ]
+}
