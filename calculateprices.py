@@ -8,8 +8,8 @@ from collections import defaultdict
 # 1. FOREX
 # ==============================
 def calculate_forex_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\forexvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
 
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd",
@@ -122,8 +122,8 @@ def calculate_forex_sl_tp_markets():
 # 2. SYNTHETICS
 # ==============================
 def calculate_synthetics_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -238,8 +238,8 @@ def calculate_synthetics_sl_tp_markets():
 # 3. CRYPTO
 # ==============================
 def calculate_crypto_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\cryptovolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -354,8 +354,8 @@ def calculate_crypto_sl_tp_markets():
 # 4. BASKET INDICES
 # ==============================
 def calculate_basketindices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\basketindicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -470,8 +470,8 @@ def calculate_basketindices_sl_tp_markets():
 # 5. INDICES
 # ==============================
 def calculate_indices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\indicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -586,8 +586,8 @@ def calculate_indices_sl_tp_markets():
 # 6. METALS
 # ==============================
 def calculate_metals_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\metalsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -702,8 +702,8 @@ def calculate_metals_sl_tp_markets():
 # 7. STOCKS
 # ==============================
 def calculate_stocks_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\stocksvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -818,8 +818,8 @@ def calculate_stocks_sl_tp_markets():
 # 8. ETFs
 # ==============================
 def calculate_etfs_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\etfsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -934,8 +934,8 @@ def calculate_etfs_sl_tp_markets():
 # 9. EQUITIES
 # ==============================
 def calculate_equities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\equitiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1050,8 +1050,8 @@ def calculate_equities_sl_tp_markets():
 # 10. ENERGIES
 # ==============================
 def calculate_energies_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\energiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1166,8 +1166,8 @@ def calculate_energies_sl_tp_markets():
 # 11. COMMODITIES
 # ==============================
 def calculate_commodities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\commoditiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1282,7 +1282,7 @@ def calculate_commodities_sl_tp_markets():
 # PROMOTION FUNCTION
 # ==============================
 def scale_lowerorders_proportionally():
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
@@ -1406,7 +1406,7 @@ def scale_lowerorders_proportionally():
 # CATEGORISE STRATEGY
 # ==============================
 def categorise_strategy():
-    BASE_DIR = Path(r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices")
+    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
     CALC_FILES = {
         "forex": "forexcalculatedprices.json",

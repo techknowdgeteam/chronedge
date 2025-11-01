@@ -7,7 +7,7 @@ brokersdictionary = {
         "SERVER": "DerivSVG-Server-02",
         "ACCOUNT": "demo",
         "STRATEGY": "allorder",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\deriv\derivsymbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv\derivsymbols"
     },
     "deriv1": {
         "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 deriv 1\terminal64.exe",
@@ -16,7 +16,7 @@ brokersdictionary = {
         "SERVER": "DerivSVG-Server-03",
         "ACCOUNT": "demo",
         "STRATEGY": "allorder",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\deriv 1\deriv1symbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 1\deriv1symbols"
     },
     "deriv2": {
         "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 deriv 2\terminal64.exe",
@@ -25,7 +25,7 @@ brokersdictionary = {
         "SERVER": "DerivSVG-Server-03",
         "ACCOUNT": "demo",
         "STRATEGY": "allorder",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\deriv 2\deriv2symbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 2\deriv2symbols"
     },
     "bybit1": {
         "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 bybit 1\terminal64.exe",
@@ -34,6 +34,6 @@ brokersdictionary = {
         "SERVER": "Bybit-Live",
         "ACCOUNT": "demo",
         "STRATEGY": "allorder",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\bybit 1\bybit1symbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\bybit 1\bybit1symbols"
     }
 }

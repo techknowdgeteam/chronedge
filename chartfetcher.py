@@ -12,6 +12,7 @@ import cv2
 from pathlib import Path
 from datetime import datetime
 import calculateprices
+import timeorders
 
 # Brokers configuration
 brokersdictionary = {
@@ -22,7 +23,7 @@ brokersdictionary = {
         "SERVER": "DerivSVG-Server-02",
         "ACCOUNT": "demo",
         "STRATEGY": "both",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\deriv\derivsymbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv\derivsymbols"
     },
     "bybit1": {
         "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 bybit 1\terminal64.exe",
@@ -31,11 +32,11 @@ brokersdictionary = {
         "SERVER": "Bybit-Live",
         "ACCOUNT": "real",
         "STRATEGY": "lowtohigh",
-        "BASE_FOLDER": r"C:\xampp\htdocs\cintel\chart\bybit 1\bybit1symbols"
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\bybit 1\bybit1symbols"
     }
 }
 
-BASE_ERROR_FOLDER = r"C:\xampp\htdocs\cintel\chart\debugs"
+BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\chart\debugs"
 TIMEFRAME_MAP = {
     "5m": mt5.TIMEFRAME_M5,
     "15m": mt5.TIMEFRAME_M15,
@@ -1537,22 +1538,22 @@ def collect_ob_none_oi_data(symbol, symbol_folder, broker_name, base_folder, all
     all_timeframes_data = {tf: [] for tf in TIMEFRAME_MAP.keys()}
     allmarkets_json_path = os.path.join(base_folder, "allmarkets_limitorders.json")
     allnoordermarkets_json_path = os.path.join(base_folder, "allnoordermarkets.json")
-    allsymbols_json_path = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
-    symbols_match_json_path = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\symbols_match.json"  # <-- NEW
+    allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
+    symbols_match_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols_match.json"  # <-- NEW
 
     # Paths for market-type-specific JSONs
     market_type_paths = {
-        "forex": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\forexvolumesandrisk.json",
-        "stocks": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\stocksvolumesandrisk.json",
-        "indices": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\indicesvolumesandrisk.json",
-        "synthetics": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
-        "commodities": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
-        "crypto": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\cryptovolumesandrisk.json",
-        "equities": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
-        "energies": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\energiesvolumesandrisk.json",
-        "etfs": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\etfsvolumesandrisk.json",
-        "basket_indices": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
-        "metals": r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+        "forex": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json",
+        "stocks": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json",
+        "indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json",
+        "synthetics": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
+        "commodities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
+        "crypto": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json",
+        "equities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
+        "energies": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json",
+        "etfs": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json",
+        "basket_indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
+        "metals": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
     }
 
     # Initialize or load existing allmarkets_limitorders.json
@@ -1986,11 +1987,11 @@ def place_demo_orders():
     r"""
     Place demo pending orders with full diagnostics and auto-corrections.
     - Only 1 BUY_LIMIT and 1 SELL_LIMIT per symbol
-    - Failed → ordersissues.json
-    - Skipped (price past / duplicate / running position) → logged + reported, NOT in issues
-    - Also: no new pending if a position of same direction is already running
+    - Failed → ordersissues.json + report JSON (NO LOG)
+    - Skipped (price past / duplicate / running position) → logged + reported
+    - No new pending if same-direction position is running
     """
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     REPORT_SUFFIX = "forex_order_report.json"
     ISSUES_FILE = "ordersissues.json"
 
@@ -2294,7 +2295,6 @@ def place_demo_orders():
                         if can_place:
                             result, used_filling = _send_with_fallback(request, symbol_info)
                         else:
-                            # Simulate failed result object
                             result = type('obj', (), {
                                 'retcode': 10000,
                                 'comment': reason,
@@ -2302,7 +2302,7 @@ def place_demo_orders():
                             })()
                             used_filling = "N/A"
 
-                        # === CRITICAL FIX: Ensure result is never None before accessing .retcode ===
+                        # === CRITICAL FIX: Ensure result is never None ===
                         if result is None:
                             status = "FAILED"
                             final_reason = "order_send returned None (possible connection issue)"
@@ -2341,25 +2341,24 @@ def place_demo_orders():
                         except Exception as e:
                             log_and_print(f"{broker_name}: Failed to write report {symbol}: {e}", "ERROR")
 
-                        log_msg = f"{broker_name} | Risk ${risk_usd}: {symbol} {order_type_str} @ {price} → SL {sl_price} | TP {tp_price} | {status}"
-                        if status == "FAILED":
-                            log_msg += f" | {final_reason}"
-                        if used_filling and used_filling != "N/A":
-                            log_msg += f" (filling: {used_filling})"
-                        log_and_print(log_msg, "INFO" if status == "SUCCESS" else "WARNING")
-
-                        if status == "FAILED":
+                        # === LOGGING: SUCCESS & SKIPPED → LOGGED, FAILED → SILENT (only in JSON) ===
+                        if status == "SUCCESS":
+                            log_msg = f"{broker_name} | Risk ${risk_usd}: {symbol} {order_type_str} @ {price} → SL {sl_price} | TP {tp_price} | SUCCESS"
+                            if used_filling and used_filling != "N/A":
+                                log_msg += f" (filling: {used_filling})"
+                            log_and_print(log_msg, "INFO")
+                            total_placed += 1
+                        else:  # FAILED
                             total_failed += 1
                             issues_list.append({"symbol": symbol, "diagnosed_reason": final_reason})
-                        else:
-                            total_placed += 1
+                            # NO log_and_print() for FAILED orders
 
                     except Exception as e:
                         log_and_print(f"{broker_name}: Exception placing {symbol} → {e}", "ERROR")
                         total_failed += 1
                         issues_list.append({"symbol": symbol, "diagnosed_reason": f"Exception: {e}"})
 
-        # ---- Save issues ----
+        # ---- Save issues (only failed orders) ----
         issues_file = Path(BASE_INPUT_DIR) / broker_name / ISSUES_FILE
         try:
             existing_issues = json.load(issues_file.open("r", encoding="utf-8")) if issues_file.exists() else []
@@ -2379,15 +2378,16 @@ def place_demo_orders():
         )
 
     log_and_print("All demo brokers processed successfully.", "SUCCESS")
-
+    
 def place_real_orders():
     r"""
     Place real account pending orders with balance-based risk selection.
     - Only 1 BUY_LIMIT and 1 SELL_LIMIT per symbol
     - Strategy-aware price optimisation (lowtohigh / hightolow)
     - No new pending if same-direction position is running
+    - FAILED orders → silent (only in JSON + issues file)
     """
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     REPORT_SUFFIX = "forex_order_report.json"
     ISSUES_FILE = "ordersissues.json"
 
@@ -2758,23 +2758,24 @@ def place_real_orders():
                 except Exception as e:
                     log_and_print(f"{broker_name}: Failed to write report {symbol}: {e}", "ERROR")
 
-                log_msg = f"{broker_name} | ${risk_usd} | {symbol} {order_type_str} @ {price} → SL {sl_price} | TP {tp_price} | {status}"
-                if status == "FAILED": log_msg += f" | {final_reason}"
-                if used_filling and used_filling != "N/A": log_msg += f" (filling: {used_filling})"
-                log_and_print(log_msg, "INFO" if status == "SUCCESS" else "WARNING")
-
-                if status == "FAILED":
+                # === LOGGING: SUCCESS → LOGGED, FAILED → SILENT (only JSON) ===
+                if status == "SUCCESS":
+                    log_msg = f"{broker_name} | ${risk_usd} | {symbol} {order_type_str} @ {price} → SL {sl_price} | TP {tp_price} | SUCCESS"
+                    if used_filling and used_filling != "N/A":
+                        log_msg += f" (filling: {used_filling})"
+                    log_and_print(log_msg, "INFO")
+                    total_placed += 1
+                else:  # FAILED
                     total_failed += 1
                     issues_list.append({"symbol": symbol, "diagnosed_reason": final_reason})
-                else:
-                    total_placed += 1
+                    # NO log_and_print() for FAILED orders
 
             except Exception as e:
                 log_and_print(f"{broker_name}: Exception placing {symbol} → {e}", "ERROR")
                 total_failed += 1
                 issues_list.append({"symbol": symbol, "diagnosed_reason": f"Exception: {e}"})
 
-        # === Save issues ===
+        # === Save issues (only failed orders) ===
         issues_file = calc_file.parent / ISSUES_FILE
         try:
             existing_issues = json.load(issues_file.open("r", encoding="utf-8")) if issues_file.exists() else []
@@ -2790,7 +2791,7 @@ def place_real_orders():
         )
 
     log_and_print("All real brokers processed.", "SUCCESS")
-
+    
 def deduplicate_pending_orders():
     r"""
     Deduplicate pending BUY_LIMIT / SELL_LIMIT orders.
@@ -2802,7 +2803,7 @@ def deduplicate_pending_orders():
       5. When multiple pendings exist → use STRATEGY (lowtohigh/hightolow) to keep best price
          or keep oldest (lowest ticket) if no strategy.
     """
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     DEDUP_REPORT = "dedup_report.json"
     ISSUES_FILE = "ordersissues.json"
 
@@ -3035,7 +3036,7 @@ def filterout_overleveragetrades(demo):
         log_and_print(f"Invalid 'demo' value: {demo}. Expected bool. Using True.", "WARNING")
         demo = True
 
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\cintel\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     ISSUES_FILE = "ordersissues.json"
     OVERLEVERAGE_REPORT = "overleverage_report.json"
 
@@ -3390,6 +3391,213 @@ def filterout_overleveragetrades(demo):
 
     log_and_print("All brokers filtered for over-leverage and low balance.", "SUCCESS")
 
+def BreakevenRunningPositions():
+    r"""
+    Staged Breakeven:
+      • Ratio 1 → SL to 0.25 (actual price shown)
+      • Ratio 2 → SL to 0.50 (actual price shown)
+    Clean logs, full precision, MT5-safe.
+    """
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    BREAKEVEN_REPORT = "breakeven_report.json"
+    ISSUES_FILE = "ordersissues.json"
+
+    # === BREAKEVEN STAGES ===
+    BE_STAGE_1 = 0.25   # SL moves here at ratio 1
+    BE_STAGE_2 = 0.50   # SL moves here at ratio 2
+    RATIO_1 = 1.0
+    RATIO_2 = 2.0
+
+    # === Helper: Round to symbol digits ===
+    def _round_price(price, symbol):
+        digits = mt5.symbol_info(symbol).digits
+        return round(price, digits)
+
+    # === Helper: Price at ratio ===
+    def _ratio_price(entry, sl, tp, ratio, is_buy):
+        risk = abs(entry - sl) or 1e-9
+        return entry + risk * ratio * (1 if is_buy else -1)
+
+    # === Helper: Modify SL ===
+    def _modify_sl(pos, new_sl_raw):
+        new_sl = _round_price(new_sl_raw, pos.symbol)
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": pos.symbol,
+            "position": pos.ticket,
+            "sl": new_sl,
+            "tp": pos.tp,
+            "magic": pos.magic,
+            "comment": pos.comment
+        }
+        return mt5.order_send(req)
+
+    # === Helper: Print block ===
+    def _log_block(lines):
+        log_and_print("\n".join(lines), "INFO")
+
+    # ------------------------------------------------------------------ #
+    for broker_name, cfg in brokersdictionary.items():
+        # ---- MT5 Connection ------------------------------------------------
+        if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
+                              password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
+            log_and_print(f"{broker_name}: MT5 init failed", "ERROR")
+            continue
+        if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
+            log_and_print(f"{broker_name}: MT5 login failed", "ERROR")
+            mt5.shutdown()
+            continue
+
+        broker_dir = Path(BASE_INPUT_DIR) / broker_name
+        report_path = broker_dir / BREAKEVEN_REPORT
+        existing_report = json.load(report_path.open("r", encoding="utf-8")) if report_path.exists() else []
+
+        issues = []
+        now = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f+01:00")
+        updated = pending_info = 0
+
+        positions = mt5.positions_get() or []
+        pending   = mt5.orders_get()   or []
+
+        # ---- Group pending orders by symbol ----
+        pending_by_sym = {}
+        for o in pending:
+            if o.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
+                continue
+            pending_by_sym.setdefault(o.symbol, {})[o.type] = {
+                "price": o.price_open, "sl": o.sl, "tp": o.tp
+            }
+
+        # ==================================================================
+        # === PROCESS RUNNING POSITIONS ===
+        # ==================================================================
+        for pos in positions:
+            if pos.sl == 0 or pos.tp == 0:
+                continue
+
+            sym = pos.symbol
+            tick = mt5.symbol_info_tick(sym)
+            info = mt5.symbol_info(sym)
+            if not tick or not info:
+                continue
+
+            cur_price = tick.ask if pos.type == mt5.ORDER_TYPE_BUY else tick.bid
+            is_buy = pos.type == mt5.ORDER_TYPE_BUY
+            typ = "BUY" if is_buy else "SELL"
+
+            # Key levels
+            r1_price = _ratio_price(pos.price_open, pos.sl, pos.tp, RATIO_1, is_buy)
+            r2_price = _ratio_price(pos.price_open, pos.sl, pos.tp, RATIO_2, is_buy)
+            be_025   = _ratio_price(pos.price_open, pos.sl, pos.tp, BE_STAGE_1, is_buy)
+            be_050   = _ratio_price(pos.price_open, pos.sl, pos.tp, BE_STAGE_2, is_buy)
+
+            stage1 = (cur_price >= r1_price) if is_buy else (cur_price <= r1_price)
+            stage2 = (cur_price >= r2_price) if is_buy else (cur_price <= r2_price)
+
+            # Base block
+            block = [
+                f"┌─ {broker_name} ─ {sym} ─ {typ} (ticket {pos.ticket})",
+                f"│ Entry : {pos.price_open:.{info.digits}f}   SL : {pos.sl:.{info.digits}f}   TP : {pos.tp:.{info.digits}f}",
+                f"│ Now   : {cur_price:.{info.digits}f}"
+            ]
+
+            # === STAGE 2: SL to 0.50 ===
+            if stage2 and abs(pos.sl - be_050) > info.point:
+                res = _modify_sl(pos, be_050)
+                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                    block += [
+                        f"│ BE @ 0.25 → {be_025:.{info.digits}f}",
+                        f"│ BE @ 0.50 → {be_050:.{info.digits}f}  ← SL MOVED",
+                        f"└─ All left to market"
+                    ]
+                    updated += 1
+                else:
+                    issues.append({"symbol": sym, "diagnosed_reason": "SL modify failed (stage 2)"})
+                    block.append(f"└─ SL move FAILED")
+                _log_block(block)
+                continue
+
+            # === STAGE 1: SL to 0.25 ===
+            if stage1 and abs(pos.sl - be_025) > info.point:
+                res = _modify_sl(pos, be_025)
+                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                    block += [
+                        f"│ BE @ 0.25 → {be_025:.{info.digits}f}  ← SL MOVED",
+                        f"│ Waiting ratio 2 @ {r2_price:.{info.digits}f} → BE @ 0.50 → {be_050:.{info.digits}f}"
+                    ]
+                    updated += 1
+                else:
+                    issues.append({"symbol": sym, "diagnosed_reason": "SL modify failed (stage 1)"})
+                    block.append(f"└─ SL move FAILED")
+                _log_block(block)
+                continue
+
+            # === STAGE 1 REACHED, WAITING STAGE 2 ===
+            if stage1:
+                block += [
+                    f"│ BE @ 0.25 → {be_025:.{info.digits}f}",
+                    f"│ Waiting ratio 2 @ {r2_price:.{info.digits}f} → BE @ 0.50 → {be_050:.{info.digits}f}"
+                ]
+            # === WAITING STAGE 1 ===
+            else:
+                block += [
+                    f"│ Waiting ratio 1 @ {r1_price:.{info.digits}f} → BE @ 0.25 → {be_025:.{info.digits}f}"
+                ]
+
+            block.append("")
+            _log_block(block)
+
+        # ==================================================================
+        # === PROCESS PENDING ORDERS (INFO ONLY) ===
+        # ==================================================================
+        for sym, orders in pending_by_sym.items():
+            for otype, o in orders.items():
+                if o["sl"] == 0 or o["tp"] == 0:
+                    continue
+                info = mt5.symbol_info(sym)
+                if not info:
+                    continue
+                is_buy = otype == mt5.ORDER_TYPE_BUY_LIMIT
+                typ = "BUY_LIMIT" if is_buy else "SELL_LIMIT"
+
+                r1_price = _ratio_price(o["price"], o["sl"], o["tp"], RATIO_1, is_buy)
+                r2_price = _ratio_price(o["price"], o["sl"], o["tp"], RATIO_2, is_buy)
+                be_025   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_1, is_buy)
+                be_050   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_2, is_buy)
+
+                block = [
+                    f"┌─ {broker_name} ─ {sym} ─ PENDING {typ}",
+                    f"│ Entry : {o['price']:.{info.digits}f}   SL : {o['sl']:.{info.digits}f}   TP : {o['tp']:.{info.digits}f}",
+                    f"│ Target 1 → {r1_price:.{info.digits}f}  |  BE @ 0.25 → {be_025:.{info.digits}f}",
+                    f"│ Target 2 → {r2_price:.{info.digits}f}  |  BE @ 0.50 → {be_050:.{info.digits}f}",
+                    f"└─ Order not running – waiting…"
+                ]
+                _log_block(block)
+                pending_info += 1
+
+        # === SAVE REPORT & ISSUES ===
+        try:
+            with report_path.open("w", encoding="utf-8") as f:
+                json.dump(existing_report, f, indent=2)
+        except Exception as e:
+            log_and_print(f"{broker_name}: report write error – {e}", "ERROR")
+
+        issues_path = broker_dir / ISSUES_FILE
+        try:
+            cur_issues = json.load(issues_path.open("r", encoding="utf-8")) if issues_path.exists() else []
+            with issues_path.open("w", encoding="utf-8") as f:
+                json.dump(cur_issues + issues, f, indent=2)
+        except Exception as e:
+            log_and_print(f"{broker_name}: issues write error – {e}", "ERROR")
+
+        mt5.shutdown()
+        log_and_print(
+            f"{broker_name}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
+            "SUCCESS"
+        )
+
+    log_and_print("All brokers breakeven processed.", "SUCCESS")  
+
 def _write_global_error_report(base_dir, risk_folders, error_msg):
     for folder_name in risk_folders.values():
         folder = Path(base_dir) / folder_name
@@ -3420,6 +3628,23 @@ def calc_and_placeorders():
     place_real_orders()
     deduplicate_pending_orders()
     filterout_overleveragetrades(demo=False) 
+    BreakevenRunningPositions()
+
+def time_orders():
+    """Run the updateorders script for M5 timeframe."""
+    try:
+        timeorders.main()
+        print("updated time orders")
+    except Exception as e:
+        print(f"Error updating time orders {e}")
+
+def current_time():
+    """Run the updateorders script for M5 timeframe."""
+    try:
+        timeorders.current_time()
+        print("current time checked")
+    except Exception as e:
+        print(f"Error checking current time {e}")
 
 
 def fetch_charts_all_brokers(
@@ -3427,219 +3652,378 @@ def fetch_charts_all_brokers(
     neighborcandles_left,
     neighborcandles_right
 ):
-    """Main function to fetch OHLCV data, save charts, crop them, apply arrow detection, save candle details, and collect ob_none_oi_data for symbols in symbolsmatch.json, processing one symbol per market category per broker in a round-robin fashion until all symbols are exhausted."""
-    error_log = []
-    log_and_print("Starting chart generation process for all brokers with symbols from symbolsmatch.json, processing one symbol per market category per round until all symbols are exhausted", "INFO")
+    """
+    Main function to fetch OHLCV data, save charts, crop them, apply arrow detection,
+    save candle details, and collect ob_none_oi_data for symbols in symbolsmatch.json.
 
-    # Load symbolsmatch.json
-    symbolsmatch_path = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\symbolsmatch.json"
-    try:
-        with open(symbolsmatch_path, 'r') as f:
-            symbolsmatch_data = json.load(f)
-        log_and_print(f"Loaded symbolsmatch.json from {symbolsmatch_path}", "INFO")
-    except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to load symbolsmatch.json: {str(e)}",
-            "broker": "none"
-        })
-        save_errors(error_log)
-        log_and_print(f"Failed to load symbolsmatch.json: {str(e)}", "ERROR")
-        return False
+    NEW BEHAVIOR:
+    - Infinite loop
+    - First execution: Run full fetch + time_orders() unconditionally
+    - Every loop: Run current_time()
+    - Only run time_orders() + full fetch when current time >= next_schedule
+    - BREAKEVEN runs EVERY 10 SECONDS in background thread (independent)
+    """
+    import time
+    import json
+    import os
+    from datetime import datetime
+    import pytz
+    import threading
+    import traceback
 
-    # Load allsymbolsvolumesandrisk.json to map symbols to market categories
-    allsymbols_json_path = r"C:\xampp\htdocs\cintel\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
-    symbol_to_category = {}
-    try:
-        with open(allsymbols_json_path, 'r') as f:
-            allsymbols_data = json.load(f)
-        for risk_key, markets in allsymbols_data.items():
-            for mkt_type in ["stocks", "indices", "commodities", "synthetics", "forex", "crypto", "equities", "energies", "etfs", "basket_indices", "metals"]:
-                for item in markets.get(mkt_type, []):
-                    symbol_to_category[item["symbol"]] = mkt_type
-        log_and_print(f"Loaded symbol-to-category mapping from {allsymbols_json_path} with {len(symbol_to_category)} symbols", "INFO")
-    except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to load {allsymbols_json_path}: {str(e)}",
-            "broker": "none"
-        })
-        save_errors(error_log)
-        log_and_print(f"Failed to load {allsymbols_json_path}: {str(e)}", "ERROR")
-        return False
+    # File paths
+    current_time_path = r"C:\xampp\htdocs\chronedge\current_time.json"
+    fullorders_path = r"C:\xampp\htdocs\chronedge\fullordersschedules.json"
 
-    # Create a mapping for broker names (remove digits)
-    broker_name_mapping = {
-        "deriv": "deriv",
-        "deriv1": "deriv",
-        "deriv2": "deriv",
-        "bybit1": "bybit",
-        "exness1": "exness"
-    }
+    # =============================================
+    # BREAKEVEN THREAD: Runs every 10 seconds (NON-STOP)
+    # =============================================
+    def breakeven_worker():
+        while True:
+            try:
+                log_and_print("Breakeven check (every 10s)...", "INFO")
+                BreakevenRunningPositions()
+                log_and_print("Breakeven check completed.", "INFO")
+            except Exception as e:
+                log_and_print(f"BREAKEVEN THREAD ERROR: {e}\n{traceback.format_exc()}", "CRITICAL")
+            time.sleep(10)  # Every 10 seconds
 
-    # Get symbols for each broker from symbolsmatch.json and group by market category
-    broker_category_symbols = {}
-    all_categories = ["stocks", "forex", "crypto", "synthetics", "indices", "commodities", "equities", "energies", "etfs", "basket_indices", "metals"]
-    for broker_name, config in brokersdictionary.items():
-        mapped_broker = broker_name_mapping.get(broker_name, broker_name)
-        broker_category_symbols[broker_name] = {cat: [] for cat in all_categories}
-        
-        # Initialize MT5 to get available symbols
-        log_and_print(f"Initializing MT5 for broker: {broker_name}", "INFO")
-        success, init_errors = initialize_mt5(
-            config["TERMINAL_PATH"],
-            config["LOGIN_ID"],
-            config["PASSWORD"],
-            config["SERVER"]
-        )
-        error_log.extend(init_errors)
-        if not success:
-            log_and_print(f"MT5 initialization failed for {broker_name}, skipping", "ERROR")
-            mt5.shutdown()
-            continue
+    # Start breakeven thread immediately
+    breakeven_thread = threading.Thread(target=breakeven_worker, daemon=True)
+    breakeven_thread.start()
+    log_and_print("Breakeven background thread started (every 10s)", "SUCCESS")
 
-        all_symbols, sym_errors = get_symbols()
-        error_log.extend(sym_errors)
-        mt5.shutdown()
+    # =============================================
+    # MAIN LOOP (10-minute schedule waits)
+    # =============================================
+    is_first_execution = True
 
-        # Filter symbols and assign to categories
-        for symbol_entry in symbolsmatch_data.get("main_symbols", []):
-            broker_specific_symbols = symbol_entry.get(mapped_broker, [])
-            for symbol in broker_specific_symbols:
-                if symbol in all_symbols:
-                    category = symbol_to_category.get(symbol)
-                    if category and category in all_categories:
-                        if symbol not in broker_category_symbols[broker_name][category]:
-                            broker_category_symbols[broker_name][category].append(symbol)
-        
-        # Log the number of symbols per category
-        for category in all_categories:
-            log_and_print(f"Broker {broker_name} has {len(broker_category_symbols[broker_name][category])} symbols in {category}: {broker_category_symbols[broker_name][category]}", "INFO")
+    while True:
+        error_log = []
+        log_and_print("Starting new cycle of fetch_charts_all_brokers...", "INFO")
 
-    # Check if any symbols were found
-    if not any(any(symbols) for broker, categories in broker_category_symbols.items() for symbols in categories.values()):
-        log_and_print("No matched symbols found for any broker in symbolsmatch.json, aborting", "ERROR")
-        save_errors(error_log)
-        return False
+        try:
+            # === STEP 1: ALWAYS RUN current_time() ===
+            try:
+                current_time()
+                log_and_print("current time checked", "INFO")
+            except Exception as e:
+                log_and_print(f"Error in current_time(): {e}", "ERROR")
 
-    # Clear chart folders for all brokers
-    for broker_name, config in brokersdictionary.items():
-        log_and_print(f"Clearing chart folder for broker: {broker_name}", "INFO")
-        success_clear, clear_errors = clear_chart_folder(config["BASE_FOLDER"])
-        error_log.extend(clear_errors)
-        if not success_clear:
-            log_and_print(f"Failed to clear chart folder for {broker_name}, continuing", "ERROR")
-
-    # Initialize remaining symbols for each broker and category
-    remaining_symbols = {
-        broker: {cat: symbols.copy() for cat, symbols in categories.items()}
-        for broker, categories in broker_category_symbols.items()
-    }
-    broker_category_indices = {
-        broker: {cat: 0 for cat in all_categories}
-        for broker in broker_category_symbols.keys()
-    }
-
-    # Process one symbol from each category across all brokers until all symbols are exhausted
-    round_number = 1
-    while any(any(remaining_symbols[broker][cat] for cat in all_categories) for broker in broker_category_symbols.keys()):
-        log_and_print(f"Starting round {round_number} of symbol processing", "INFO")
-        for category in all_categories:
-            for broker_name in broker_category_symbols.keys():
-                if not remaining_symbols[broker_name][category]:
-                    continue
-
-                current_index = broker_category_indices[broker_name][category]
-                if current_index >= len(remaining_symbols[broker_name][category]):
-                    remaining_symbols[broker_name][category] = []  # Mark category as exhausted
-                    continue
-
-                symbol = remaining_symbols[broker_name][category][current_index]
-
-                config = brokersdictionary[broker_name]
-                success, init_errors = initialize_mt5(
-                    config["TERMINAL_PATH"],
-                    config["LOGIN_ID"],
-                    config["PASSWORD"],
-                    config["SERVER"]
-                )
-                error_log.extend(init_errors)
-                if not success:
-                    log_and_print(f"MT5 initialization failed for {broker_name} while processing {symbol} ({category}), skipping", "ERROR")
-                    mt5.shutdown()
-                    continue
-
-                log_and_print(f"Processing symbol {symbol} ({category}) for broker: {broker_name} in round {round_number}", "INFO")
-                symbol_folder = os.path.join(config["BASE_FOLDER"], symbol.replace(' ', '_'))
-                os.makedirs(symbol_folder, exist_ok=True)
-
-                for timeframe_str, mt5_timeframe in TIMEFRAME_MAP.items():
-                    log_and_print(f"Processing timeframe: {timeframe_str} for {symbol} ({category})", "INFO")
-                    timeframe_folder = os.path.join(symbol_folder, timeframe_str)
-                    os.makedirs(timeframe_folder, exist_ok=True)
-
-                    df, data_errors = fetch_ohlcv_data(symbol, mt5_timeframe, bars)
-                    error_log.extend(data_errors)
-                    if df is None:
-                        continue
-
-                    df['symbol'] = symbol
-                    # Generate chart and get PH/PL labels
-                    chart_path, chart_errors, ph_labels, pl_labels = generate_and_save_chart(
-                        df, symbol, timeframe_str, timeframe_folder,
-                        neighborcandles_left, neighborcandles_right
-                    )
-                    error_log.extend(chart_errors)
-
-                    # Save candle data with PH/PL labels
-                    candle_errors = save_candle_data(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels)
-                    error_log.extend(candle_errors)
-
-                    if chart_path:
-                        crop_errors = crop_chart(chart_path, symbol, timeframe_str, timeframe_folder)
-                        error_log.extend(crop_errors)
-                    log_and_print("", "INFO")
-
-                # Collect ob_none_oi_data for all timeframes of the current symbol
-                collect_errors = collect_ob_none_oi_data(symbol, symbol_folder, broker_name, config["BASE_FOLDER"], broker_category_symbols[broker_name][category])
-                error_log.extend(collect_errors)
-
-                # === RUN SL/TP CALCULATOR AFTER EVERY SYMBOL (ANY MARKET TYPE) ===
-                log_and_print(f"Running calc_and_placeorders() for symbol: {symbol} ({category})", "INFO")
+            # === STEP 2: LOAD CURRENT TIME ===
+            current_24h = "00:00"
+            if os.path.exists(current_time_path):
                 try:
-                    calc_and_placeorders()
-                    log_and_print(f"SL/TP calculator finished for {symbol}", "SUCCESS")
+                    with open(current_time_path, 'r') as f:
+                        current_data = json.load(f)
+                    current_24h = current_data.get("time_24hour", "00:00")
+                    log_and_print(f"Current time: {current_24h}", "INFO")
+                except Exception as e:
+                    log_and_print(f"Failed to read current_time.json: {e}", "WARNING")
+                    current_24h = "00:00"
+            else:
+                log_and_print("current_time.json not found", "WARNING")
+
+            # === STEP 3: LOAD NEXT SCHEDULE ===
+            schedule_time = "00:00"
+            schedule_date = "N/A"
+            if os.path.exists(fullorders_path):
+                try:
+                    with open(fullorders_path, 'r') as f:
+                        schedule_data = json.load(f)
+                    next_schedule = schedule_data.get("next_schedule", {})
+                    schedule_time = next_schedule.get("time_24hour", "00:00")
+                    schedule_date = next_schedule.get("date", "N/A")
+                    log_and_print(f"Next order schedule: {schedule_time} on {schedule_date}", "INFO")
+                except Exception as e:
+                    log_and_print(f"Failed to read fullordersschedules.json: {e}", "WARNING")
+            else:
+                log_and_print("fullordersschedules.json not found", "WARNING")
+
+            # === HELPER: Convert HH:MM to minutes ===
+            def time_to_minutes(t):
+                try:
+                    h, m = map(int, t.split(':'))
+                    return h * 60 + m
+                except:
+                    return 0
+
+            current_minutes = time_to_minutes(current_24h)
+            schedule_minutes = time_to_minutes(schedule_time)
+
+            # === STEP 4: DECIDE WHETHER TO RUN FULL PROCESS ===
+            should_run_full = False
+            if is_first_execution:
+                log_and_print("Executing on no rules on first loop", "INFO")
+                should_run_full = True
+                try:
+                    time_orders()
+                    log_and_print("updated time orders", "INFO")
+                except Exception as e:
+                    log_and_print(f"Error in time_orders(): {e}", "ERROR")
+                is_first_execution = False
+
+            elif current_minutes >= schedule_minutes:
+                log_and_print(f"Current time {current_24h} >= Schedule {schedule_time}. Triggering full run + time_orders()", "INFO")
+                should_run_full = True
+                try:
+                    time_orders()
+                    log_and_print("updated time orders", "INFO")
+                except Exception as e:
+                    log_and_print(f"Error in time_orders(): {e}", "ERROR")
+            else:
+                # NOT TIME YET → just wait
+                time_diff = schedule_minutes - current_minutes
+                hours_left = time_diff // 60
+                mins_left = time_diff % 60
+                log_and_print(f"check current time: {current_24h}", "INFO")
+                log_and_print(f"order time: {schedule_time}", "INFO")
+                log_and_print(f"time_left: {hours_left}h {mins_left}m", "INFO")
+                log_and_print("will check in the next 10 mins", "INFO")
+                time.sleep(600)
+                continue  # Skip full fetch
+
+            # === STEP 5: FULL CHART FETCH PROCESS (ONLY IF SHOULD RUN) ===
+            if should_run_full:
+                log_and_print("Starting chart generation process for all brokers with symbols from symbolsmatch.json, processing one symbol per market category per round until all symbols are exhausted", "INFO")
+
+                # Load symbolsmatch.json
+                symbolsmatch_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbolsmatch.json"
+                try:
+                    with open(symbolsmatch_path, 'r') as f:
+                        symbolsmatch_data = json.load(f)
+                    log_and_print(f"Loaded symbolsmatch.json from {symbolsmatch_path}", "INFO")
                 except Exception as e:
                     error_log.append({
                         "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                        "error": f"calc_and_placeorders() failed for {symbol}: {str(e)}",
-                        "broker": broker_name
+                        "error": f"Failed to load symbolsmatch.json: {str(e)}",
+                        "broker": "none"
                     })
-                    log_and_print(f"SL/TP calculator failed for {symbol}: {str(e)}", "ERROR")
+                    save_errors(error_log)
+                    log_and_print(f"Failed to load symbolsmatch.json: {str(e)}", "ERROR")
+                    time.sleep(600)
+                    continue
 
-                mt5.shutdown()
-                log_and_print("", "INFO")
-                broker_category_indices[broker_name][category] += 1
+                # Load allsymbolsvolumesandrisk.json to map symbols to market categories
+                allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
+                symbol_to_category = {}
+                try:
+                    with open(allsymbols_json_path, 'r') as f:
+                        allsymbols_data = json.load(f)
+                    for risk_key, markets in allsymbols_data.items():
+                        for mkt_type in ["stocks", "indices", "commodities", "synthetics", "forex", "crypto", "equities", "energies", "etfs", "basket_indices", "metals"]:
+                            for item in markets.get(mkt_type, []):
+                                symbol_to_category[item["symbol"]] = mkt_type
+                    log_and_print(f"Loaded symbol-to-category mapping from {allsymbols_json_path} with {len(symbol_to_category)} symbols", "INFO")
+                except Exception as e:
+                    error_log.append({
+                        "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                        "error": f"Failed to load {allsymbols_json_path}: {str(e)}",
+                        "broker": "none"
+                    })
+                    save_errors(error_log)
+                    log_and_print(f"Failed to load {allsymbols_json_path}: {str(e)}", "ERROR")
+                    time.sleep(600)
+                    continue
 
-        round_number += 1
+                # Create a mapping for broker names (remove digits)
+                broker_name_mapping = {
+                    "deriv": "deriv",
+                    "deriv1": "deriv",
+                    "deriv2": "deriv",
+                    "bybit1": "bybit",
+                    "exness1": "exness"
+                }
 
-    # === FINAL RUN: CALCULATE SL/TP FOR ALL MARKETS ===
-    log_and_print("Running FINAL calc_and_placeorders() for ALL markets...", "INFO")
-    try:
-        calc_and_placeorders()
-        log_and_print("FINAL SL/TP calculator completed!", "SUCCESS")
-    except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Final calc_and_placeorders() failed: {str(e)}",
-            "broker": "all"
-        })
-        log_and_print(f"Final SL/TP calculator failed: {str(e)}", "ERROR")
+                # Get symbols for each broker from symbolsmatch.json and group by market category
+                broker_category_symbols = {}
+                all_categories = ["stocks", "forex", "crypto", "synthetics", "indices", "commodities", "equities", "energies", "etfs", "basket_indices", "metals"]
+                for broker_name, config in brokersdictionary.items():
+                    mapped_broker = broker_name_mapping.get(broker_name, broker_name)
+                    broker_category_symbols[broker_name] = {cat: [] for cat in all_categories}
+                    
+                    # Initialize MT5 to get available symbols
+                    log_and_print(f"Initializing MT5 for broker: {broker_name}", "INFO")
+                    success, init_errors = initialize_mt5(
+                        config["TERMINAL_PATH"],
+                        config["LOGIN_ID"],
+                        config["PASSWORD"],
+                        config["SERVER"]
+                    )
+                    error_log.extend(init_errors)
+                    if not success:
+                        log_and_print(f"MT5 initialization failed for {broker_name}, skipping", "ERROR")
+                        mt5.shutdown()
+                        continue
 
-    save_errors(error_log)
-    log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, candle data saving, and allmarkets_limitorders collection completed for all brokers!", "SUCCESS")
-    return len(error_log) == 0
-    
+                    all_symbols, sym_errors = get_symbols()
+                    error_log.extend(sym_errors)
+                    mt5.shutdown()
+
+                    # Filter symbols and assign to categories
+                    for symbol_entry in symbolsmatch_data.get("main_symbols", []):
+                        broker_specific_symbols = symbol_entry.get(mapped_broker, [])
+                        for symbol in broker_specific_symbols:
+                            if symbol in all_symbols:
+                                category = symbol_to_category.get(symbol)
+                                if category and category in all_categories:
+                                    if symbol not in broker_category_symbols[broker_name][category]:
+                                        broker_category_symbols[broker_name][category].append(symbol)
+                    
+                    # Log the number of symbols per category
+                    for category in all_categories:
+                        log_and_print(f"Broker {broker_name} has {len(broker_category_symbols[broker_name][category])} symbols in {category}: {broker_category_symbols[broker_name][category]}", "INFO")
+
+                # Check if any symbols were found
+                if not any(any(symbols) for broker, categories in broker_category_symbols.items() for symbols in categories.values()):
+                    log_and_print("No matched symbols found for any broker in symbolsmatch.json, aborting", "ERROR")
+                    save_errors(error_log)
+                    time.sleep(600)
+                    continue
+
+                # Clear chart folders for all brokers
+                for broker_name, config in brokersdictionary.items():
+                    log_and_print(f"Clearing chart folder for broker: {broker_name}", "INFO")
+                    success_clear, clear_errors = clear_chart_folder(config["BASE_FOLDER"])
+                    error_log.extend(clear_errors)
+                    if not success_clear:
+                        log_and_print(f"Failed to clear chart folder for {broker_name}, continuing", "ERROR")
+
+                # Initialize remaining symbols for each broker and category
+                remaining_symbols = {
+                    broker: {cat: symbols.copy() for cat, symbols in categories.items()}
+                    for broker, categories in broker_category_symbols.items()
+                }
+                broker_category_indices = {
+                    broker: {cat: 0 for cat in all_categories}
+                    for broker in broker_category_symbols.keys()
+                }
+
+                # Process one symbol from each category across all brokers until all symbols are exhausted
+                round_number = 1
+                while any(any(remaining_symbols[broker][cat] for cat in all_categories) for broker in broker_category_symbols.keys()):
+                    log_and_print(f"Starting round {round_number} of symbol processing", "INFO")
+                    for category in all_categories:
+                        for broker_name in broker_category_symbols.keys():
+                            if not remaining_symbols[broker_name][category]:
+                                continue
+
+                            current_index = broker_category_indices[broker_name][category]
+                            if current_index >= len(remaining_symbols[broker_name][category]):
+                                remaining_symbols[broker_name][category] = []  # Mark category as exhausted
+                                continue
+
+                            symbol = remaining_symbols[broker_name][category][current_index]
+
+                            config = brokersdictionary[broker_name]
+                            success, init_errors = initialize_mt5(
+                                config["TERMINAL_PATH"],
+                                config["LOGIN_ID"],
+                                config["PASSWORD"],
+                                config["SERVER"]
+                            )
+                            error_log.extend(init_errors)
+                            if not success:
+                                log_and_print(f"MT5 initialization failed for {broker_name} while processing {symbol} ({category}), skipping", "ERROR")
+                                mt5.shutdown()
+                                continue
+
+                            log_and_print(f"Processing symbol {symbol} ({category}) for broker: {broker_name} in round {round_number}", "INFO")
+                            symbol_folder = os.path.join(config["BASE_FOLDER"], symbol.replace(' ', '_'))
+                            os.makedirs(symbol_folder, exist_ok=True)
+
+                            for timeframe_str, mt5_timeframe in TIMEFRAME_MAP.items():
+                                log_and_print(f"Processing timeframe: {timeframe_str} for {symbol} ({category})", "INFO")
+                                timeframe_folder = os.path.join(symbol_folder, timeframe_str)
+                                os.makedirs(timeframe_folder, exist_ok=True)
+
+                                df, data_errors = fetch_ohlcv_data(symbol, mt5_timeframe, bars)
+                                error_log.extend(data_errors)
+                                if df is None:
+                                    continue
+
+                                df['symbol'] = symbol
+                                # Generate chart and get PH/PL labels
+                                chart_path, chart_errors, ph_labels, pl_labels = generate_and_save_chart(
+                                    df, symbol, timeframe_str, timeframe_folder,
+                                    neighborcandles_left, neighborcandles_right
+                                )
+                                error_log.extend(chart_errors)
+
+                                # Save candle data with PH/PL labels
+                                candle_errors = save_candle_data(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels)
+                                error_log.extend(candle_errors)
+
+                                if chart_path:
+                                    crop_errors = crop_chart(chart_path, symbol, timeframe_str, timeframe_folder)
+                                    error_log.extend(crop_errors)
+                                log_and_print("", "INFO")
+
+                            # Collect ob_none_oi_data for all timeframes of the current symbol
+                            collect_errors = collect_ob_none_oi_data(symbol, symbol_folder, broker_name, config["BASE_FOLDER"], broker_category_symbols[broker_name][category])
+                            error_log.extend(collect_errors)
+
+                            # === RUN SL/TP CALCULATOR AFTER EVERY SYMBOL ===
+                            log_and_print(f"Running calc_and_placeorders() for symbol: {symbol} ({category})", "INFO")
+                            try:
+                                calc_and_placeorders()
+                                log_and_print(f"SL/TP calculator finished for {symbol}", "SUCCESS")
+                            except Exception as e:
+                                error_log.append({
+                                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                                    "error": f"calc_and_placeorders() failed for {symbol}: {str(e)}",
+                                    "broker": broker_name
+                                })
+                                log_and_print(f"SL/TP calculator failed for {symbol}: {str(e)}", "ERROR")
+
+                            mt5.shutdown()
+                            log_and_print("", "INFO")
+                            broker_category_indices[broker_name][category] += 1
+
+                    round_number += 1
+
+                # === FINAL RUN: CALCULATE SL/TP FOR ALL MARKETS ===
+                log_and_print("Running FINAL calc_and_placeorders() for ALL markets...", "INFO")
+                try:
+                    calc_and_placeorders()
+                    log_and_print("FINAL SL/TP calculator completed!", "SUCCESS")
+                except Exception as e:
+                    error_log.append({
+                        "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                        "error": f"Final calc_and_placeorders() failed: {str(e)}",
+                        "broker": "all"
+                    })
+                    log_and_print(f"Final calc_and_placeorders() failed: {str(e)}", "ERROR")
+
+                save_errors(error_log)
+                log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, candle data saving, and allmarkets_limitorders collection completed for all brokers!", "SUCCESS")
+
+                # === AFTER SUCCESS: REPORT STATUS ===
+                log_and_print("after successfully processing all brokers", "SUCCESS")
+                log_and_print(f"check current time: {current_24h}", "INFO")
+                log_and_print(f"order time: {schedule_time}", "INFO")
+                time_diff = schedule_minutes - current_minutes
+                if time_diff > 0:
+                    hours_left = time_diff // 60
+                    mins_left = time_diff % 60
+                    log_and_print(f"time_left: {hours_left}h {mins_left}m", "INFO")
+                else:
+                    log_and_print("time_left: 0m (past schedule)", "INFO")
+                log_and_print("will check in the next 10 mins", "INFO")
+
+                # Wait 10 minutes before next full cycle
+                time.sleep(600)
+
+        except Exception as e:
+            log_and_print(f"CRITICAL ERROR in main loop: {e}", "CRITICAL")
+            error_log.append({
+                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                "error": f"Main loop crash: {str(e)}",
+                "broker": "system"
+            })
+            save_errors(error_log)
+            time.sleep(600)  # Prevent rapid crash   
+
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
         bars=251,
@@ -3650,5 +4034,6 @@ if __name__ == "__main__":
         log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
     else:
         log_and_print("Process failed. Check error log for details.", "ERROR")
+        
         
         
