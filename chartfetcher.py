@@ -4232,7 +4232,7 @@ def current_time():
         print(f"Error checking current time {e}")
 
 
-def fetch_charts_all_brokers(
+def fetch_charts_all_brokers(  
     bars,
     neighborcandles_left,
     neighborcandles_right
@@ -4367,7 +4367,7 @@ def fetch_charts_all_brokers(
                 log_and_print("Starting chart generation process for all brokers with symbols from symbolsmatch.json, processing one symbol per market category per round until all symbols are exhausted", "INFO")
 
                 # Load symbolsmatch.json
-                symbolsmatch_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\symbolsmatch.json"
+                symbolsmatch_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
                 try:
                     with open(symbolsmatch_path, 'r') as f:
                         symbolsmatch_data = json.load(f)
@@ -4384,7 +4384,7 @@ def fetch_charts_all_brokers(
                     continue
 
                 # Load allsymbolsvolumesandrisk.json to map symbols to market categories
-                allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allsymbolsvolumesandrisk.json"
+                allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
                 symbol_to_category = {}
                 try:
                     with open(allsymbols_json_path, 'r') as f:
