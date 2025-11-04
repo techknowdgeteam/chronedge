@@ -13,17 +13,35 @@ from pathlib import Path
 from datetime import datetime
 import calculateprices
 import timeorders
+import time
+import threading
+import traceback
+from datetime import timedelta
+
 
 # Brokers configuration
 brokersdictionary = {
-    "deriv": {
-        "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 deriv\terminal64.exe",
-        "LOGIN_ID": "101347351",
-        "PASSWORD": "@Techknowdge12#",
-        "SERVER": "DerivSVG-Server-02",
+    "deriv1": {
+        "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 deriv 1\terminal64.exe",
+        "LOGIN_ID": "140357859",
+        "PASSWORD": "@Ayomide12#",
+        "SERVER": "DerivSVG-Server-03",
         "ACCOUNT": "demo",
-        "STRATEGY": "both",
-        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv\derivsymbols"
+        "STRATEGY": "allorder",
+        "SCALE": "consistency",
+        "RISKREWARD": 3,
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 1\deriv1symbols"
+    },
+    "deriv2": {
+        "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 deriv 2\terminal64.exe",
+        "LOGIN_ID": "140357853",
+        "PASSWORD": "@Ayomide12#",
+        "SERVER": "DerivSVG-Server-03",
+        "ACCOUNT": "real",
+        "STRATEGY": "hightolow",
+        "SCALE": "consistency",
+        "RISKREWARD": 3,
+        "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 2\deriv2symbols"
     },
     "bybit1": {
         "TERMINAL_PATH": r"c:\xampp\htdocs\CIPHER\metaTrader5\cipher i\MetaTrader 5 bybit 1\terminal64.exe",
@@ -31,10 +49,14 @@ brokersdictionary = {
         "PASSWORD": "@Techknowdge12#",
         "SERVER": "Bybit-Live",
         "ACCOUNT": "real",
-        "STRATEGY": "lowtohigh",
+        "STRATEGY": "hightolow",
+        "RISKREWARD": 2,
+        "SCALE": "consistency",
+        "MARTINGALE_MARKETS": "neth25, usdjpy",
         "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\bybit 1\bybit1symbols"
     }
 }
+
 
 BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\chart\debugs"
 TIMEFRAME_MAP = {
@@ -1529,6 +1551,77 @@ def detect_candle_contours(chart_path, symbol, timeframe_str, timeframe_folder, 
         log_and_print(f"Unexpected error in detect_candle_contours for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
         return error_log
 
+def delete_all_category_jsons():
+    """
+    Delete (empty) every market-type JSON file that collect_ob_none_oi_data writes to.
+    - Resets the files to an empty structure (list or dict) so that the next run
+      starts from a clean slate.
+    - Logs every action and collects any errors in the same format as the rest
+      of the module.
+    Returns the list of error dictionaries (empty if everything went fine).
+    """
+    error_log = []
+
+    # ------------------------------------------------------------------ #
+    # 1. Exact same paths you already use in collect_ob_none_oi_data
+    # ------------------------------------------------------------------ #
+    market_type_paths = {
+        "forex": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json",
+        "stocks": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json",
+        "indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json",
+        "synthetics": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
+        "commodities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
+        "crypto": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json",
+        "equities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
+        "energies": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json",
+        "etfs": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json",
+        "basket_indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
+        "metals": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+    }
+
+    # ------------------------------------------------------------------ #
+    # 2. Helper: what an *empty* file should contain for each type
+    # ------------------------------------------------------------------ #
+    def empty_structure(mkt_type: str):
+        """Return the correct empty JSON structure for a given market type."""
+        if mkt_type == "forex":
+            return {
+                "xxxchf": [], "xxxjpy": [], "xxxnzd": [], "xxxusd": [],
+                "usdxxx": [], "xxxaud": [], "xxxcad": [], "other": []
+            }
+        # All other categories are simple lists
+        return []
+
+    # ------------------------------------------------------------------ #
+    # 3. Iterate over every file and wipe it
+    # ------------------------------------------------------------------ #
+    for mkt_type, json_path in market_type_paths.items():
+        empty_data = empty_structure(mkt_type)
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(empty_data, f, indent=4)
+            #log_and_print(f"[{mkt_type.upper()}] Emptied JSON → {json_path}","SUCCESS")
+        except Exception as e:
+            err = {
+                "timestamp": datetime.now(pytz.timezone('Africa/Lagos'))
+                             .strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                "error": f"Failed to empty {json_path}: {str(e)}",
+                "broker": "N/A"          # no broker context here
+            }
+            error_log.append(err)
+            log_and_print(
+                f"Failed to empty {json_path}: {str(e)}",
+                "ERROR"
+            )
+
+    # ------------------------------------------------------------------ #
+    # 4. Persist any errors (same helper you already use elsewhere)
+    # ------------------------------------------------------------------ #
+    if error_log:
+        save_errors(error_log)
+
+    return error_log
+
 def collect_ob_none_oi_data(symbol, symbol_folder, broker_name, base_folder, all_symbols):
     """Collect and convert ob_none_oi_data.json from each timeframe for a symbol, save to market folder as alltimeframes_ob_none_oi_data.json,
     update allmarkets_limitorders.json, allnoordermarkets.json, and save to market-type-specific JSONs based on allsymbolsvolumesandrisk.json.
@@ -1538,7 +1631,7 @@ def collect_ob_none_oi_data(symbol, symbol_folder, broker_name, base_folder, all
     all_timeframes_data = {tf: [] for tf in TIMEFRAME_MAP.keys()}
     allmarkets_json_path = os.path.join(base_folder, "allmarkets_limitorders.json")
     allnoordermarkets_json_path = os.path.join(base_folder, "allnoordermarkets.json")
-    allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
+    allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allsymbolsvolumesandrisk.json"
     symbols_match_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols_match.json"  # <-- NEW
 
     # Paths for market-type-specific JSONs
@@ -1983,6 +2076,79 @@ def calculate_symbols_sl_tp_prices():
     except Exception as e:
         print(f"Error when calculating symbols prices: {e}")
 
+def delete_issue_jsons():
+    """
+    Deletes all issue / report JSON files for **ALL** brokers (real, demo, test, …)
+    before `place_real_orders()` runs – guarantees a clean slate.
+
+    Returns:
+        dict: Summary of deleted files per broker (and global schedule)
+    """
+    delete_all_category_jsons()
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    REPORT_SUFFIX = "forex_order_report.json"
+    ISSUES_FILE   = "ordersissues.json"
+
+    # Add any other JSON files you want to wipe out here
+    EXTRA_FILES_TO_DELETE = [
+        # "debug_orders.json",
+        # "temp_pending.json"
+    ]
+
+    deleted_summary = {}
+
+    # --------------------------------------------------------------
+    # 1. Walk through every broker folder (no account-type filter)
+    # --------------------------------------------------------------
+    base_path = Path(BASE_INPUT_DIR)
+    if not base_path.exists():
+        print(f"[CLEAN] Base directory not found: {base_path}")
+        return deleted_summary
+
+    for broker_dir in base_path.iterdir():
+        if not broker_dir.is_dir():
+            continue
+
+        broker_name = broker_dir.name
+        deleted_files = []
+        risk_folders = [p.name for p in broker_dir.iterdir()
+                        if p.is_dir() and p.name.startswith("risk_")]
+
+        for risk_folder in risk_folders:
+            risk_path = broker_dir / risk_folder
+
+            for file_name in [ISSUES_FILE, REPORT_SUFFIX] + EXTRA_FILES_TO_DELETE:
+                file_path = risk_path / file_name
+                if file_path.exists():
+                    try:
+                        file_path.unlink()          # atomic delete
+                        deleted_files.append(str(file_path))
+                        print(f"[CLEAN] Deleted: {file_path}")
+                    except Exception as e:
+                        print(f"[CLEAN] Failed to delete {file_path}: {e}")
+
+        deleted_summary[broker_name] = deleted_files or "No issue/report files found"
+
+    # --------------------------------------------------------------
+    # 2. Delete the global schedule file (if it exists)
+    # --------------------------------------------------------------
+    global_schedule = r"C:\xampp\htdocs\chronedge\fullordersschedules.json"
+    if Path(global_schedule).exists():
+        try:
+            Path(global_schedule).unlink()
+            print(f"[CLEAN] Deleted global: {global_schedule}")
+            deleted_summary["global_schedule"] = global_schedule
+        except Exception as e:
+            print(f"[CLEAN] Failed to delete global schedule: {e}")
+
+    # --------------------------------------------------------------
+    # 3. Final summary
+    # --------------------------------------------------------------
+    total_deleted = sum(len(v) if isinstance(v, list) else 0
+                        for v in deleted_summary.values())
+    print(f"[CLEAN] Pre-order cleanup complete – {total_deleted} file(s) removed.")
+    return deleted_summary
+    
 def place_demo_orders():
     r"""
     Place demo pending orders with full diagnostics and auto-corrections.
@@ -2379,419 +2545,930 @@ def place_demo_orders():
 
     log_and_print("All demo brokers processed successfully.", "SUCCESS")
     
-def place_real_orders():
-    r"""
-    Place real account pending orders with balance-based risk selection.
-    - Only 1 BUY_LIMIT and 1 SELL_LIMIT per symbol
-    - Strategy-aware price optimisation (lowtohigh / hightolow)
-    - No new pending if same-direction position is running
-    - FAILED orders → silent (only in JSON + issues file)
-    """
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-    REPORT_SUFFIX = "forex_order_report.json"
-    ISSUES_FILE = "ordersissues.json"
+def _12_20_orders():
+    def place_3usd_orders():
+        _3usd_live_sl_tp_amounts()
 
-    BALANCE_TO_RISK = [
-        (0.5, 3.8, "risk_0_50cent_usd"), (3.8, 8.0, "risk_1_usd"), (8.0, 12.0, "risk_2_usd"),
-        (12.0, 16.0, "risk_3_usd"), (16.0, 96.0, "risk_4_usd"), (96.0, 150.0, "risk_8_usd"),
-        (150.0, float('inf'), "risk_1_usd")
-    ]
-    STRATEGY_FILE_MAP = {"lowtohigh": "lowtohigh.json", "hightolow": "hightolow.json"}
+        BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        RISK_FOLDER = "risk_3_usd"
+        STRATEGY_FILE = "hightolow.json"
+        REPORT_SUFFIX = "forex_order_report.json"
+        ISSUES_FILE = "ordersissues.json"
 
-    # ------------------------------------------------------------------ #
-    def _send_with_fallback(request, symbol_info):
-        supported = symbol_info.filling_mode
-        FILLING_FOK, FILLING_IOC, FILLING_RETURN, FILLING_GTC = 1, 2, 4, 8
-        modes = []
-        if supported & FILLING_FOK:     modes.append(FILLING_FOK)
-        if supported & FILLING_IOC:     modes.append(FILLING_IOC)
-        if supported & FILLING_RETURN:  modes.append(FILLING_RETURN)
-        if supported & FILLING_GTC:     modes.append(FILLING_GTC)
-        priority = [FILLING_IOC, FILLING_RETURN, FILLING_FOK, FILLING_GTC]
-        for mode in priority:
-            if mode in modes:
-                request["type_filling"] = mode
-                result = mt5.order_send(request)
-                if result is None:
-                    continue
-                if result.retcode == mt5.TRADE_RETCODE_DONE:
-                    return result, mode
-                if "unsupported filling" in result.comment.lower():
-                    continue
-                return result, mode
-        return None, None
+        for broker_name, broker_cfg in brokersdictionary.items():
+            TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
+            LOGIN_ID = broker_cfg["LOGIN_ID"]
+            PASSWORD = broker_cfg["PASSWORD"]
+            SERVER = broker_cfg["SERVER"]
 
-    # ------------------------------------------------------------------ #
-    for broker_name, broker_cfg in brokersdictionary.items():
-        broker_account = broker_cfg.get("ACCOUNT", "").lower()
-        if broker_account != "real":
-            log_and_print(f"Skipping {broker_name} (account type: {broker_account})", "INFO")
-            continue
+            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
 
-        strategy_key = broker_cfg.get("STRATEGY", "").lower()
-        if strategy_key not in STRATEGY_FILE_MAP:
-            log_and_print(f"{broker_name}: Invalid STRATEGY '{strategy_key}'", "ERROR")
-            continue
+            # === MT5 Init ===
+            if not os.path.exists(TERMINAL_PATH):
+                log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+                continue
 
-        # --------------------------------------------------------------
-        # Helper: decide whether to replace an existing pending order
-        # --------------------------------------------------------------
-        def should_replace(existing_price, new_price, order_type, strategy):
-            is_buy = order_type == mt5.ORDER_TYPE_BUY_LIMIT
-            if strategy == "lowtohigh":
-                if is_buy:
-                    return (new_price > existing_price,
-                            f"New BUY entry {new_price} > existing {existing_price} → replace")
-                else:
-                    return (new_price < existing_price,
-                            f"New SELL entry {new_price} < existing {existing_price} → replace")
-            else:  # hightolow
-                if is_buy:
-                    return (new_price < existing_price,
-                            f"New BUY entry {new_price} < existing {existing_price} → replace")
-                else:
-                    return (new_price > existing_price,
-                            f"New SELL entry {new_price} > existing {existing_price} → replace")
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
 
-        # --------------------------------------------------------------
-        strategy_file = STRATEGY_FILE_MAP[strategy_key]
-        TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
-        LOGIN_ID = broker_cfg["LOGIN_ID"]
-        PASSWORD = broker_cfg["PASSWORD"]
-        SERVER = broker_cfg["SERVER"]
+            if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"MT5 login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
 
-        log_and_print(f"Processing real broker: {broker_name} | Strategy: {strategy_key}", "INFO")
+            account_info = mt5.account_info()
+            if not account_info:
+                log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
 
-        if not os.path.exists(TERMINAL_PATH):
-            log_and_print(f"{broker_name}: Terminal path not found ({TERMINAL_PATH})", "ERROR")
-            continue
+            balance = account_info.balance
+            if not (12.0 <= balance < 20.0):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
 
-        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD,
-                              server=SERVER, timeout=30000):
-            err = f"{broker_name}: MT5 init failed: {mt5.last_error()}"
-            log_and_print(err, "ERROR")
-            _write_global_error_report(os.path.join(BASE_INPUT_DIR, broker_name), {}, err)
-            continue
+            log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
-        if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
-            err = f"{broker_name}: MT5 login failed: {mt5.last_error()}"
-            log_and_print(err, "ERROR")
-            mt5.shutdown()
-            _write_global_error_report(os.path.join(BASE_INPUT_DIR, broker_name), {}, err)
-            continue
+            # === Load hightolow.json ===
+            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            if not file_path.exists():
+                log_and_print(f"File not found: {file_path}", "WARNING")
+                mt5.shutdown()
+                continue
 
-        account_info = mt5.account_info()
-        if not account_info:
-            err = f"{broker_name}: Failed to get account info: {mt5.last_error()}"
-            log_and_print(err, "ERROR")
-            mt5.shutdown()
-            continue
-
-        balance = account_info.balance
-        log_and_print(f"{broker_name}: Account balance = ${balance:.2f}", "INFO")
-
-        selected_risk_folder = next(
-            (folder for min_bal, max_bal, folder in BALANCE_TO_RISK if min_bal <= balance < max_bal),
-            "risk_1_usd"
-        )
-        risk_usd = float(selected_risk_folder.split("_")[1].replace("usd", "").replace("cent", "0.5"))
-        log_and_print(f"{broker_name}: Selected risk folder → {selected_risk_folder} (${risk_usd} risk)", "INFO")
-
-        calc_file = Path(BASE_INPUT_DIR) / broker_name / selected_risk_folder / strategy_file
-        if not calc_file.exists():
-            log_and_print(f"{broker_name}: Missing file {calc_file}", "WARNING")
-            mt5.shutdown()
-            continue
-
-        try:
-            with calc_file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                entries = data.get("entries", [])
-        except Exception as e:
-            log_and_print(f"{broker_name}: Cannot read {calc_file}: {e}", "ERROR")
-            mt5.shutdown()
-            continue
-
-        if not entries:
-            log_and_print(f"{broker_name}: Empty {calc_file}", "INFO")
-            mt5.shutdown()
-            continue
-
-        report_file = calc_file.parent / REPORT_SUFFIX
-        existing_reports = json.load(report_file.open("r", encoding="utf-8")) if report_file.exists() else []
-
-        total_placed = total_failed = total_skipped = 0
-        issues_list = []
-        now_str = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f+01:00")
-
-        # === Load existing pending orders and running positions ===
-        existing_orders = {}          # (symbol, type) → {'ticket': int, 'price': float}
-        running_positions = {}        # symbol → direction: 1=buy, -1=sell
-
-        pending = mt5.orders_get()
-        for order in pending or []:
-            if order.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
-                existing_orders[(order.symbol, order.type)] = {'ticket': order.ticket, 'price': order.price_open}
-
-        positions = mt5.positions_get()
-        for pos in positions or []:
-            direction = 1 if pos.type == mt5.ORDER_TYPE_BUY else -1
-            running_positions[pos.symbol] = direction
-
-        for entry in entries:
             try:
-                symbol = entry["market"]
-                raw_volume = float(entry["volume"])
-                price = float(entry["entry_price"])
-                sl_price = float(entry["sl_price"])
-                tp_price = float(entry["tp_price"])
-                order_type_str = entry["limit_order"]
-                order_type = mt5.ORDER_TYPE_BUY_LIMIT if order_type_str == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT
+                with file_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    entries = data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read {file_path}: {e}", "ERROR")
+                mt5.shutdown()
+                continue
 
-                symbol_info = mt5.symbol_info(symbol)
-                tick = mt5.symbol_info_tick(symbol)
+            if not entries:
+                log_and_print("No entries in hightolow.json", "INFO")
+                mt5.shutdown()
+                continue
 
-                can_place = True
-                reason = ""
+            # === Load existing orders & positions ===
+            existing_pending = {}  # (symbol, type) → ticket
+            running_positions = set()  # symbols with open position
 
-                # === RUNNING POSITION CHECK (same direction) ===
-                current_dir = running_positions.get(symbol, 0)
-                new_dir = 1 if order_type == mt5.ORDER_TYPE_BUY_LIMIT else -1
-                if current_dir == new_dir:
-                    skip_reason = f"Running {'BUY' if new_dir == 1 else 'SELL'} position already open"
-                    total_skipped += 1
-                    log_and_print(f"{broker_name} | ${risk_usd} | {symbol} {order_type_str} @ {price} → {skip_reason} → SKIPPED", "INFO")
-                    report_entry = {
-                        "symbol": symbol, "order_type": order_type_str, "price": price,
-                        "volume": raw_volume, "sl": sl_price, "tp": tp_price,
-                        "risk_usd": entry["riskusd_amount"], "ticket": None,
-                        "success": False, "error_code": None,
-                        "error_msg": f"SKIPPED: {skip_reason}", "timestamp": now_str
-                    }
-                    existing_reports.append(report_entry)
-                    try:
-                        with report_file.open("w", encoding="utf-8") as f:
-                            json.dump(existing_reports, f, indent=2)
-                    except: pass
-                    continue
+            for order in (mt5.orders_get() or []):
+                if order.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
+                    existing_pending[(order.symbol, order.type)] = order.ticket
 
-                # === DUPLICATE / PRICE-OPTIMISATION CHECK ===
-                dup_key = (symbol, order_type)
-                if dup_key in existing_orders:
-                    old = existing_orders[dup_key]
-                    replace, replace_reason = should_replace(old['price'], price, order_type, strategy_key)
+            for pos in (mt5.positions_get() or []):
+                running_positions.add(pos.symbol)
 
-                    if replace:
-                        del_req = {
-                            "action": mt5.TRADE_ACTION_REMOVE,
-                            "order": old['ticket']
-                        }
-                        del_res = mt5.order_send(del_req)
-                        if del_res is None:
-                            log_and_print(
-                                f"{broker_name} | ${risk_usd} | {symbol} order_send returned None on delete",
-                                "ERROR"
-                            )
-                            total_skipped += 1
-                            report_entry = {
-                                "symbol": symbol, "order_type": order_type_str, "price": price,
-                                "volume": raw_volume, "sl": sl_price, "tp": tp_price,
-                                "risk_usd": entry["riskusd_amount"], "ticket": None,
-                                "success": False, "error_code": mt5.TRADE_RETCODE_TIMEOUT,
-                                "error_msg": "DELETE FAILED: order_send returned None",
-                                "timestamp": now_str
-                            }
-                            existing_reports.append(report_entry)
-                            try:
-                                with report_file.open("w", encoding="utf-8") as f:
-                                    json.dump(existing_reports, f, indent=2)
-                            except: pass
-                            continue
-                        if del_res.retcode != mt5.TRADE_RETCODE_DONE:
-                            log_and_print(
-                                f"{broker_name} | ${risk_usd} | {symbol} FAILED to delete old {order_type_str} ticket {old['ticket']} → {del_res.comment}",
-                                "WARNING"
-                            )
-                            total_skipped += 1
-                            report_entry = {
-                                "symbol": symbol, "order_type": order_type_str, "price": price,
-                                "volume": raw_volume, "sl": sl_price, "tp": tp_price,
-                                "risk_usd": entry["riskusd_amount"], "ticket": None,
-                                "success": False, "error_code": del_res.retcode,
-                                "error_msg": f"DELETE FAILED: {del_res.comment}",
-                                "timestamp": now_str
-                            }
-                            existing_reports.append(report_entry)
-                            try:
-                                with report_file.open("w", encoding="utf-8") as f:
-                                    json.dump(existing_reports, f, indent=2)
-                            except: pass
-                            continue
+            # === Reporting ===
+            report_file = file_path.parent / REPORT_SUFFIX
+            existing_reports = json.load(report_file.open("r", encoding="utf-8")) if report_file.exists() else []
+            issues_list = []
+            now_str = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f+01:00")
+            placed = failed = skipped = 0
 
-                        log_and_print(
-                            f"{broker_name} | ${risk_usd} | {symbol} DELETED old {order_type_str} @ {old['price']} (ticket {old['ticket']}) → {replace_reason}",
-                            "INFO"
-                        )
-                        del existing_orders[dup_key]
-                    else:
-                        total_skipped += 1
-                        skip_msg = f"New {order_type_str} @ {price} not better than existing @ {old['price']} → SKIPPED"
-                        log_and_print(f"{broker_name} | ${risk_usd} | {symbol} {skip_msg}", "INFO")
-                        report_entry = {
-                            "symbol": symbol, "order_type": order_type_str, "price": price,
-                            "volume": raw_volume, "sl": sl_price, "tp": tp_price,
-                            "risk_usd": entry["riskusd_amount"], "ticket": None,
-                            "success": False, "error_code": None,
-                            "error_msg": f"SKIPPED: {skip_msg}", "timestamp": now_str
-                        }
-                        existing_reports.append(report_entry)
-                        try:
-                            with report_file.open("w", encoding="utf-8") as f:
-                                json.dump(existing_reports, f, indent=2)
-                        except: pass
+            for entry in entries:
+                try:
+                    symbol = entry["market"]
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type_str = entry["limit_order"]
+                    order_type = mt5.ORDER_TYPE_BUY_LIMIT if order_type_str == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT
+
+                    # === SKIP: Already running or pending ===
+                    if symbol in running_positions:
+                        skipped += 1
+                        log_and_print(f"{symbol} has running position → SKIPPED", "INFO")
                         continue
 
-                # === Symbol / market checks ===
-                if not symbol_info: reason, can_place = "Symbol not found", False
-                elif not symbol_info.visible: reason, can_place = "Symbol not enabled", False
-                elif symbol_info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL: reason, can_place = f"Trade restricted: {symbol_info.trade_mode}", False
-                elif tick is None: reason, can_place = "No tick data", False
+                    key = (symbol, order_type)
+                    if key in existing_pending:
+                        skipped += 1
+                        log_and_print(f"{symbol} {order_type_str} already pending → SKIPPED", "INFO")
+                        continue
 
-                # === Volume auto-fix ===
-                volume = raw_volume
-                if can_place and symbol_info:
+                    # === Symbol check ===
+                    symbol_info = mt5.symbol_info(symbol)
+                    if not symbol_info or not symbol_info.visible:
+                        issues_list.append({"symbol": symbol, "reason": "Symbol not available"})
+                        failed += 1
+                        continue
+
+                    # === Volume fix ===
+                    vol_step = symbol_info.volume_step
                     volume = max(symbol_info.volume_min,
-                                 round(raw_volume / symbol_info.volume_step) * symbol_info.volume_step)
+                                round(volume / vol_step) * vol_step)
                     volume = min(volume, symbol_info.volume_max)
-                    if abs(volume - raw_volume) > 1e-8:
-                        reason = f"Volume auto-fixed: {raw_volume} → {volume}"
 
-                # === Price-distance (skip if already past market) ===
-                skip_reason = None
-                if can_place and tick:
-                    bid, ask = tick.bid, tick.ask
+                    # === Price distance check ===
+                    tick = mt5.symbol_info_tick(symbol)
+                    if not tick:
+                        issues_list.append({"symbol": symbol, "reason": "No tick data"})
+                        failed += 1
+                        continue
+
                     point = symbol_info.point
                     if order_type == mt5.ORDER_TYPE_BUY_LIMIT:
-                        if price >= ask: skip_reason = f"BUY_LIMIT {price} >= ask {ask}"
-                        elif (ask - price) < point * 10: reason, can_place = "BUY_LIMIT too close to ask", False
+                        if price >= tick.ask or (tick.ask - price) < 10 * point:
+                            skipped += 1
+                            continue
                     else:
-                        if price <= bid: skip_reason = f"SELL_LIMIT {price} <= bid {bid}"
-                        elif (price - bid) < point * 10: reason, can_place = "SELL_LIMIT too close to bid", False
+                        if price <= tick.bid or (price - tick.bid) < 10 * point:
+                            skipped += 1
+                            continue
 
-                if skip_reason:
-                    total_skipped += 1
-                    log_and_print(f"{broker_name} | ${risk_usd} | {symbol} {order_type_str} @ {price} → {skip_reason} → SKIPPED", "INFO")
+                    # === Build & send order ===
+                    request = {
+                        "action": mt5.TRADE_ACTION_PENDING,
+                        "symbol": symbol,
+                        "volume": volume,
+                        "type": order_type,
+                        "price": price,
+                        "sl": sl,
+                        "tp": tp,
+                        "deviation": 10,
+                        "magic": 123456,
+                        "comment": "Risk3_Auto",
+                        "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": mt5.ORDER_FILLING_IOC,
+                    }
+
+                    result = mt5.order_send(request)
+                    if result is None:
+                        result = type('obj', (), {'retcode': 10000, 'comment': 'order_send returned None'})()
+
+                    success = result.retcode == mt5.TRADE_RETCODE_DONE
+                    if success:
+                        existing_pending[key] = result.order
+                        placed += 1
+                        log_and_print(f"{symbol} {order_type_str} @ {price} → PLACED (ticket {result.order})", "SUCCESS")
+                        _3usd_history_and_deduplication()
+                        _3usd_ratio_levels()
+                    else:
+                        failed += 1
+                        issues_list.append({"symbol": symbol, "reason": result.comment})
+
+                    # === Report ===
                     report_entry = {
-                        "symbol": symbol, "order_type": order_type_str, "price": price,
-                        "volume": volume, "sl": sl_price, "tp": tp_price,
-                        "risk_usd": entry["riskusd_amount"], "ticket": None,
-                        "success": False, "error_msg": f"SKIPPED: {skip_reason}",
+                        "symbol": symbol,
+                        "order_type": order_type_str,
+                        "price": price,
+                        "volume": volume,
+                        "sl": sl,
+                        "tp": tp,
+                        "risk_usd": 3.0,
+                        "ticket": result.order if success else None,
+                        "success": success,
+                        "error_code": result.retcode if not success else None,
+                        "error_msg": result.comment if not success else None,
                         "timestamp": now_str
                     }
                     existing_reports.append(report_entry)
                     try:
                         with report_file.open("w", encoding="utf-8") as f:
                             json.dump(existing_reports, f, indent=2)
-                    except: pass
+                    except:
+                        pass
+
+                except Exception as e:
+                    failed += 1
+                    issues_list.append({"symbol": symbol, "reason": f"Exception: {e}"})
+                    log_and_print(f"Error processing {symbol}: {e}", "ERROR")
+
+            # === Save issues ===
+            issues_path = file_path.parent / ISSUES_FILE
+            try:
+                existing_issues = json.load(issues_path.open("r", encoding="utf-8")) if issues_path.exists() else []
+                with issues_path.open("w", encoding="utf-8") as f:
+                    json.dump(existing_issues + issues_list, f, indent=2)
+            except:
+                pass
+
+            mt5.shutdown()
+            log_and_print(
+                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                "SUCCESS"
+            )
+
+        log_and_print("All $12–$20 accounts processed.", "SUCCESS")
+        return True
+
+    def _3usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $3.10
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 3.10 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (12.0 <= balance < 20.0):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_3_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 3.10 ---
+                    if risk_usd <= 3.10:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $3.10 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_3.10": kept,
+                "removed_risk_>_3.10": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 3.10",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $3.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
+    def _3usd_history_and_deduplication():
+        """
+        HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
+        - Cancels risk > $3.10
+        - Cancels HISTORY DUPLICATES
+        - Cancels PENDING LIMIT DUPLICATES
+        - Cancels PENDING if POSITION already exists
+        - Shows duplicate market name on its own line
+        ONLY PROCESSES ACCOUNTS WITH BALANCE $12.00 – $19.99
+        """
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        REPORT_NAME = "pending_risk_profit_per_order.json"
+        MAX_RISK_USD = 3.10
+        LOOKBACK_DAYS = 5
+        PRICE_PRECISION = 5
+        TZ = pytz.timezone("Africa/Lagos")
+
+        five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID     = cfg["LOGIN_ID"]
+            PASSWORD     = cfg["PASSWORD"]
+            SERVER       = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*80}", "INFO")
+            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"{'='*80}", "INFO")
+
+            # ---------- MT5 Init ----------
+            if not os.path.exists(TERMINAL_PATH):
+                log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+                continue
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info.", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (12.0 <= balance < 20.0):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Account: {account.login} | Balance: ${balance:.2f} {currency} → Proceeding with risk_3_usd checks", "INFO")
+
+            # ---------- Get Data ----------
+            pending_orders = [o for o in (mt5.orders_get() or [])
+                            if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)]
+            positions = mt5.positions_get()
+            history_deals = mt5.history_deals_get(int(five_days_ago.timestamp()), int(datetime.now(TZ).timestamp()))
+
+            if not pending_orders:
+                log_and_print("No pending orders.", "INFO")
+                mt5.shutdown()
+                continue
+
+            # ---------- BUILD DATABASES ----------
+            log_and_print(f"Building duplicate databases...", "INFO")
+
+            # 1. Historical Setups
+            historical_keys = {}  # (symbol, entry, sl) → details
+            if history_deals:
+                for deal in history_deals:
+                    if deal.entry != mt5.DEAL_ENTRY_IN: continue
+                    if deal.type not in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL): continue
+
+                    order = mt5.history_orders_get(ticket=deal.order)
+                    if not order: continue
+                    order = order[0]
+                    if order.sl == 0: continue
+
+                    symbol = deal.symbol
+                    entry = round(deal.price, PRICE_PRECISION)
+                    sl = round(order.sl, PRICE_PRECISION)
+
+                    key = (symbol, entry, sl)
+                    if key not in historical_keys:
+                        profit = sum(d.profit for d in history_deals if d.order == deal.order and d.entry == mt5.DEAL_ENTRY_OUT)
+                        historical_keys[key] = {
+                            "time": datetime.fromtimestamp(deal.time, TZ).strftime("%Y-%m-%d %H:%M"),
+                            "profit": round(profit, 2),
+                            "symbol": symbol
+                        }
+
+            # 2. Open Positions (by symbol)
+            open_symbols = {pos.symbol for pos in positions} if positions else set()
+
+            # 3. Pending Orders Key Map
+            pending_keys = {}  # (symbol, entry, sl) → [order_tickets]
+            for order in pending_orders:
+                key = (order.symbol, round(order.price_open, PRICE_PRECISION), round(order.sl, PRICE_PRECISION))
+                if key not in pending_keys:
+                    pending_keys[key] = []
+                pending_keys[key].append(order.ticket)
+
+            log_and_print(f"Loaded: {len(historical_keys)} history | {len(open_symbols)} open | {len(pending_keys)} unique pending setups", "INFO")
+
+            # ---------- Process & Cancel ----------
+            per_order_data = []
+            kept = cancelled_risk = cancelled_hist = cancelled_pend_dup = cancelled_pos_dup = skipped = 0
+
+            for order in pending_orders:
+                symbol = order.symbol
+                ticket = order.ticket
+                volume = order.volume_current
+                entry = round(order.price_open, PRICE_PRECISION)
+                sl = round(order.sl, PRICE_PRECISION)
+                tp = order.tp
+
+                if sl == 0 or tp == 0:
+                    log_and_print(f"SKIP {ticket} | {symbol} | No SL/TP", "WARNING")
+                    skipped += 1
                     continue
 
-                # === SL/TP sanity ===
-                if can_place:
-                    if sl_price <= 0 or tp_price <= 0: reason, can_place = "SL/TP ≤ 0", False
-                    elif order_type == mt5.ORDER_TYPE_BUY_LIMIT:
-                        if sl_price >= price or tp_price <= price: reason, can_place = "Invalid SL/TP for BUY_LIMIT", False
-                    else:
-                        if sl_price <= price or tp_price >= price: reason, can_place = "Invalid SL/TP for SELL_LIMIT", False
+                info = mt5.symbol_info(symbol)
+                if not info or not mt5.symbol_info_tick(symbol):
+                    log_and_print(f"SKIP {ticket} | {symbol} | No symbol data", "WARNING")
+                    skipped += 1
+                    continue
 
-                # === Build request & send ===
-                request = {
-                    "action": mt5.TRADE_ACTION_PENDING, "symbol": symbol, "volume": volume,
-                    "type": order_type, "price": price, "sl": sl_price, "tp": tp_price,
-                    "deviation": 10, "magic": 123456,
-                    "comment": f"AutoSLTP_{entry['riskusd_amount']}USD",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                }
+                point = info.point
+                contract = info.trade_contract_size
+                point_val = contract * point
+                if "JPY" in symbol and currency == "USD":
+                    point_val /= 100
 
-                result = None
-                used_filling = None
-                if can_place:
-                    result, used_filling = _send_with_fallback(request, symbol_info)
+                # Risk USD
+                risk_points = abs(entry - sl) / point
+                risk_usd = risk_points * point_val * volume
+                if currency != "USD":
+                    rate = mt5.symbol_info_tick(f"USD{currency}")
+                    if not rate:
+                        log_and_print(f"SKIP {ticket} | No USD{currency} rate", "WARNING")
+                        skipped += 1
+                        continue
+                    risk_usd /= rate.bid
+
+                profit_usd = abs(tp - entry) / point * point_val * volume
+                if currency != "USD":
+                    profit_usd /= rate.bid
+
+                key = (symbol, entry, sl)
+                dup_hist = historical_keys.get(key)
+                is_position_open = symbol in open_symbols
+                is_pending_duplicate = len(pending_keys.get(key, [])) > 1
+
+                print(f"\nmarket: {symbol}")
+                print(f"risk: {risk_usd:.2f} USD | profit: {profit_usd:.2f} USD")
+
+                cancel_reason = None
+                cancel_type = None
+
+                # === 1. RISK CANCEL ===
+                if risk_usd > MAX_RISK_USD:
+                    cancel_reason = f"RISK > ${MAX_RISK_USD}"
+                    cancel_type = "RISK"
+                    print(f"{cancel_reason} → CANCELLED")
+
+                # === 2. HISTORY DUPLICATE ===
+                elif dup_hist:
+                    cancel_reason = "HISTORY DUPLICATE"
+                    cancel_type = "HIST_DUP"
+                    print("HISTORY DUPLICATE ORDER FOUND!")
+                    print(dup_hist["symbol"])
+                    print(f"entry: {entry} | sl: {sl}")
+                    print(f"used: {dup_hist['time']} | P/L: {dup_hist['profit']:+.2f} {currency}")
+                    print("→ HISTORY DUPLICATE CANCELLED")
+                    print("!" * 60)
+
+                # === 3. PENDING DUPLICATE ===
+                elif is_pending_duplicate:
+                    cancel_reason = "PENDING DUPLICATE"
+                    cancel_type = "PEND_DUP"
+                    print("PENDING LIMIT DUPLICATE FOUND!")
+                    print(symbol)
+                    print(f"→ DUPLICATE PENDING ORDER CANCELLED")
+                    print("-" * 60)
+
+                # === 4. POSITION EXISTS (Cancel Pending) ===
+                elif is_position_open:
+                    cancel_reason = "POSITION ALREADY OPEN"
+                    cancel_type = "POS_DUP"
+                    print("POSITION ALREADY RUNNING!")
+                    print(symbol)
+                    print(f"→ PENDING ORDER CANCELLED (POSITION ACTIVE)")
+                    print("^" * 60)
+
+                # === NO ISSUE → KEEP ===
                 else:
-                    result = type('obj', (), {
-                        'retcode': 10000,
-                        'comment': reason,
-                        'order': None
-                    })()
-                    used_filling = "N/A"
+                    print("No duplicate. Order kept.")
+                    kept += 1
+                    per_order_data.append({
+                        "ticket": ticket,
+                        "symbol": symbol,
+                        "entry": entry,
+                        "sl": sl,
+                        "tp": tp,
+                        "risk_usd": round(risk_usd, 2),
+                        "profit_usd": round(profit_usd, 2),
+                        "status": "KEPT"
+                    })
+                    continue  # Skip cancel
 
-                # === CRITICAL FIX: Handle None result from order_send ===
-                if result is None:
-                    status = "FAILED"
-                    final_reason = "order_send returned None (possible connection or server issue)"
-                    result = type('obj', (), {
-                        'retcode': mt5.TRADE_RETCODE_TIMEOUT,
-                        'comment': final_reason,
-                        'order': None
-                    })()
+                # === CANCEL ORDER ===
+                req = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
+                res = mt5.order_send(req)
+                if res.retcode == mt5.TRADE_RETCODE_DONE:
+                    log_and_print(f"{cancel_type} CANCELLED {ticket} | {symbol} | {cancel_reason}", "WARNING")
+                    if cancel_type == "RISK": cancelled_risk += 1
+                    elif cancel_type == "HIST_DUP": cancelled_hist += 1
+                    elif cancel_type == "PEND_DUP": cancelled_pend_dup += 1
+                    elif cancel_type == "POS_DUP": cancelled_pos_dup += 1
                 else:
-                    status = "SUCCESS" if result.retcode == mt5.TRADE_RETCODE_DONE else "FAILED"
-                    final_reason = reason or result.comment
+                    log_and_print(f"CANCEL FAILED {ticket} | {res.comment}", "ERROR")
 
-                if status == "SUCCESS" and result.order:
-                    existing_orders[dup_key] = {'ticket': result.order, 'price': price}
+                per_order_data.append({
+                    "ticket": ticket,
+                    "symbol": symbol,
+                    "entry": entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "risk_usd": round(risk_usd, 2),
+                    "profit_usd": round(profit_usd, 2),
+                    "status": "CANCELLED",
+                    "reason": cancel_reason,
+                    "duplicate_time": dup_hist["time"] if dup_hist else None,
+                    "duplicate_pl": dup_hist["profit"] if dup_hist else None
+                })
 
-                # === Reporting ===
-                report_entry = {
-                    "symbol": symbol, "order_type": order_type_str, "price": price,
-                    "volume": volume, "sl": sl_price, "tp": tp_price,
-                    "risk_usd": entry["riskusd_amount"],
-                    "ticket": result.order if status == "SUCCESS" else None,
-                    "success": status == "SUCCESS",
-                    "error_code": result.retcode if status == "FAILED" else None,
-                    "error_msg": result.comment if status == "FAILED" else None,
-                    "timestamp": now_str, "filling_used": used_filling
-                }
-                existing_reports.append(report_entry)
-                try:
-                    with report_file.open("w", encoding="utf-8") as f:
-                        json.dump(existing_reports, f, indent=2)
-                except Exception as e:
-                    log_and_print(f"{broker_name}: Failed to write report {symbol}: {e}", "ERROR")
+            # === SUMMARY ===
+            total_cancelled = cancelled_risk + cancelled_hist + cancelled_pend_dup + cancelled_pos_dup
+            log_and_print(f"\nSUMMARY:", "SUCCESS")
+            log_and_print(f"KEPT: {kept}", "INFO")
+            log_and_print(f"CANCELLED → RISK: {cancelled_risk} | HIST DUP: {cancelled_hist} | "
+                        f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
-                # === LOGGING: SUCCESS → LOGGED, FAILED → SILENT (only JSON) ===
-                if status == "SUCCESS":
-                    log_msg = f"{broker_name} | ${risk_usd} | {symbol} {order_type_str} @ {price} → SL {sl_price} | TP {tp_price} | SUCCESS"
-                    if used_filling and used_filling != "N/A":
-                        log_msg += f" (filling: {used_filling})"
-                    log_and_print(log_msg, "INFO")
-                    total_placed += 1
-                else:  # FAILED
-                    total_failed += 1
-                    issues_list.append({"symbol": symbol, "diagnosed_reason": final_reason})
-                    # NO log_and_print() for FAILED orders
+            # === SAVE REPORT ===
+            out_dir = Path(BASE_DIR) / broker_name / "risk_3_usd"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / REPORT_NAME
 
+            report = {
+                "broker": broker_name,
+                "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "max_risk_usd": MAX_RISK_USD,
+                "lookback_days": LOOKBACK_DAYS,
+                "summary": {
+                    "kept": kept,
+                    "cancelled_risk": cancelled_risk,
+                    "cancelled_history_duplicate": cancelled_hist,
+                    "cancelled_pending_duplicate": cancelled_pend_dup,
+                    "cancelled_position_duplicate": cancelled_pos_dup,
+                    "skipped": skipped
+                },
+                "orders": per_order_data
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"Report saved: {out_path}", "SUCCESS")
             except Exception as e:
-                log_and_print(f"{broker_name}: Exception placing {symbol} → {e}", "ERROR")
-                total_failed += 1
-                issues_list.append({"symbol": symbol, "diagnosed_reason": f"Exception: {e}"})
+                log_and_print(f"Save error: {e}", "ERROR")
 
-        # === Save issues (only failed orders) ===
-        issues_file = calc_file.parent / ISSUES_FILE
-        try:
-            existing_issues = json.load(issues_file.open("r", encoding="utf-8")) if issues_file.exists() else []
-            with issues_file.open("w", encoding="utf-8") as f:
-                json.dump(existing_issues + issues_list, f, indent=2)
-        except Exception as e:
-            log_and_print(f"{broker_name}: Failed to write {ISSUES_FILE}: {e}", "ERROR")
+            mt5.shutdown()
 
-        mt5.shutdown()
+        log_and_print("\nALL $12–$20 ACCOUNTS: DUPLICATE SCAN + RISK GUARD = DONE", "SUCCESS")
+        return True
+
+    def _3usd_ratio_levels():
+        """
+        3USD RATIO LEVELS + TP UPDATE (PENDING + RUNNING POSITIONS) – BROKER-SAFE
+        - Balance $12–$19.99 only
+        - Auto-supports riskreward: 1, 2, 3, 4... (any integer)
+        - Case-insensitive config
+        - consistency → Dynamic TP = RISKREWARD × Risk
+        - martingale → TP = 1R (always), ignores RISKREWARD
+        - Smart ratio ladder (shows 1R, 2R, 3R only when needed)
+        """
+        TZ = pytz.timezone("Africa/Lagos")
+
+        log_and_print(f"\n{'='*80}", "INFO")
+        log_and_print("3USD RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
+        log_and_print(f"{'='*80}", "INFO")
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
+            LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
+            PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
+            SERVER        = cfg.get("SERVER")        or cfg.get("server")
+            SCALE         = (cfg.get("SCALE")        or cfg.get("scale")        or "").strip().lower()
+            STRATEGY      = (cfg.get("STRATEGY")    or cfg.get("strategy")    or "").strip().lower()
+
+            # === Case-insensitive riskreward lookup ===
+            riskreward_raw = None
+            for key in cfg:
+                if key.lower() == "riskreward":
+                    riskreward_raw = cfg[key]
+                    break
+
+            if riskreward_raw is None:
+                riskreward_raw = 2
+                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+
+            log_and_print(
+                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
+            )
+
+            # === Validate required fields ===
+            missing = []
+            for f in ("TERMINAL_PATH", "LOGIN_ID", "PASSWORD", "SERVER", "SCALE"):
+                if not locals()[f]: missing.append(f)
+            if missing:
+                log_and_print(f"Missing config: {', '.join(missing)} → SKIPPED", "ERROR")
+                continue
+
+            # === MT5 Init ===
+            if not os.path.exists(TERMINAL_PATH):
+                log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+                continue
+
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD,
+                                server=SERVER, timeout=30000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+
+            if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"MT5 login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account_info = mt5.account_info()
+            if not account_info:
+                log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account_info.balance
+            if not (12.0 <= balance < 20.0):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Balance: ${balance:.2f} → Scanning positions & pending orders...", "INFO")
+
+            # === Determine effective RR ===
+            try:
+                config_rr = int(float(riskreward_raw))
+                if config_rr < 1: config_rr = 1
+            except (ValueError, TypeError):
+                config_rr = 2
+                log_and_print(f"Invalid riskreward '{riskreward_raw}' → using 2R", "WARNING")
+
+            effective_rr = 1 if SCALE == "martingale" else config_rr
+            rr_source = "MARTINGALE (forced 1R)" if SCALE == "martingale" else f"CONFIG ({effective_rr}R)"
+            log_and_print(f"Effective TP: {effective_rr}R [{rr_source}]", "INFO")
+
+            # ------------------------------------------------------------------ #
+            # 1. PENDING LIMIT ORDERS
+            # ------------------------------------------------------------------ #
+            pending_orders = [
+                o for o in (mt5.orders_get() or [])
+                if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+                and getattr(o, 'sl', 0) != 0 and getattr(o, 'tp', 0) != 0
+            ]
+
+            # ------------------------------------------------------------------ #
+            # 2. RUNNING POSITIONS
+            # ------------------------------------------------------------------ #
+            running_positions = [
+                p for p in (mt5.positions_get() or [])
+                if p.type in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_SELL)
+                and p.sl != 0 and p.tp != 0
+            ]
+
+            # Merge into a single iterable with a flag
+            items_to_process = []
+            for o in pending_orders:
+                items_to_process.append(('PENDING', o))
+            for p in running_positions:
+                items_to_process.append(('RUNNING', p))
+
+            if not items_to_process:
+                log_and_print("No valid pending orders or running positions found.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Found {len(pending_orders)} pending + {len(running_positions)} running → total {len(items_to_process)}", "INFO")
+
+            processed_symbols = set()
+            updated_count = 0
+
+            for kind, obj in items_to_process:
+                symbol   = obj.symbol
+                ticket   = getattr(obj, 'ticket', None) or getattr(obj, 'order', None)
+                entry_price = getattr(obj, 'price_open', None) or getattr(obj, 'price_current', None)
+                sl_price = obj.sl
+                current_tp = obj.tp
+                is_buy   = obj.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY)
+
+                if symbol in processed_symbols:
+                    continue
+
+                risk_distance = abs(entry_price - sl_price)
+                if risk_distance <= 0:
+                    log_and_print(f"Zero risk distance on {symbol} ({kind}) → skipped", "WARNING")
+                    continue
+
+                symbol_info = mt5.symbol_info(symbol)
+                if not symbol_info:
+                    log_and_print(f"Symbol info missing: {symbol}", "WARNING")
+                    continue
+
+                digits = symbol_info.digits
+                def r(p): return round(p, digits)
+
+                entry_price = r(entry_price)
+                sl_price    = r(sl_price)
+                current_tp  = r(current_tp)
+                direction   = 1 if is_buy else -1
+                target_tp   = r(entry_price + direction * effective_rr * risk_distance)
+
+                # ----- Ratio ladder (display only) -----
+                ratio1 = r(entry_price + direction * 1 * risk_distance)
+                ratio2 = r(entry_price + direction * 2 * risk_distance)
+                ratio3 = r(entry_price + direction * 3 * risk_distance) if effective_rr >= 3 else None
+
+                print(f"\n{symbol} | {kind} | Target: {effective_rr}R ({SCALE.upper()})")
+                print(f"  Entry : {entry_price}")
+                print(f"  1R    : {ratio1}")
+                print(f"  2R    : {ratio2}")
+                if ratio3:
+                    print(f"  3R    : {ratio3}")
+                print(f"  TP    : {current_tp} → ", end="")
+
+                # ----- Modify TP -----
+                tolerance = 10 ** -digits
+                if abs(current_tp - target_tp) > tolerance:
+                    if kind == "PENDING":
+                        # modify pending order
+                        request = {
+                            "action": mt5.TRADE_ACTION_MODIFY,
+                            "order": ticket,
+                            "price": entry_price,
+                            "sl": sl_price,
+                            "tp": target_tp,
+                            "type": obj.type,
+                            "type_time": obj.type_time,
+                            "type_filling": obj.type_filling,
+                            "magic": getattr(obj, 'magic', 0),
+                            "comment": getattr(obj, 'comment', "")
+                        }
+                        if hasattr(obj, 'expiration') and obj.expiration:
+                            request["expiration"] = obj.expiration
+                    else:  # RUNNING
+                        # modify open position (SL/TP only)
+                        request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": ticket,
+                            "sl": sl_price,
+                            "tp": target_tp,
+                            "symbol": symbol
+                        }
+
+                    result = mt5.order_send(request)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"{target_tp} [UPDATED]")
+                        log_and_print(
+                            f"TP → {effective_rr}R | {symbol} | {kind} | {current_tp} → {target_tp} [{SCALE.upper()}]",
+                            "SUCCESS"
+                        )
+                        updated_count += 1
+                    else:
+                        err = result.comment if result else "Unknown"
+                        print(f"{current_tp} [FAILED: {err}]")
+                        log_and_print(f"TP UPDATE FAILED | {symbol} | {kind} | {err}", "ERROR")
+                else:
+                    print(f"{current_tp} [OK]")
+
+                print(f"  SL    : {sl_price}")
+                processed_symbols.add(symbol)
+
+            mt5.shutdown()
+            log_and_print(
+                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
+                "SUCCESS"
+            )
+
         log_and_print(
-            f"{broker_name}: Real orders completed – Placed: {total_placed}, Failed: {total_failed}, Skipped: {total_skipped}",
+            "\nALL $12–$20 ACCOUNTS: R:R UPDATE (PENDING + RUNNING) – "
+            "consistency=N×R, martingale=1R = DONE",
             "SUCCESS"
         )
+        return True
+    place_3usd_orders()
 
-    log_and_print("All real brokers processed.", "SUCCESS")
-    
 def deduplicate_pending_orders():
     r"""
     Deduplicate pending BUY_LIMIT / SELL_LIMIT orders.
@@ -3019,378 +3696,6 @@ def deduplicate_pending_orders():
 
     log_and_print("All brokers deduplicated successfully.", "SUCCESS")
 
-def filterout_overleveragetrades(demo):
-    r"""
-    Enforce risk rules:
-      - If balance < 3.8 USD → NO trades allowed → close ALL positions + cancel ALL pending orders
-      - For each canceled/closed trade → calculate and log risk_usd
-      - Else → close any position with risk > allowed_risk_usd
-
-    Parameters
-    ----------
-    demo : bool
-        True  → include demo accounts
-        False → skip demo accounts
-    """
-    if not isinstance(demo, bool):
-        log_and_print(f"Invalid 'demo' value: {demo}. Expected bool. Using True.", "WARNING")
-        demo = True
-
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-    ISSUES_FILE = "ordersissues.json"
-    OVERLEVERAGE_REPORT = "overleverage_report.json"
-
-    MIN_BALANCE_FOR_TRADING = 3.8
-
-    BALANCE_TO_RISK = [
-        (0.0, 3.8, "risk_0_50cent_usd", 0.5),
-        (3.8, 8.0, "risk_1_usd", 1.0),
-        (8.0, 12.0, "risk_2_usd", 2.0),
-        (12.0, 16.0, "risk_3_usd", 3.0),
-        (16.0, 96.0, "risk_4_usd", 4.0),
-        (96.0, 150.0, "risk_8_usd", 8.0),
-        (150.0, float('inf'), "risk_16_usd", 16.0),
-    ]
-
-    def _get_allowed_risk(balance):
-        for min_bal, max_bal, folder, risk_usd in BALANCE_TO_RISK:
-            if min_bal <= balance < max_bal:
-                return risk_usd, folder
-        return 16.0, "risk_16_usd"
-
-    def _calculate_pending_risk(order, symbol_info):
-        """Calculate risk for pending BUY_LIMIT / SELL_LIMIT order."""
-        try:
-            price = order.price_open
-            sl = order.sl
-            volume = order.volume
-            if not all([price, sl, volume]) or sl == 0:
-                return None
-            point = symbol_info.point
-            tick_value = symbol_info.trade_tick_value
-            tick_size = symbol_info.trade_tick_size
-            if not all([point, tick_value, tick_size]):
-                return None
-
-            price_diff = abs(price - sl)
-            points = price_diff / point
-            contract_size = tick_value / tick_size * point
-            risk = points * volume * contract_size
-            return round(risk, 2)
-        except:
-            return None
-
-    def _calculate_position_risk(position, symbol_info):
-        try:
-            price_open = position.price_open
-            sl = position.sl
-            volume = position.volume
-            if not all([price_open, sl, volume]) or sl == 0:
-                return None
-            point = symbol_info.point
-            tick_value = symbol_info.trade_tick_value
-            tick_size = symbol_info.trade_tick_size
-            if not all([point, tick_value, tick_size]):
-                return None
-
-            price_diff = abs(price_open - sl)
-            points = price_diff / point
-            contract_size = tick_value / tick_size * point
-            risk = points * volume * contract_size
-            return round(risk, 2)
-        except:
-            return None
-
-    # ------------------------------------------------------------------ #
-    for broker_name, broker_cfg in brokersdictionary.items():
-        account_type = broker_cfg.get("ACCOUNT", "").lower()
-
-        if account_type == "demo" and not demo:
-            log_and_print(f"Skipping demo broker {broker_name} (demo=False)", "INFO")
-            continue
-
-        if account_type not in ("demo", "real"):
-            log_and_print(f"Skipping {broker_name} (account type: {account_type})", "INFO")
-            continue
-
-        TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
-        LOGIN_ID      = broker_cfg["LOGIN_ID"]
-        PASSWORD      = broker_cfg["PASSWORD"]
-        SERVER        = broker_cfg["SERVER"]
-
-        log_and_print(f"Checking over-leverage for {broker_name} ({account_type})", "INFO")
-
-        # ------------------- MT5 connection -------------------
-        if not os.path.exists(TERMINAL_PATH):
-            log_and_print(f"{broker_name}: Terminal path missing", "ERROR")
-            continue
-
-        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD,
-                              server=SERVER, timeout=30000):
-            log_and_print(f"{broker_name}: MT5 init failed: {mt5.last_error()}", "ERROR")
-            continue
-
-        if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
-            log_and_print(f"{broker_name}: MT5 login failed: {mt5.last_error()}", "ERROR")
-            mt5.shutdown()
-            continue
-
-        account_info = mt5.account_info()
-        if not account_info:
-            log_and_print(f"{broker_name}: Failed to get account info", "ERROR")
-            mt5.shutdown()
-            continue
-
-        balance = account_info.balance
-        log_and_print(f"{broker_name}: Balance = ${balance:.2f}", "INFO")
-
-        report_entries = []
-        issues_list = []
-        now_str = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f+01:00")
-
-        # ======================================================
-        # CASE 1: Balance < 3.8 → ZERO TOLERANCE
-        # ======================================================
-        if balance < MIN_BALANCE_FOR_TRADING:
-            log_and_print(f"{broker_name}: Balance ${balance:.2f} < ${MIN_BALANCE_FOR_TRADING} → ZERO TRADES ALLOWED", "WARNING")
-
-            # --- Cancel ALL pending orders (with risk calculation) ---
-            pending = mt5.orders_get()
-            for order in (pending or []):
-                if order.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
-                    continue
-
-                symbol_info = mt5.symbol_info(order.symbol)
-                if not symbol_info:
-                    log_and_print(f"{broker_name}: No symbol info for pending {order.symbol}", "WARNING")
-                    continue
-
-                risk_usd = _calculate_pending_risk(order, symbol_info)
-                order_type_str = "BUY_LIMIT" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL_LIMIT"
-
-                del_req = {"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket}
-                result = mt5.order_send(del_req)
-
-                status = "CANCELED"
-                err_msg = None
-                if result is None:
-                    status = "CANCEL FAILED (None)"
-                    err_msg = "order_send returned None"
-                elif result.retcode != mt5.TRADE_RETCODE_DONE:
-                    status = f"CANCEL FAILED ({result.retcode})"
-                    err_msg = result.comment
-
-                log_msg = (
-                    f"{broker_name} | {order.symbol} PENDING {order_type_str} "
-                    f"ticket {order.ticket} @ {order.price_open}"
-                )
-                if risk_usd is not None:
-                    log_msg += f" risk ${risk_usd}"
-                log_msg += f" → {status} (low balance)"
-
-                log_and_print(log_msg, "INFO" if status == "CANCELED" else "WARNING")
-
-                report_entries.append({
-                    "symbol": order.symbol,
-                    "ticket": order.ticket,
-                    "type": "PENDING",
-                    "order_type": order_type_str,
-                    "price": order.price_open,
-                    "volume": order.volume,
-                    "risk_usd": risk_usd,
-                    "allowed_usd": 0.0,
-                    "action": status.split()[0],
-                    "reason": "Low balance < $3.8",
-                    "error_msg": err_msg,
-                    "timestamp": now_str
-                })
-
-                if status != "CANCELED":
-                    issues_list.append({"symbol": order.symbol, "diagnosed_reason": f"Cancel failed: {err_msg}"})
-
-            # --- Close ALL open positions (with risk) ---
-            positions = mt5.positions_get()
-            for pos in (positions or []):
-                symbol_info = mt5.symbol_info(pos.symbol)
-                tick = mt5.symbol_info_tick(pos.symbol)
-                if not symbol_info or not tick:
-                    log_and_print(f"{broker_name}: Missing info for {pos.symbol} ticket {pos.ticket}", "WARNING")
-                    continue
-
-                risk_usd = _calculate_position_risk(pos, symbol_info)
-                direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
-
-                close_price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
-                close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-
-                close_req = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": pos.symbol,
-                    "volume": pos.volume,
-                    "type": close_type,
-                    "position": pos.ticket,
-                    "price": close_price,
-                    "deviation": 20,
-                    "magic": 123457,
-                    "comment": "CloseLowBalance",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
-                }
-
-                result = mt5.order_send(close_req)
-                status = "CLOSED"
-                err_msg = None
-                if result is None:
-                    status = "CLOSE FAILED (None)"
-                    err_msg = "order_send returned None"
-                elif result.retcode != mt5.TRADE_RETCODE_DONE:
-                    status = f"CLOSE FAILED ({result.retcode})"
-                    err_msg = result.comment
-
-                log_msg = (
-                    f"{broker_name} | {pos.symbol} {direction} ticket {pos.ticket} "
-                    f"@ {pos.price_open} volume {pos.volume}"
-                )
-                if risk_usd is not None:
-                    log_msg += f" risk ${risk_usd}"
-                log_msg += f" → {status} (low balance)"
-
-                log_and_print(log_msg, "INFO" if status == "CLOSED" else "WARNING")
-
-                report_entries.append({
-                    "symbol": pos.symbol,
-                    "ticket": pos.ticket,
-                    "type": "POSITION",
-                    "direction": direction,
-                    "volume": pos.volume,
-                    "risk_usd": risk_usd,
-                    "allowed_usd": 0.0,
-                    "action": status.split()[0],
-                    "reason": "Low balance < $3.8",
-                    "error_msg": err_msg,
-                    "timestamp": now_str
-                })
-
-                if status != "CLOSED":
-                    issues_list.append({"symbol": pos.symbol, "diagnosed_reason": f"Close failed: {err_msg}"})
-
-            mt5.shutdown()
-            log_and_print(f"{broker_name}: Zero-tolerance cleanup complete.", "SUCCESS")
-            continue
-
-        # ======================================================
-        # CASE 2: Normal risk enforcement
-        # ======================================================
-        allowed_risk_usd, _ = _get_allowed_risk(balance)
-        log_and_print(f"{broker_name}: Max risk per trade = ${allowed_risk_usd}", "INFO")
-
-        positions = mt5.positions_get()
-        total_closed = total_kept = 0
-
-        for pos in (positions or []):
-            symbol_info = mt5.symbol_info(pos.symbol)
-            if not symbol_info:
-                log_and_print(f"{broker_name}: No symbol info for {pos.symbol}", "WARNING")
-                total_kept += 1
-                continue
-
-            risk_usd = _calculate_position_risk(pos, symbol_info)
-            if risk_usd is None:
-                log_and_print(f"{broker_name}: Cannot calculate risk for {pos.symbol} ticket {pos.ticket}", "WARNING")
-                total_kept += 1
-                continue
-
-            if risk_usd > allowed_risk_usd + 1e-6:
-                tick = mt5.symbol_info_tick(pos.symbol)
-                if not tick:
-                    log_and_print(f"{broker_name}: No tick for {pos.symbol}", "WARNING")
-                    total_kept += 1
-                    continue
-
-                close_price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
-                close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-
-                close_req = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": pos.symbol,
-                    "volume": pos.volume,
-                    "type": close_type,
-                    "position": pos.ticket,
-                    "price": close_price,
-                    "deviation": 20,
-                    "magic": 123457,
-                    "comment": "CloseOverLeverage",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
-                }
-
-                result = mt5.order_send(close_req)
-                status = "CLOSED"
-                err_msg = None
-                if result is None:
-                    status = "CLOSE FAILED (None)"
-                    err_msg = "order_send returned None"
-                elif result.retcode != mt5.TRADE_RETCODE_DONE:
-                    status = f"CLOSE FAILED ({result.retcode})"
-                    err_msg = result.comment
-
-                direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
-                log_and_print(
-                    f"{broker_name} | {pos.symbol} {direction} ticket {pos.ticket} "
-                    f"risk ${risk_usd} > ${allowed_risk_usd} → {status}",
-                    "INFO" if status == "CLOSED" else "WARNING"
-                )
-
-                report_entries.append({
-                    "symbol": pos.symbol,
-                    "ticket": pos.ticket,
-                    "type": "POSITION",
-                    "direction": direction,
-                    "volume": pos.volume,
-                    "risk_usd": risk_usd,
-                    "allowed_usd": allowed_risk_usd,
-                    "action": status.split()[0],
-                    "error_msg": err_msg,
-                    "timestamp": now_str
-                })
-
-                if status == "CLOSED":
-                    total_closed += 1
-                else:
-                    issues_list.append({"symbol": pos.symbol, "diagnosed_reason": f"Close failed: {err_msg}"})
-            else:
-                total_kept += 1
-
-        # ------------------- Save reports -------------------
-        broker_dir = Path(BASE_INPUT_DIR) / broker_name
-        report_file = broker_dir / OVERLEVERAGE_REPORT
-        try:
-            existing = json.load(report_file.open("r", encoding="utf-8")) if report_file.exists() else []
-        except:
-            existing = []
-        all_report = existing + report_entries
-        try:
-            with report_file.open("w", encoding="utf-8") as f:
-                json.dump(all_report, f, indent=2)
-        except Exception as e:
-            log_and_print(f"{broker_name}: Failed to write {OVERLEVERAGE_REPORT}: {e}", "ERROR")
-
-        issues_path = broker_dir / ISSUES_FILE
-        try:
-            existing_issues = json.load(issues_path.open("r", encoding="utf-8")) if issues_path.exists() else []
-            with issues_path.open("w", encoding="utf-8") as f:
-                json.dump(existing_issues + issues_list, f, indent=2)
-        except Exception as e:
-            log_and_print(f"{broker_name}: Failed to update {ISSUES_FILE}: {e}", "ERROR")
-
-        mt5.shutdown()
-        log_and_print(
-            f"{broker_name}: Risk filter complete – Kept: {total_kept}, Closed: {total_closed}",
-            "SUCCESS"
-        )
-
-    log_and_print("All brokers filtered for over-leverage and low balance.", "SUCCESS")
-
 def BreakevenRunningPositions():
     r"""
     Staged Breakeven:
@@ -3598,6 +3903,287 @@ def BreakevenRunningPositions():
 
     log_and_print("All brokers breakeven processed.", "SUCCESS")  
 
+def martingale_enforcement():
+    """
+    MARTINGALE ENFORCER v5.2 – SMART KILL + REAL HISTORY SCALING
+    ------------------------------------------------------------
+    • Kills unwanted pending orders
+    • Uses mt5.history_deals_get() with smart filtering
+    • Checks last 2 closed trades per symbol
+    • Scales pending limit order volume ×2 for each losing symbol
+    • Delete + recreate if volume change needed
+    • Works on Bybit MT5 (tested with real history)
+    """
+    import time
+    from collections import defaultdict, deque
+    from datetime import datetime, timedelta
+
+    log_and_print(f"\n{'='*100}", "INFO")
+    log_and_print("MARTINGALE ENFORCER v5.2 – SMART KILL + HISTORY SCALING", "INFO")
+    log_and_print(f"{'='*100}", "INFO")
+
+    for broker_name, cfg in brokersdictionary.items():
+        SCALE = (cfg.get("SCALE") or cfg.get("scale") or "").lower()
+        if SCALE != "martingale":
+            continue
+
+        TERMINAL_PATH = cfg["TERMINAL_PATH"]
+        LOGIN_ID      = int(cfg["LOGIN_ID"])
+        PASSWORD      = cfg["PASSWORD"]
+        SERVER        = cfg["SERVER"]
+        raw           = cfg.get("MARTINGALE_MARKETS", "")
+        allowed       = {s.strip().lower() for s in raw.replace(",", " ").split() if s.strip()}
+
+        if not allowed:
+            continue
+
+        log_and_print(f"\n{broker_name.upper()} → LOCKING TO: {', '.join(sorted(allowed)).upper()}", "INFO")
+
+        # ------------------------------------------------------------------ #
+        # 1. CONNECT / RECONNECT
+        # ------------------------------------------------------------------ #
+        def connect():
+            mt5.shutdown()
+            time.sleep(0.3)
+            if not mt5.initialize(path=TERMINAL_PATH, login=LOGIN_ID,
+                                  password=PASSWORD, server=SERVER, timeout=60000):
+                return False
+            if not mt5.login(LOGIN_ID, password=PASSWORD, server=SERVER):
+                return False
+            time.sleep(0.7)
+            return True
+
+        if not connect():
+            log_and_print("INITIAL CONNECTION FAILED", "ERROR")
+            continue
+
+        # ------------------------------------------------------------------ #
+        # 2. KILL UNWANTED PENDING ORDERS
+        # ------------------------------------------------------------------ #
+        def get_orders():
+            return mt5.orders_get() or []
+
+        orders = get_orders()
+        unwanted = [
+            o for o in orders
+            if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+            and o.symbol.lower() not in allowed
+        ]
+
+        killed = skipped = failed = 0
+        for order in unwanted:
+            symbol = order.symbol
+            ticket = order.ticket
+            log_and_print(f"{symbol} PENDING → Attempting removal...", "WARNING")
+
+            if not connect():
+                log_and_print(f"{symbol} → Reconnect failed", "ERROR")
+                failed += 1
+                continue
+
+            req = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
+            res = mt5.order_send(req)
+
+            if not res:
+                log_and_print(f"{symbol} → No response", "ERROR")
+                failed += 1
+                continue
+
+            if res.retcode == mt5.TRADE_RETCODE_DONE:
+                log_and_print(f"{symbol} → REMOVED", "SUCCESS")
+                killed += 1
+            elif "market closed" in res.comment.lower():
+                log_and_print(f"{symbol} → Market closed → SKIPPED (safe)", "INFO")
+                skipped += 1
+            elif res.retcode in (mt5.TRADE_RETCODE_TRADE_DISABLED, mt5.TRADE_RETCODE_NO_CONNECTION):
+                log_and_print(f"{symbol} → {res.comment} → SKIPPED", "INFO")
+                skipped += 1
+            else:
+                log_and_print(f"{symbol} → FAILED: {res.comment}", "ERROR")
+                failed += 1
+            time.sleep(0.4)
+
+        # ------------------------------------------------------------------ #
+        # 3. GET CLOSED HISTORY (LAST 2 TRADES PER SYMBOL)
+        # ------------------------------------------------------------------ #
+        if not connect():
+            mt5.shutdown()
+            continue
+
+        # Pull recent deals (last 24h should be enough)
+        to_date = datetime.now()
+        from_date = to_date - timedelta(hours=24)
+        all_deals = mt5.history_deals_get(from_date, to_date) or []
+
+        # Filter: only closed positions (DEAL_ENTRY_OUT) and our symbols
+        closed_deals = [
+            d for d in all_deals
+            if d.entry == mt5.DEAL_ENTRY_OUT
+            and d.symbol.lower() in allowed
+            and d.profit is not None
+        ]
+
+        # Sort newest first
+        closed_deals.sort(key=lambda x: x.time, reverse=True)
+
+        log_and_print(f"Found {len(closed_deals)} closed deal(s) in last 24h for Martingale markets", "INFO")
+
+        # Build: symbol → list of (deal, volume, profit) — newest first
+        history_per_symbol = defaultdict(list)
+        for deal in closed_deals:
+            sym = deal.symbol.lower()
+            history_per_symbol[sym].append({
+                'deal': deal,
+                'volume': deal.volume,
+                'profit': deal.profit,
+                'time': deal.time
+            })
+
+        # ------------------------------------------------------------------ #
+        # 4. DETERMINE WHICH SYMBOLS TO SCALE
+        # ------------------------------------------------------------------ #
+        symbols_to_scale = {}  # sym → (original_volume, price, order_type)
+
+        # We look at **last 2 closed trades globally**, but per symbol
+        recent_losses = []
+        for deal in closed_deals[:10]:  # safety cap
+            if deal.profit < 0:
+                recent_losses.append({
+                    'symbol': deal.symbol.lower(),
+                    'volume': deal.volume,
+                    'profit': deal.profit,
+                    'time': deal.time
+                })
+            if len(recent_losses) >= 2:
+                break
+
+        log_and_print(f"Last {len(recent_losses)} losing trade(s): {[d['symbol'].upper() for d in recent_losses]}", "INFO")
+
+        # Rule: If last 2 are losses → scale both (if different), or only last (if same)
+        if len(recent_losses) >= 1:
+            last = recent_losses[0]
+            sym1 = last['symbol']
+            vol1 = last['volume']
+
+            # Find pending order
+            pending = [o for o in get_orders() if o.symbol.lower() == sym1
+                       and o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)]
+
+            if pending:
+                order = pending[0]
+                if order.volume_current < vol1 * 2:
+                    symbols_to_scale[sym1] = (vol1, order.price_open, order.type)
+                    log_and_print(f"{sym1.upper()} → Last loss {vol1} → will scale pending to {vol1*2}", "INFO")
+                else:
+                    log_and_print(f"{sym1.upper()} → Already scaled (current {order.volume_current} ≥ {vol1*2})", "INFO")
+            else:
+                log_and_print(f"{sym1.upper()} → No pending order → cannot scale", "INFO")
+
+            # If 2nd loss exists and is DIFFERENT symbol
+            if len(recent_losses) >= 2:
+                second = recent_losses[1]
+                sym2 = second['symbol']
+                vol2 = second['volume']
+
+                if sym2 != sym1:
+                    pending2 = [o for o in get_orders() if o.symbol.lower() == sym2
+                                and o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)]
+                    if pending2:
+                        order2 = pending2[0]
+                        if order2.volume_current < vol2 * 2:
+                            symbols_to_scale[sym2] = (vol2, order2.price_open, order2.type)
+                            log_and_print(f"{sym2.upper()} → 2nd loss {vol2} → will scale pending to {vol2*2}", "INFO")
+                        else:
+                            log_and_print(f"{sym2.upper()} → Already scaled", "INFO")
+                    else:
+                        log_and_print(f"{sym2.upper()} → No pending order → cannot scale", "INFO")
+
+        # ------------------------------------------------------------------ #
+        # 5. APPLY SCALING: DELETE + RECREATE
+        # ------------------------------------------------------------------ #
+        scaled = not_scaled = 0
+        for sym, (orig_vol, price, order_type) in symbols_to_scale.items():
+            if not connect():
+                log_and_print(f"{sym.upper()} → Reconnect failed before scaling", "ERROR")
+                continue
+
+            # Re-get orders
+            current_orders = get_orders()
+            pending = [o for o in current_orders if o.symbol.lower() == sym
+                       and o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)]
+
+            if not pending:
+                log_and_print(f"{sym.upper()} → Pending order vanished → SKIPPED", "WARNING")
+                not_scaled += 1
+                continue
+
+            order = pending[0]
+            new_vol = orig_vol * 2
+
+            if order.volume_current >= new_vol:
+                log_and_print(f"{sym.upper()} → Already at {order.volume_current} → SKIPPED", "INFO")
+                not_scaled += 1
+                continue
+
+            # DELETE
+            del_req = {"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket}
+            del_res = mt5.order_send(del_req)
+            if del_res.retcode != mt5.TRADE_RETCODE_DONE:
+                log_and_print(f"{sym.upper()} → DELETE FAILED: {del_res.comment}", "ERROR")
+                continue
+
+            time.sleep(0.3)
+
+            # RECREATE
+            new_req = {
+                "action": mt5.TRADE_ACTION_PENDING,
+                "symbol": sym.upper(),
+                "volume": new_vol,
+                "type": order_type,
+                "price": price,
+                "sl": order.sl,
+                "tp": order.tp,
+                "deviation": 20,
+                "magic": order.magic,
+                "comment": f"MartingaleScaled_{new_vol}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+
+            new_res = mt5.order_send(new_req)
+            if new_res and new_res.retcode == mt5.TRADE_RETCODE_DONE:
+                log_and_print(f"{sym.upper()} → SCALED {order.volume_current} → {new_vol} @ {price}", "SUCCESS")
+                scaled += 1
+            else:
+                comment = new_res.comment if new_res else "None"
+                log_and_print(f"{sym.upper()} → PLACE FAILED: {comment}", "ERROR")
+
+            time.sleep(0.5)
+
+        # ------------------------------------------------------------------ #
+        # 6. 1R ENFORCEMENT (placeholder)
+        # ------------------------------------------------------------------ #
+        if connect():
+            for pos in mt5.positions_get() or []:
+                if pos.symbol.lower() in allowed:
+                    pass  # ← your 1R logic
+
+        mt5.shutdown()
+
+        # ------------------------------------------------------------------ #
+        # 7. FINAL REPORT
+        # ------------------------------------------------------------------ #
+        log_and_print(f"\n{broker_name.upper()} → ENFORCEMENT COMPLETE", "SUCCESS")
+        log_and_print(f"   REMOVED     : {killed}", "SUCCESS")
+        log_and_print(f"   SKIPPED     : {skipped} (market closed / safe)", "INFO")
+        log_and_print(f"   Failed      : {failed}", "WARNING")
+        log_and_print(f"   SCALED      : {scaled}", "SUCCESS")
+        log_and_print(f"   NOT SCALED  : {not_scaled}", "INFO")
+
+    log_and_print("\nMARTINGALE v5.2 → HISTORY CHECKED. SCALED. DONE.", "SUCCESS")
+    return True
+
+
 def _write_global_error_report(base_dir, risk_folders, error_msg):
     for folder_name in risk_folders.values():
         folder = Path(base_dir) / folder_name
@@ -3624,11 +4210,10 @@ def _write_global_error_report(base_dir, risk_folders, error_msg):
 def calc_and_placeorders():
     calculate_symbols_sl_tp_prices()
     log_and_print("Starting order placement …", "INFO")
-    place_demo_orders()
-    place_real_orders()
+    _12_20_orders()
     deduplicate_pending_orders()
-    filterout_overleveragetrades(demo=False) 
     BreakevenRunningPositions()
+    martingale_enforcement()
 
 def time_orders():
     """Run the updateorders script for M5 timeframe."""
@@ -3663,14 +4248,8 @@ def fetch_charts_all_brokers(
     - Only run time_orders() + full fetch when current time >= next_schedule
     - BREAKEVEN runs EVERY 10 SECONDS in background thread (independent)
     """
-    import time
-    import json
-    import os
-    from datetime import datetime
-    import pytz
-    import threading
-    import traceback
-
+    delete_issue_jsons()
+    
     # File paths
     current_time_path = r"C:\xampp\htdocs\chronedge\current_time.json"
     fullorders_path = r"C:\xampp\htdocs\chronedge\fullordersschedules.json"
@@ -3788,7 +4367,7 @@ def fetch_charts_all_brokers(
                 log_and_print("Starting chart generation process for all brokers with symbols from symbolsmatch.json, processing one symbol per market category per round until all symbols are exhausted", "INFO")
 
                 # Load symbolsmatch.json
-                symbolsmatch_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbolsmatch.json"
+                symbolsmatch_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\symbolsmatch.json"
                 try:
                     with open(symbolsmatch_path, 'r') as f:
                         symbolsmatch_data = json.load(f)
@@ -3805,7 +4384,7 @@ def fetch_charts_all_brokers(
                     continue
 
                 # Load allsymbolsvolumesandrisk.json to map symbols to market categories
-                allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allsymbolsvolumesandrisk.json"
+                allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allsymbolsvolumesandrisk.json"
                 symbol_to_category = {}
                 try:
                     with open(allsymbols_json_path, 'r') as f:
@@ -4034,6 +4613,6 @@ if __name__ == "__main__":
         log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
     else:
         log_and_print("Process failed. Check error log for details.", "ERROR")
-        
+
         
         

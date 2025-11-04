@@ -1,0 +1,134 @@
+[
+  {
+    "market": "NETH25",
+    "limit_order": "sell_limit",
+    "timeframe": "30m",
+    "entry_price": 974.45,
+    "volume": 0.1,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "NETH25",
+    "limit_order": "sell_limit",
+    "timeframe": "1h",
+    "entry_price": 976.9,
+    "volume": 0.1,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "SPI200",
+    "limit_order": "sell_limit",
+    "timeframe": "15m",
+    "entry_price": 8885.38,
+    "volume": 0.1,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0065456,
+    "broker": "bybit1"
+  },
+  {
+    "market": "SPI200",
+    "limit_order": "sell_limit",
+    "timeframe": "4h",
+    "entry_price": 8907.68,
+    "volume": 0.1,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0065456,
+    "broker": "bybit1"
+  },
+  {
+    "market": "EU50",
+    "limit_order": "sell_limit",
+    "timeframe": "4h",
+    "entry_price": 5669.15,
+    "volume": 0.1,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "bybit1"
+  },
+  {
+    "market": "FRA40",
+    "limit_order": "sell_limit",
+    "timeframe": "30m",
+    "entry_price": 8151.7,
+    "volume": 0.1,
+    "riskusd_amount": 8.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "FRA40",
+    "limit_order": "sell_limit",
+    "timeframe": "1h",
+    "entry_price": 8132.45,
+    "volume": 0.1,
+    "riskusd_amount": 8.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "GER40",
+    "limit_order": "buy_limit",
+    "timeframe": "4h",
+    "entry_price": 23611.3,
+    "volume": 0.1,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "SWI20",
+    "limit_order": "buy_limit",
+    "timeframe": "4h",
+    "entry_price": 12170.55,
+    "volume": 0.1,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.01,
+    "tick_value": 0.012424521034714111,
+    "broker": "bybit1"
+  },
+  {
+    "market": "US SP 500",
+    "limit_order": "sell_limit",
+    "timeframe": "1h",
+    "entry_price": 6869.52,
+    "volume": 0.1,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv2"
+  },
+  {
+    "market": "NETH25",
+    "limit_order": "sell_limit",
+    "timeframe": "30m",
+    "entry_price": 974.45,
+    "volume": 0.1,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  },
+  {
+    "market": "NETH25",
+    "limit_order": "sell_limit",
+    "timeframe": "1h",
+    "entry_price": 976.9,
+    "volume": 0.1,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.0115371,
+    "broker": "bybit1"
+  }
+]

@@ -1,0 +1,156 @@
+[
+  {
+    "market": "Volatility 250 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "15m",
+    "entry_price": 6.89,
+    "volume": 0.5,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 250 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "30m",
+    "entry_price": 7.86,
+    "volume": 0.5,
+    "riskusd_amount": 1.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 75 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "15m",
+    "entry_price": 4898.46,
+    "volume": 0.05,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv2"
+  },
+  {
+    "market": "Volatility 75 (1s) Index",
+    "limit_order": "sell_limit",
+    "timeframe": "15m",
+    "entry_price": 5033.33,
+    "volume": 0.05,
+    "riskusd_amount": 4.0,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv2"
+  },
+  {
+    "market": "Volatility 15 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "15m",
+    "entry_price": 13191.019,
+    "volume": 0.2,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 15 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "15m",
+    "entry_price": 13191.019,
+    "volume": 0.2,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv2"
+  },
+  {
+    "market": "Volatility 25 Index",
+    "limit_order": "buy_limit",
+    "timeframe": "30m",
+    "entry_price": 2358.75,
+    "volume": 0.5,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 25 Index",
+    "limit_order": "buy_limit",
+    "timeframe": "1h",
+    "entry_price": 2387.457,
+    "volume": 0.5,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 25 Index",
+    "limit_order": "sell_limit",
+    "timeframe": "1h",
+    "entry_price": 2440.864,
+    "volume": 0.5,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 25 Index",
+    "limit_order": "buy_limit",
+    "timeframe": "30m",
+    "entry_price": 2358.75,
+    "volume": 0.5,
+    "riskusd_amount": 16.0,
+    "tick_size": 0.001,
+    "tick_value": 0.001,
+    "broker": "deriv2"
+  },
+  {
+    "market": "Volatility 150 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "30m",
+    "entry_price": 70.88,
+    "volume": 0.1,
+    "riskusd_amount": 0.5,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 150 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "4h",
+    "entry_price": 70.88,
+    "volume": 0.1,
+    "riskusd_amount": 0.5,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv1"
+  },
+  {
+    "market": "Volatility 150 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "30m",
+    "entry_price": 70.88,
+    "volume": 0.1,
+    "riskusd_amount": 0.5,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv2"
+  },
+  {
+    "market": "Volatility 150 (1s) Index",
+    "limit_order": "buy_limit",
+    "timeframe": "4h",
+    "entry_price": 70.88,
+    "volume": 0.1,
+    "riskusd_amount": 0.5,
+    "tick_size": 0.01,
+    "tick_value": 0.01,
+    "broker": "deriv2"
+  }
+]

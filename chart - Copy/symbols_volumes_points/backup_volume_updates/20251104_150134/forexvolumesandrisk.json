@@ -1,0 +1,268 @@
+{
+  "xxxchf": [
+    {
+      "market": "USDCHF",
+      "limit_order": "buy_limit",
+      "timeframe": "1h",
+      "entry_price": 0.79369,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.2424521034714113,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDCHF",
+      "limit_order": "buy_limit",
+      "timeframe": "4h",
+      "entry_price": 0.79683,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.2424521034714113,
+      "broker": "bybit1"
+    }
+  ],
+  "xxxjpy": [
+    {
+      "market": "USDJPY",
+      "limit_order": "buy_limit",
+      "timeframe": "30m",
+      "entry_price": 152.736,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 0.001,
+      "tick_value": 0.6491736020046481,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDJPY",
+      "limit_order": "buy_limit",
+      "timeframe": "4h",
+      "entry_price": 153.256,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 0.001,
+      "tick_value": 0.6491736020046481,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDJPY",
+      "limit_order": "buy_limit",
+      "timeframe": "30m",
+      "entry_price": 153.059,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 0.001,
+      "tick_value": 0.6490429861169705,
+      "broker": "deriv2"
+    }
+  ],
+  "xxxnzd": [],
+  "xxxusd": [
+    {
+      "market": "GBPUSD",
+      "limit_order": "buy_limit",
+      "timeframe": "15m",
+      "entry_price": 1.3137699999999999,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "bybit1"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "buy_limit",
+      "timeframe": "15m",
+      "entry_price": 1.31375,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv1"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "buy_limit",
+      "timeframe": "15m",
+      "entry_price": 1.31267,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv1"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "sell_limit",
+      "timeframe": "30m",
+      "entry_price": 1.3324500000000001,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv1"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "buy_limit",
+      "timeframe": "15m",
+      "entry_price": 1.31375,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv2"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "buy_limit",
+      "timeframe": "15m",
+      "entry_price": 1.31267,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv2"
+    },
+    {
+      "market": "GBPUSD",
+      "limit_order": "sell_limit",
+      "timeframe": "30m",
+      "entry_price": 1.3324500000000001,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "broker": "deriv2"
+    }
+  ],
+  "usdxxx": [
+    {
+      "market": "USDCAD",
+      "limit_order": "sell_limit",
+      "timeframe": "15m",
+      "entry_price": 1.40116,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7134550487646527,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "30m",
+      "entry_price": 1.39919,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7134550487646527,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "1h",
+      "entry_price": 1.39433,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7134550487646527,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "4h",
+      "entry_price": 1.39551,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7134550487646527,
+      "broker": "bybit1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "sell_limit",
+      "timeframe": "15m",
+      "entry_price": 1.40116,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7136281569125592,
+      "broker": "deriv1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "30m",
+      "entry_price": 1.39919,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7136281569125592,
+      "broker": "deriv1"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "sell_limit",
+      "timeframe": "15m",
+      "entry_price": 1.40116,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7136281569125592,
+      "broker": "deriv2"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "30m",
+      "entry_price": 1.39919,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7136281569125592,
+      "broker": "deriv2"
+    },
+    {
+      "market": "USDCAD",
+      "limit_order": "buy_limit",
+      "timeframe": "1h",
+      "entry_price": 1.39432,
+      "volume": 0.02,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 0.7136281569125592,
+      "broker": "deriv2"
+    }
+  ],
+  "xxxaud": [],
+  "xxxcad": [],
+  "other": [
+    {
+      "market": "EURGBP",
+      "limit_order": "sell_limit",
+      "timeframe": "15m",
+      "entry_price": 0.87943,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.3142700000000003,
+      "broker": "deriv1"
+    },
+    {
+      "market": "EURGBP",
+      "limit_order": "sell_limit",
+      "timeframe": "15m",
+      "entry_price": 0.87943,
+      "volume": 0.01,
+      "riskusd_amount": 4.0,
+      "tick_size": 1e-05,
+      "tick_value": 1.3142700000000003,
+      "broker": "deriv2"
+    }
+  ]
+}
