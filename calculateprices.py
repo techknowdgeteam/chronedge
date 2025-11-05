@@ -415,7 +415,112 @@ def clean_5m_timeframes():
     print("="*70 + "\n", "FOOTER")
     return True
 
+def delete_all_calculated_risk_jsons():
+    """
+    Deletes ALL calculated price JSON files AND categorized strategy JSONs in every broker's risk folders.
+    
+    This includes:
+        - forexcalculatedprices.json, syntheticscalculatedprices.json, etc.
+        - hightolow.json
+        - lowtohigh.json
+    
+    across all risk levels (0.5, 1, 2, ..., 16 USD).
 
+    Useful for resetting calculations before re-running SL/TP, filtering, or re-categorizing strategies.
+
+    Returns:
+        True if all deletions succeeded or no files were found.
+        False if critical path error occurs (e.g. permission denied on directory).
+    """
+    from pathlib import Path
+    import json
+    from collections import defaultdict
+
+    BASE_OUTPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    RISK_FOLDERS = {
+        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
+        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
+    }
+    ASSET_FILES = [
+        "forexcalculatedprices.json",
+        "syntheticscalculatedprices.json",
+        "cryptocalculatedprices.json",
+        "basketindicescalculatedprices.json",
+        "indicescalculatedprices.json",
+        "metalscalculatedprices.json",
+        "stockscalculatedprices.json",
+        "etfscalculatedprices.json",
+        "equitiescalculatedprices.json",
+        "energiescalculatedprices.json",
+        "commoditiescalculatedprices.json",
+    ]
+    STRATEGY_FILES = [
+        "hightolow.json",
+        "lowtohigh.json"
+    ]
+
+    ALL_TARGET_FILES = ASSET_FILES + STRATEGY_FILES
+
+    if not BASE_OUTPUT_DIR.exists():
+        print(f"[DELETE RISKS] Output directory not found: {BASE_OUTPUT_DIR}", "WARNING")
+        return True  # Nothing to delete
+
+    total_deleted = 0
+    total_files_checked = 0
+
+    print("\n" + "="*80)
+    print("DELETING ALL CALCULATED RISK & STRATEGY JSON FILES".center(80))
+    print("="*80 + "\n")
+
+    for broker_dir in BASE_OUTPUT_DIR.iterdir():
+        if not broker_dir.is_dir():
+            continue
+        broker = broker_dir.name
+        print(f"[BROKER] {broker}")
+
+        for risk, folder_name in RISK_FOLDERS.items():
+            risk_dir = broker_dir / folder_name
+            if not risk_dir.is_dir():
+                continue
+
+            deleted_in_risk = 0
+            print(f"  [RISK] ${risk} → {folder_name}")
+
+            for json_file in ALL_TARGET_FILES:
+                file_path = risk_dir / json_file
+                total_files_checked += 1
+                if file_path.is_file():
+                    try:
+                        file_path.unlink()  # Delete the file
+                        deleted_in_risk += 1
+                        total_deleted += 1
+                        file_type = "STRATEGY" if json_file in STRATEGY_FILES else "CALCULATED"
+                        print(f"    [{file_type}] DELETED → {json_file}")
+                    except PermissionError as pe:
+                        print(f"    [CRITICAL ERROR] Permission denied: {file_path} → {pe}", "ERROR")
+                        return False
+                    except Exception as e:
+                        print(f"    [ERROR] Failed to delete {file_path}: {e}", "ERROR")
+                # else: file doesn't exist → skip silently
+
+            if deleted_in_risk == 0:
+                print(f"    [INFO] No files found to delete in {folder_name}/")
+            else:
+                print(f"    [SUMMARY] {deleted_in_risk} file(s) deleted in {folder_name}/")
+
+        print()  # Empty line between brokers
+
+    # Final summary
+    print("="*80)
+    if total_deleted > 0:
+        print(f"SUCCESS: {total_deleted:,} JSON file(s) deleted ({total_files_checked} checked).")
+        print("   → Includes both calculated prices and strategy categorizations (hightolow/lowtohigh).")
+    else:
+        print("INFO: No calculated risk or strategy JSON files were found to delete.")
+    print("="*80 + "\n")
+
+    return True
+    
 def calculate_forex_sl_tp_markets():
     INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json"
     BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
@@ -574,7 +679,6 @@ def calculate_forex_sl_tp_markets():
 
     print(f"Forex SL/TP calculations done – Processed: {processed_count}, Saved: {saved} entries.", "SUCCESS")
     return True
-
 
 def calculate_synthetics_sl_tp_markets():
     INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
@@ -2604,5 +2708,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    delete_all_calculated_risk_jsons()
    
