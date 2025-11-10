@@ -88,7 +88,7 @@ def symbolsorderfiltering():
     for market_key, (limited, allowed) in market_rules.items():
         status = "DELETE ALL" if limited and not allowed else \
                  f"KEEP {len(allowed)}" if limited else "KEEP ALL"
-        print(f"[RULE] {market_key.upper():12} → {status}")
+        #print(f"[RULE] {market_key.upper():12} → {status}")
 
     # ------------------------------------------------------------------
     # Helper: filter list/dict by market
@@ -2638,6 +2638,7 @@ def symbolvolumeupdater():
     return True  
 
 def main():
+    
     symbolsorderfiltering()
     clean_5m_timeframes()
     print("\n" + "="*60, "HEADER")
@@ -2708,5 +2709,6 @@ def main():
 
 
 if __name__ == "__main__":
-    delete_all_calculated_risk_jsons()
+    main()
+    
    
