@@ -2230,6 +2230,7 @@ def redraw_contours_from_json(
     next_candles_path        = os.path.join(timeframe_folder, "nextcandles.json")
     previouslatest_path      = os.path.join(timeframe_folder, "previouslatestcandle.json")
     output_image_path        = os.path.join(timeframe_folder, "chart_with_contours_redrawn.png")
+    output_cropped_image_path = os.path.join(timeframe_folder, "chart_entry_redrawn.png")  # NEW CROPPED IMAGE
     output_redraw_json_path  = os.path.join(timeframe_folder, "redrawn oi ob data.json")
     all_timeframes_json_path = os.path.join(os.path.dirname(timeframe_folder), "alltimeframeslimitorders.json")
 
@@ -2412,6 +2413,9 @@ def redraw_contours_from_json(
     redrawn_data = {"marketname": symbol, "timeframe": timeframe_str, "orders": []}
     overlay = img.copy()
 
+    # Track the leftmost OB candle for cropping
+    crop_start_x = img.shape[1]  # fallback to full width
+
     for entry in ob_none_oi_entries:
         target_price = entry["entry_price"]
         order_type = entry["limit_order"]
@@ -2422,6 +2426,7 @@ def redraw_contours_from_json(
         found = False
         cx, cy = 0, 0
         ob_candle_x_right = 0
+        ob_candle_x_left = 0
         for i, cd in enumerate(candle_data):
             high = float(cd["high"])
             low = float(cd["low"])
@@ -2430,10 +2435,14 @@ def redraw_contours_from_json(
                 cx = b["center_x"]
                 cy = b["high_y"] if order_type == "buy_limit" else b["low_y"]
                 ob_candle_x_right = b["x_right"]
+                ob_candle_x_left = b["x_left"]
                 found = True
                 break
         if not found:
             continue
+
+        # Update crop start: use the LEFT edge of this candle
+        crop_start_x = min(crop_start_x, ob_candle_x_left)
 
         # === HIT DETECTION ===
         hit_info = {
@@ -2490,12 +2499,12 @@ def redraw_contours_from_json(
         draw_right_arrow(img, cx, cy)
         draw_oi_marker(img, cx, cy)
 
-        # === DRAW TP/SL BOXES ===
+        # === DRAW TP/SL BOXES (only from first next candle or full right) ===
         if sl_price is not None and tp_price is not None and first_next_x_right is not None:
             entry_y = price_to_y(target_price)
             sl_y = price_to_y(sl_price)
             tp_y = price_to_y(tp_price)
-            box_left = first_next_x_right
+            box_left = max(first_next_x_right, ob_candle_x_left)  # Start from next candle or entry candle
             box_right = img.shape[1]
 
             if order_type == "buy_limit":
@@ -2509,7 +2518,7 @@ def redraw_contours_from_json(
                 if sl_y < entry_y:
                     cv2.rectangle(overlay, (box_left, sl_y), (box_right, entry_y), (0, 0, 255), -1)
 
-        # === APPEND TO DATA (for per-timeframe JSON) ===
+        # === APPEND TO DATA ===
         redrawn_data["orders"].append({
             "ordertype": order_type,
             "entry_price": round(target_price, 6),
@@ -2521,11 +2530,22 @@ def redraw_contours_from_json(
     # === APPLY TRANSPARENCY ===
     cv2.addWeighted(overlay, 0.3, img, 0.7, 0, img)
 
-    # === 4. SAVE IMAGE ===
+    # === 4. SAVE FULL IMAGE ===
     cv2.imwrite(output_image_path, img)
     log_and_print(f"REDRAWN chart with correct TP/SL boxes → {output_image_path}", "SUCCESS")
 
-    # === 5. SAVE PER-TIMEFRAME JSON ===
+    # === 5. CROP TO FIRST OB CANDLE & SAVE CROPPED VERSION ===
+    if ob_none_oi_entries and crop_start_x < img.shape[1]:
+        # Crop from crop_start_x to right edge, full height
+        cropped_img = img[:, crop_start_x:]
+        cv2.imwrite(output_cropped_image_path, cropped_img)
+        log_and_print(f"CROPPED chart to first OB entry candle → {output_cropped_image_path}", "SUCCESS")
+    else:
+        # No OB entries → copy full image as cropped (or skip)
+        cv2.imwrite(output_cropped_image_path, img)
+        log_and_print(f"No OB entries; saved full chart as cropped → {output_cropped_image_path}", "INFO")
+
+    # === 6. SAVE PER-TIMEFRAME JSON ===
     try:
         with open(output_redraw_json_path, 'w', encoding='utf-8') as f:
             json.dump(redrawn_data, f, indent=4)
@@ -2533,14 +2553,14 @@ def redraw_contours_from_json(
     except Exception as e:
         error_log.append({"error": f"Save JSON failed: {str(e)}", "timestamp": now.isoformat()})
 
-    # === 6. SCAN ALL TIMEFRAMES FOR OLDEST previouslatestcandle.json ===
+    # === 7. SCAN ALL TIMEFRAMES FOR OLDEST previouslatestcandle.json ===
     oldest_age_str = ""
     oldest_hours = -1
 
     base_dir = os.path.dirname(timeframe_folder)
     timeframes = ["5m", "15m", "30m", "1h", "4h"]
 
-    # === 7. COLLECT ALL ORDERS FROM ALL TIMEFRAMES ===
+    # === 8. COLLECT ALL ORDERS FROM ALL TIMEFRAMES ===
     all_timeframes_data = {
         "oldestage_acrosstimeframe": oldest_age_str,
         "market": symbol,
@@ -2632,7 +2652,7 @@ def redraw_contours_from_json(
                 "is_single_sell": is_single_sell
             })
 
-    # === 8. SAVE FINAL ALLTIMEFRAMES JSON WITH FLAGS ===
+    # === 9. SAVE FINAL ALLTIMEFRAMES JSON WITH FLAGS ===
     try:
         with open(all_timeframes_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_timeframes_data, f, indent=4)
@@ -2644,7 +2664,7 @@ def redraw_contours_from_json(
         save_errors(error_log)
 
     return error_log
-
+    
     
 def delete_all_category_jsons():
     """
@@ -7884,7 +7904,369 @@ def _20_100_orders():
     _4usd_history_and_deduplication()
     _4usd_ratio_levels()
 
-    
+def collect_all_brokers_limit_orders():
+    BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets"
+    REPORT_NAME = "brokerslimitorders.json"
+    TZ = pytz.timezone("Africa/Lagos")
+    OUTPUT_PATH = Path(BASE_DIR) / REPORT_NAME
+
+    MAX_AGE_SECONDS = 2 * 24 * 60 * 60  # 2 days (for stale pending)
+    MAX_HISTORY_SECONDS = 5 * 60 * 60   # 5 hours (for recent filled/canceled)
+
+    all_pending_orders = []
+    all_open_positions = []
+    all_history_orders = []  # ← NEW
+    total_pending = 0
+    total_positions = 0
+    total_history = 0
+    failed_brokers = []
+    deleted_count = 0
+
+    # Helper: Convert seconds to human-readable age string
+    def format_age(seconds):
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        minutes = int(seconds // 60)
+        if minutes < 60:
+            return f"{minutes}m"
+        hours = minutes // 60
+        minutes = minutes % 60
+        if hours < 24:
+            return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+        days = hours // 24
+        hours = hours % 24
+        return f"{days}d {hours}h" if hours else f"{days}d"
+
+    log_and_print(f"\n{'='*100}", "INFO")
+    log_and_print(f"COLLECTING PENDING LIMITS + OPEN POSITIONS + RECENT HISTORY (<5h)", "INFO")
+    log_and_print(f"{'='*100}", "INFO")
+
+    # Per-broker tracking
+    broker_symbol_data = {}
+
+    for broker_name, cfg in brokersdictionary.items():
+        TERMINAL_PATH = cfg["TERMINAL_PATH"]
+        LOGIN_ID     = cfg["LOGIN_ID"]
+        PASSWORD     = cfg["PASSWORD"]
+        SERVER       = cfg["SERVER"]
+
+        log_and_print(f"\n→ Broker: {broker_name.upper()}", "INFO")
+
+        # ---------- MT5 Init ----------
+        if not os.path.exists(TERMINAL_PATH):
+            log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+            failed_brokers.append(broker_name)
+            continue
+
+        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
+            log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+            failed_brokers.append(broker_name)
+            continue
+
+        if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+            log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+            mt5.shutdown()
+            failed_brokers.append(broker_name)
+            continue
+
+        account = mt5.account_info()
+        if not account:
+            log_and_print("No account info.", "ERROR")
+            mt5.shutdown()
+            failed_brokers.append(broker_name)
+            continue
+
+        balance = account.balance
+        currency = account.currency
+        log_and_print(f"Connected: Account {account.login} | Balance: ${balance:.2f} {currency}", "INFO")
+
+        # Initialize broker data
+        broker_symbol_data[broker_name] = {}
+        current_time = datetime.now(TZ)
+
+        # ---------- 1. PENDING LIMIT ORDERS ----------
+        pending_orders_raw = mt5.orders_get() or []
+        pending_orders = [
+            o for o in pending_orders_raw
+            if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+        ]
+
+        pending_count = len(pending_orders)
+        total_pending += pending_count
+
+        to_delete = []  # Per-broker stale pending
+
+        if pending_count:
+            log_and_print(f"Found {pending_count} pending limit order(s).", "INFO")
+
+            for order in pending_orders:
+                symbol = order.symbol
+
+                if symbol not in broker_symbol_data[broker_name]:
+                    broker_symbol_data[broker_name][symbol] = {
+                        "has_open": False,
+                        "pending": {"BUY": None, "SELL": None},
+                        "account_login": account.login,
+                        "account_currency": currency
+                    }
+
+                order_type_str = "BUY LIMIT" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL LIMIT"
+                order_time = datetime.fromtimestamp(order.time_setup, TZ)
+                age_seconds = (current_time - order_time).total_seconds()
+
+                side_key = "BUY" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL"
+                broker_symbol_data[broker_name][symbol]["pending"][side_key] = {
+                    "ticket": order.ticket,
+                    "volume": order.volume_current,
+                    "entry_price": round(order.price_open, 6),
+                    "sl": round(order.sl, 6) if order.sl != 0 else None,
+                    "tp": round(order.tp, 6) if order.tp != 0 else None,
+                    "setup_time": order_time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "comment": order.comment.strip() if order.comment else None,
+                    "magic": order.magic,
+                    "age_seconds": age_seconds
+                }
+
+                if age_seconds > MAX_AGE_SECONDS:
+                    to_delete.append((order.ticket, symbol, order_type_str, format_age(age_seconds)))
+
+            if to_delete:
+                log_and_print(f"Found {len(to_delete)} order(s) older than 2 days. Will delete after open position check.", "WARNING")
+        else:
+            log_and_print("No pending limit orders.", "INFO")
+
+        # ---------- 2. OPEN POSITIONS ----------
+        positions = mt5.positions_get()
+        position_count = len(positions) if positions else 0
+        total_positions += position_count
+
+        if position_count:
+            log_and_print(f"Found {position_count} open position(s).", "INFO")
+            for pos in positions:
+                symbol = pos.symbol
+                pos_type_str = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
+                open_time = datetime.fromtimestamp(pos.time, TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+                if symbol not in broker_symbol_data[broker_name]:
+                    broker_symbol_data[broker_name][symbol] = {
+                        "has_open": True,
+                        "pending": {"BUY": None, "SELL": None},
+                        "account_login": account.login,
+                        "account_currency": currency
+                    }
+                else:
+                    broker_symbol_data[broker_name][symbol]["has_open"] = True
+
+                all_open_positions.append({
+                    "broker": broker_name,
+                    "account_login": account.login,
+                    "account_currency": currency,
+                    "ticket": pos.ticket,
+                    "symbol": pos.symbol,
+                    "type": pos_type_str,
+                    "status": "OPEN",
+                    "volume": pos.volume,
+                    "entry_price": round(pos.price_open, 6),
+                    "current_price": round(pos.price_current, 6),
+                    "sl": round(pos.sl, 6) if pos.sl != 0 else None,
+                    "tp": round(pos.tp, 6) if pos.tp != 0 else None,
+                    "open_time": open_time,
+                    "profit": round(pos.profit, 2),
+                    "swap": round(pos.swap, 2),
+                    "comment": pos.comment.strip() if pos.comment else None,
+                    "magic": pos.magic
+                })
+        else:
+            log_and_print("No open positions.", "INFO")
+
+        # ---------- 3. HISTORY: RECENT FILLED/CANCELED LIMIT ORDERS (<5h) ----------
+        from_datetime = datetime.now(TZ) - timedelta(seconds=MAX_HISTORY_SECONDS)
+        to_datetime = datetime.now(TZ)
+
+        # Convert to UTC timestamps
+        from_ts = int(from_datetime.timestamp())
+        to_ts = int(to_datetime.timestamp())
+
+        history = mt5.history_orders_get(from_ts, to_ts) or []
+        recent_limit_history = [
+            h for h in history
+            if h.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+        ]
+
+        history_count = len(recent_limit_history)
+        total_history += history_count
+
+        if history_count:
+            log_and_print(f"Found {history_count} recent limit order(s) in history (<5h).", "INFO")
+            for h in recent_limit_history:
+                symbol = h.symbol
+                order_type_str = "BUY LIMIT" if h.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL LIMIT"
+                fill_time = datetime.fromtimestamp(h.time_done, TZ).strftime("%Y-%m-%d %H:%M:%S")
+                age_seconds = (current_time - datetime.fromtimestamp(h.time_done, TZ)).total_seconds()
+                age_str = format_age(age_seconds)
+
+                status = "FILLED" if h.state == mt5.ORDER_STATE_FILLED else "CANCELED"
+
+                entry = {
+                    "broker": broker_name,
+                    "account_login": account.login,
+                    "account_currency": currency,
+                    "ticket": h.ticket,
+                    "symbol": symbol,
+                    "type": order_type_str,
+                    "status": status,
+                    "volume": h.volume_current,
+                    "entry_price": round(h.price_open, 6),
+                    "fill_price": round(h.price_current, 6) if h.price_current != 0 else None,
+                    "fill_time": fill_time,
+                    "setup_time": datetime.fromtimestamp(h.time_setup, TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "comment": h.comment.strip() if h.comment else None,
+                    "magic": h.magic,
+                    "profit": round(h.profit, 2) if hasattr(h, 'profit') else None,
+                    "age": age_str
+                }
+                all_history_orders.append(entry)
+        else:
+            log_and_print("No recent limit orders in history (<5h).", "INFO")
+
+        mt5.shutdown()
+
+        # ---------- 4. DELETE STALE PENDING ORDERS (>2 days) ----------
+        if to_delete:
+            log_and_print(f"Attempting to delete {len(to_delete)} stale limit order(s) on {broker_name.upper()}...", "INFO")
+
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
+                log_and_print(f"Re-init failed: {mt5.last_error()}", "ERROR")
+            elif not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Re-login failed: {mt5.last_error()}", "ERROR")
+            else:
+                for ticket, symbol, order_type, age_str in to_delete:
+                    sym_data = broker_symbol_data[broker_name].get(symbol, {})
+                    if sym_data.get("has_open", False):
+                        log_and_print(f"SKIPPED: {symbol} [{order_type}] has open position", "INFO")
+                        continue
+
+                    current_orders = mt5.orders_get(ticket=ticket)
+                    if not current_orders:
+                        log_and_print(f"SKIP: Order {ticket} no longer exists", "INFO")
+                        side = "BUY" if "BUY" in order_type else "SELL"
+                        if broker_symbol_data[broker_name][symbol]["pending"][side]:
+                            broker_symbol_data[broker_name][symbol]["pending"][side] = None
+                        continue
+
+                    request = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
+                    result = mt5.order_send(request)
+
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        log_and_print(f"DELETED: {symbol} [{order_type}] | Ticket: {ticket} | Age: {age_str}", "SUCCESS")
+                        deleted_count += 1
+                        side = "BUY" if "BUY" in order_type else "SELL"
+                        broker_symbol_data[broker_name][symbol]["pending"][side] = None
+                    else:
+                        log_and_print(f"FAILED: {symbol} [{order_type}] | Ticket: {ticket} | Error: {result.comment}", "ERROR")
+
+                mt5.shutdown()
+
+    # ========== POST-PROCESS: Build final pending list ==========
+    log_and_print(f"\nProcessing age for remaining pending-only symbols...", "INFO")
+
+    for broker_name, symbols_data in broker_symbol_data.items():
+        for symbol, data in symbols_data.items():
+            has_open = data["has_open"]
+            pending = data["pending"]
+            buy_data = pending["BUY"]
+            sell_data = pending["SELL"]
+
+            if not buy_data and not sell_data:
+                continue
+
+            if has_open:
+                for side, order in [("BUY", buy_data), ("SELL", sell_data)]:
+                    if order:
+                        all_pending_orders.append({
+                            "broker": broker_name,
+                            "account_login": data["account_login"],
+                            "account_currency": data["account_currency"],
+                            "ticket": order["ticket"],
+                            "symbol": symbol,
+                            "type": f"{side} LIMIT",
+                            "status": "PENDING",
+                            "volume": order["volume"],
+                            "entry_price": order["entry_price"],
+                            "sl": order["sl"],
+                            "tp": order["tp"],
+                            "setup_time": order["setup_time"],
+                            "comment": order["comment"],
+                            "magic": order["magic"]
+                        })
+            else:
+                for side, order in [("BUY", buy_data), ("SELL", sell_data)]:
+                    if order:
+                        age_str = format_age(order["age_seconds"])
+                        all_pending_orders.append({
+                            "broker": broker_name,
+                            "account_login": data["account_login"],
+                            "account_currency": data["account_currency"],
+                            "ticket": order["ticket"],
+                            "symbol": symbol,
+                            "type": f"{side} LIMIT",
+                            "status": "PENDING",
+                            "volume": order["volume"],
+                            "entry_price": order["entry_price"],
+                            "sl": order["sl"],
+                            "tp": order["tp"],
+                            "setup_time": order["setup_time"],
+                            "comment": order["comment"],
+                            "magic": order["magic"],
+                            "age": age_str
+                        })
+
+    # ========== FINAL SUMMARY ==========
+    log_and_print(f"\n{'='*100}", "SUCCESS")
+    log_and_print(f"COLLECTION COMPLETE", "SUCCESS")
+    log_and_print(f"Total Brokers: {len(brokersdictionary)} | Failed: {len(failed_brokers)}", "INFO")
+    if failed_brokers:
+        log_and_print(f"Failed Brokers: {', '.join(failed_brokers)}", "WARNING")
+    log_and_print(f"Pending Limit Orders (after cleanup): {len(all_pending_orders)}", "INFO")
+    log_and_print(f"Open Positions: {total_positions}", "INFO")
+    log_and_print(f"Recent History Orders (<5h): {total_history}", "INFO")
+    log_and_print(f"Stale Orders Deleted (>2 days): {deleted_count}", "WARNING" if deleted_count else "INFO")
+    log_and_print(f"Total Entries: {len(all_pending_orders) + total_positions + total_history}", "SUCCESS")
+
+    # ========== SAVE TO JSON ==========
+    report = {
+        "generated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "total_brokers": len(brokersdictionary),
+        "failed_brokers": failed_brokers,
+        "cleanup": {
+            "stale_orders_deleted": deleted_count,
+            "max_age_allowed_seconds": MAX_AGE_SECONDS
+        },
+        "history_window_seconds": MAX_HISTORY_SECONDS,
+        "summary": {
+            "pending_orders": len(all_pending_orders),
+            "open_positions": total_positions,
+            "history_orders": total_history,
+            "total": len(all_pending_orders) + total_positions + total_history
+        },
+        "pending_orders": all_pending_orders,
+        "open_positions": all_open_positions,
+        "history_orders": all_history_orders  # ← NEW
+    }
+
+    try:
+        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with OUTPUT_PATH.open("w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+        log_and_print(f"REPORT SAVED: {OUTPUT_PATH}", "SUCCESS")
+    except Exception as e:
+        log_and_print(f"FAILED TO SAVE REPORT: {e}", "ERROR")
+
+    log_and_print(f"{'='*100}", "INFO")
+    return True
+
+
+
 def deduplicate_pending_orders():
     r"""
     Deduplicate pending BUY_LIMIT / SELL_LIMIT orders.
@@ -8676,6 +9058,7 @@ def calc_and_placeorders():
     _8_12_orders()
     _20_100_orders()
     deduplicate_pending_orders()
+    collect_all_brokers_limit_orders()
     martingale_enforcement()
 
 def clear_chart_folder(base_folder: str):
@@ -8746,10 +9129,13 @@ def fetch_charts_all_brokers(
     # ------------------------------------------------------------------
     # PATHS
     # ------------------------------------------------------------------
+    delete_all_category_jsons()
+    delete_issue_jsons()
     required_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allowedmarkets.json"
     fallback_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     allsymbols_path       = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
     match_path            = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
+    brokers_report_path   = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\brokerslimitorders.json"
 
     # ------------------------------------------------------------------
     # HELPERS
@@ -8759,16 +9145,46 @@ def fetch_charts_all_brokers(
     def normalize_symbol(s: str) -> str:
         return re.sub(r'[\/\s\-_]+', '', s.strip()).upper() if s else ""
 
-    def clear_chart_folder(base_folder: str):
-        if not os.path.exists(base_folder):
-            log_and_print(f"FOLDER {base_folder} does not exist – nothing to clean.", "INFO")
-            return
-        kept = len([i for i in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, i))])
-        log_and_print(f"PROTECTED {kept} symbol folders in {base_folder}", "SUCCESS")
-
     def symbol_needs_processing(symbol: str, base_folder: str) -> bool:
-        log_and_print(f"QUEUED {symbol} → will be processed (no skip)", "INFO")
+        log_and_print(f"QUEUED {symbol} → will be processed", "INFO")
         return True
+
+    def delete_symbol_folder(symbol: str, base_folder: str, reason: str = ""):
+        """Delete symbol folder with logging."""
+        sym_folder = os.path.join(base_folder, symbol.replace(" ", "_"))
+        if os.path.exists(sym_folder):
+            try:
+                shutil.rmtree(sym_folder)
+                log_and_print(f"DELETED {sym_folder} {reason}", "INFO")
+            except Exception as e:
+                log_and_print(f"FAILED to delete {sym_folder}: {e}", "ERROR")
+        os.makedirs(base_folder, exist_ok=True)
+
+    def delete_all_non_blocked_symbol_folders(broker_cfg: dict, blocked_symbols: set):
+        """Delete ALL symbol folders except those in blocked_symbols."""
+        base_folder = broker_cfg["BASE_FOLDER"]
+        if not os.path.exists(base_folder):
+            return
+
+        deleted = 0
+        for item in os.listdir(base_folder):
+            item_path = os.path.join(base_folder, item)
+            if not os.path.isdir(item_path):
+                continue
+
+            # Extract symbol from folder name
+            symbol = item.replace("_", " ")
+            if symbol in blocked_symbols:
+                log_and_print(f"KEEPING folder {item} → {symbol} is BLOCKED", "INFO")
+                continue
+
+            try:
+                shutil.rmtree(item_path)
+                deleted += 1
+            except Exception as e:
+                log_and_print(f"FAILED to delete {item_path}: {e}", "ERROR")
+
+        log_and_print(f"CLEANED {deleted} non-blocked symbol folders in {base_folder}", "SUCCESS")
 
     def breakeven_worker():
         while True:
@@ -8789,7 +9205,53 @@ def fetch_charts_all_brokers(
         log_and_print("\n=== NEW FULL CYCLE STARTED ===", "INFO")
 
         try:
+            # ------------------------------------------------------------------
+            # 0. RE-LOAD BLOCKED SYMBOLS EVERY CYCLE
+            # ------------------------------------------------------------------
+            blocked_symbols_per_broker = {bn: set() for bn in brokersdictionary.keys()}
+
+            if os.path.exists(brokers_report_path):
+                try:
+                    with open(brokers_report_path, "r", encoding="utf-8") as f:
+                        report = json.load(f)
+
+                    for order in report.get("pending_orders", []):
+                        sym, broker = order.get("symbol"), order.get("broker")
+                        if broker in blocked_symbols_per_broker:
+                            blocked_symbols_per_broker[broker].add(sym)
+
+                    for pos in report.get("open_positions", []):
+                        sym, broker = pos.get("symbol"), pos.get("broker")
+                        if broker in blocked_symbols_per_broker:
+                            blocked_symbols_per_broker[broker].add(sym)
+
+                    for hist in report.get("history_orders", []):
+                        sym, broker = hist.get("symbol"), hist.get("broker")
+                        age_str = hist.get("age", "")
+                        if "h" in age_str or "m" in age_str or "s" in age_str:
+                            if any(p in age_str for p in ["m", "s"]) or ("h" in age_str and int(age_str.split("h")[0]) < 5):
+                                if broker in blocked_symbols_per_broker:
+                                    blocked_symbols_per_broker[broker].add(sym)
+
+                    log_and_print(f"Loaded blocked symbols from {brokers_report_path}", "INFO")
+                    for bn, syms in blocked_symbols_per_broker.items():
+                        if syms:
+                            log_and_print(f"  → {bn.upper()}: {len(syms)} blocked", "INFO")
+                except Exception as e:
+                    log_and_print(f"FAILED to load brokerslimitorders.json: {e}", "ERROR")
+            else:
+                log_and_print("brokerslimitorders.json not found – no blocks", "WARNING")
+
+            # ------------------------------------------------------------------
+            # 0.5 DELETE ALL NON-BLOCKED SYMBOL FOLDERS (per broker)
+            # ------------------------------------------------------------------
+            for bn, cfg in brokersdictionary.items():
+                blocked = blocked_symbols_per_broker.get(bn, set())
+                delete_all_non_blocked_symbol_folders(cfg, blocked)
+
+            # ------------------------------------------------------------------
             # 1. Load allowed markets
+            # ------------------------------------------------------------------
             if not os.path.exists(required_allowed_path):
                 if os.path.exists(fallback_allowed_path):
                     os.makedirs(os.path.dirname(required_allowed_path), exist_ok=True)
@@ -8807,7 +9269,9 @@ def fetch_charts_all_brokers(
                 for cat, cfg in allowed_config.items()
             }
 
+            # ------------------------------------------------------------------
             # 2. Symbol → category map
+            # ------------------------------------------------------------------
             if not os.path.exists(allsymbols_path):
                 log_and_print(f"Missing {allsymbols_path}", "CRITICAL")
                 time.sleep(600); continue
@@ -8821,18 +9285,18 @@ def fetch_charts_all_brokers(
                         if sym := item.get("symbol"):
                             symbol_to_category[sym] = cat
 
+            # ------------------------------------------------------------------
             # 3. Load symbolsmatch
+            # ------------------------------------------------------------------
             if not os.path.exists(match_path):
                 log_and_print(f"Missing {match_path}", "CRITICAL")
                 time.sleep(600); continue
             with open(match_path, "r", encoding="utf-8") as f:
                 symbolsmatch_data = json.load(f)
 
-            # 4. PROTECT ALL FOLDERS
-            for bn, cfg in brokersdictionary.items():
-                clear_chart_folder(cfg["BASE_FOLDER"])
-
+            # ------------------------------------------------------------------
             # 5. Build candidate list
+            # ------------------------------------------------------------------
             broker_name_mapping = {
                 "deriv": "deriv", "deriv1": "deriv", "deriv2": "deriv",
                 "bybit1": "bybit", "exness1": "exness"
@@ -8845,6 +9309,7 @@ def fetch_charts_all_brokers(
             for broker_name, cfg in brokersdictionary.items():
                 mapped = broker_name_mapping.get(broker_name, broker_name)
                 candidates[broker_name] = {c: [] for c in all_cats}
+                blocked = blocked_symbols_per_broker.get(broker_name, set())
 
                 ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
                 error_log.extend(errs)
@@ -8855,29 +9320,39 @@ def fetch_charts_all_brokers(
 
                 for entry in symbolsmatch_data.get("main_symbols", []):
                     for sym in entry.get(mapped, []):
-                        if sym not in avail: continue
+                        if sym not in avail:
+                            continue
+                        if sym in blocked:
+                            continue  # Skip blocked
+
                         cat = symbol_to_category.get(sym)
-                        if not cat or cat not in all_cats: continue
+                        if not cat or cat not in all_cats:
+                            continue
                         if allowed_config.get(cat, {}).get("limited", False):
                             if normalize_symbol(sym) not in normalized_allowed.get(cat, set()):
                                 continue
+
+                        # QUEUED → DELETE FOLDER AGAIN (extra safety)
                         if symbol_needs_processing(sym, cfg["BASE_FOLDER"]):
+                            delete_symbol_folder(sym, cfg["BASE_FOLDER"], "(pre-process cleanup)")
                             candidates[broker_name][cat].append(sym)
 
                 for cat in all_cats:
                     cnt = len(candidates[broker_name][cat])
                     if cnt:
-                        log_and_print(f"{broker_name.upper()} → {cat.upper():10} : {cnt:3} symbols queued", "INFO")
+                        log_and_print(f"{broker_name.upper()} → {cat.upper():10} : {cnt:3} queued", "INFO")
                         total_to_do += cnt
 
             if total_to_do == 0:
-                log_and_print("No symbols available – sleeping 30 min", "WARNING")
+                log_and_print("No symbols to process – sleeping 30 min", "WARNING")
                 time.sleep(1800)
                 continue
 
-            log_and_print(f"TOTAL SYMBOLS TO PROCESS THIS CYCLE: {total_to_do}", "SUCCESS")
+            log_and_print(f"TOTAL TO PROCESS: {total_to_do}", "SUCCESS")
 
+            # ------------------------------------------------------------------
             # 6. ROUND-ROBIN PROCESSING
+            # ------------------------------------------------------------------
             remaining = {b: {c: candidates[b][c][:] for c in all_cats} for b in brokersdictionary}
             indices   = {b: {c: 0 for c in all_cats} for b in brokersdictionary}
 
@@ -8897,10 +9372,11 @@ def fetch_charts_all_brokers(
 
                         symbol = remaining[bn][cat][idx]
 
-                        # --------------------------------------------------------------
-                        # PROCESS THE SAME SYMBOL **TWICE** BEFORE MOVING TO THE NEXT ONE
-                        # --------------------------------------------------------------
-                        for run in (1, 2):                     # <-- two runs
+                        if symbol in blocked_symbols_per_broker.get(bn, set()):
+                            indices[bn][cat] += 1
+                            continue
+
+                        for run in (1, 2):
                             ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
                             error_log.extend(errs)
                             if not ok:
@@ -8931,17 +9407,12 @@ def fetch_charts_all_brokers(
                                     )
                                     error_log.extend(ch_errs)
 
-                                    # ---- ORIGINAL SAVE (all + previous-latest as "x") ----
                                     save_candle_data(df, symbol, tf_str, tf_folder, ph, pl)
-
-                                    # ---- NEW: SAVE CANDLES AFTER THE PREVIOUS-LATEST ----
                                     next_errs = save_next_candles(df, symbol, tf_str, tf_folder, ph, pl)
                                     error_log.extend(next_errs)
 
                                     if chart_path:
                                         crop_chart(chart_path, symbol, tf_str, tf_folder)
-
-                                        # === 1. DETECT CONTOURS ===
                                         detect_errors = detect_candle_contours(
                                             chart_path, symbol, tf_str, tf_folder,
                                             candleafterintersector=2,
@@ -8956,24 +9427,20 @@ def fetch_charts_all_brokers(
                                         redraw_errors = redraw_contours_from_json(chart_path, symbol, tf_str, tf_folder)
                                         error_log.extend(redraw_errors)
 
-                                collect_ob_none_oi_data(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
-                                calculate_symbols_sl_tp_prices()
-                                collect_all_calculated_prices_to_json()
                                 mt5.shutdown()
 
                             roundgoblin()
+                            collect_ob_none_oi_data(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
+                            calc_and_placeorders()
 
-                        # --------------------------------------------------------------
-                        # AFTER BOTH RUNS – advance the index for this category
-                        # --------------------------------------------------------------
                         indices[bn][cat] += 1
 
                 round_no += 1
 
             save_errors(error_log)
-            collect_all_calculated_prices_to_json()
-            log_and_print("CYCLE 100% COMPLETED – All symbols refreshed!", "SUCCESS")
-            log_and_print("Sleeping 30 minutes until next full refresh...", "INFO")
+            calc_and_placeorders()
+            log_and_print("CYCLE 100% COMPLETED", "SUCCESS")
+            log_and_print("Sleeping 30 minutes...", "INFO")
             time.sleep(1800)
 
         except Exception as e:
@@ -8981,8 +9448,6 @@ def fetch_charts_all_brokers(
             time.sleep(600)
             
 if __name__ == "__main__":
-    delete_all_category_jsons()
-    delete_all_calculated_risk_jsons()
     success = fetch_charts_all_brokers(
         bars=201,
         neighborcandles_left=10,
