@@ -29,10 +29,12 @@ brokersdictionary = {
         "LOGIN_ID": "140357859",
         "PASSWORD": "@Ayomide12#",
         "SERVER": "DerivSVG-Server-03",
-        "ACCOUNT": "demo",
+        "ACCOUNT": "real",
         "STRATEGY": "allorder",
         "SCALE": "consistency",
         "RISKREWARD": 3,
+        "SYMBOLS": "all",
+        "MARTINGALE_MARKETS": "neth25, usdjpy",
         "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 1\deriv1symbols"
     },
     "deriv2": {
@@ -44,6 +46,8 @@ brokersdictionary = {
         "STRATEGY": "hightolow",
         "SCALE": "consistency",
         "RISKREWARD": 3,
+        "SYMBOLS": "all",
+        "MARTINGALE_MARKETS": "neth25, usdjpy",
         "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\deriv 2\deriv2symbols"
     },
     "bybit1": {
@@ -55,6 +59,7 @@ brokersdictionary = {
         "STRATEGY": "hightolow",
         "RISKREWARD": 2,
         "SCALE": "consistency",
+        "SYMBOLS": "all",
         "MARTINGALE_MARKETS": "neth25, usdjpy",
         "BASE_FOLDER": r"C:\xampp\htdocs\chronedge\chart\bybit 1\bybit1symbols"
     }
@@ -3313,6 +3318,32 @@ def _0_50_4_orders():
                 mt5.shutdown()
                 continue
 
+
+            account_info = mt5.account_info()
+            if not account_info:
+                log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+            balance = account_info.balance
+            equity = account_info.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 0.50 and balance >= 0.50:
+                log_and_print(f"Equity ${equity:.2f} < $0.50 while Balance ${balance:.2f} ≥ $0.50 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 0.50 and balance < 0.50:
+                log_and_print(f"Equity ${equity:.2f} > $0.50 while Balance ${balance:.2f} < $0.50 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if not (0.50 <= balance < 3.99):
+                log_and_print(f"Balance ${balance:.2f} not in $0.50–$3.99 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+            # === Only reaches here if: equity >= 8 AND balance in [8, 11.99) ===
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
+
+
+
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
@@ -3436,6 +3467,12 @@ def _0_50_4_orders():
                         issues_list.append({"symbol": symbol, "reason": result.comment})
 
                     # === Report ===
+                    if "cent" in RISK_FOLDER:
+                        risk_usd = 0.5
+                    else:
+                        risk_usd = float(RISK_FOLDER.split("_")[1].replace("usd", ""))
+
+                    # === Report ===
                     report_entry = {
                         "symbol": symbol,
                         "order_type": order_type_str,
@@ -3443,7 +3480,7 @@ def _0_50_4_orders():
                         "volume": volume,
                         "sl": sl,
                         "tp": tp,
-                        "risk_usd": 3.0,
+                        "risk_usd": risk_usd,   # ← Now correct: 0.5, 1.0, 2.0, 3.0, 4.0
                         "ticket": result.order if success else None,
                         "success": success,
                         "error_code": result.retcode if not success else None,
@@ -4228,17 +4265,31 @@ def _4_8_orders():
                 mt5.shutdown()
                 continue
 
+
             account_info = mt5.account_info()
             if not account_info:
                 log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
                 mt5.shutdown()
                 continue
-
             balance = account_info.balance
-            if not (4.0 <= balance < 7.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+            equity = account_info.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 4.0 and balance >= 4.0:
+                log_and_print(f"Equity ${equity:.2f} < $4.0 while Balance ${balance:.2f} ≥ $4.0 → IN DRAWDOWN → SKIPPED", "WARNING")
                 mt5.shutdown()
                 continue
+            if equity >= 4.0 and balance < 4.0:
+                log_and_print(f"Equity ${equity:.2f} > $4.0 while Balance ${balance:.2f} < $4.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if not (4.0 <= balance < 7.99):
+                log_and_print(f"Balance ${balance:.2f} not in $4–$7.99 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+            # === Only reaches here if: equity >= 8 AND balance in [8, 11.99) ===
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
+
+            
 
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
@@ -4363,6 +4414,12 @@ def _4_8_orders():
                         issues_list.append({"symbol": symbol, "reason": result.comment})
 
                     # === Report ===
+                    if "cent" in RISK_FOLDER:
+                        risk_usd = 0.5
+                    else:
+                        risk_usd = float(RISK_FOLDER.split("_")[1].replace("usd", ""))
+
+                    # === Report ===
                     report_entry = {
                         "symbol": symbol,
                         "order_type": order_type_str,
@@ -4370,7 +4427,7 @@ def _4_8_orders():
                         "volume": volume,
                         "sl": sl,
                         "tp": tp,
-                        "risk_usd": 3.0,
+                        "risk_usd": risk_usd,   # ← Now correct: 0.5, 1.0, 2.0, 3.0, 4.0
                         "ticket": result.order if success else None,
                         "success": success,
                         "error_code": result.retcode if not success else None,
@@ -5155,19 +5212,30 @@ def _8_12_orders():
                 mt5.shutdown()
                 continue
 
+
             account_info = mt5.account_info()
             if not account_info:
                 log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
                 mt5.shutdown()
                 continue
-
             balance = account_info.balance
-            if not (8.0 <= balance < 11.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+            equity = account_info.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 8.0 and balance >= 8.0:
+                log_and_print(f"Equity ${equity:.2f} < $8.0 while Balance ${balance:.2f} ≥ $8.0 → IN DRAWDOWN → SKIPPED", "WARNING")
                 mt5.shutdown()
                 continue
+            if equity >= 8.0 and balance < 8.0:
+                log_and_print(f"Equity ${equity:.2f} > $8.0 while Balance ${balance:.2f} < $8.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if not (8.0 <= balance < 11.99):
+                log_and_print(f"Balance ${balance:.2f} not in $8–$11.99 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+            # === Only reaches here if: equity >= 8 AND balance in [8, 11.99) ===
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
-            log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
             file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
@@ -5290,6 +5358,12 @@ def _8_12_orders():
                         issues_list.append({"symbol": symbol, "reason": result.comment})
 
                     # === Report ===
+                    if "cent" in RISK_FOLDER:
+                        risk_usd = 0.5
+                    else:
+                        risk_usd = float(RISK_FOLDER.split("_")[1].replace("usd", ""))
+
+                    # === Report ===
                     report_entry = {
                         "symbol": symbol,
                         "order_type": order_type_str,
@@ -5297,7 +5371,7 @@ def _8_12_orders():
                         "volume": volume,
                         "sl": sl,
                         "tp": tp,
-                        "risk_usd": 3.0,
+                        "risk_usd": risk_usd,   # ← Now correct: 0.5, 1.0, 2.0, 3.0, 4.0
                         "ticket": result.order if success else None,
                         "success": success,
                         "error_code": result.retcode if not success else None,
@@ -6082,17 +6156,32 @@ def _12_20_orders():
                 mt5.shutdown()
                 continue
 
+
+
             account_info = mt5.account_info()
             if not account_info:
                 log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
                 mt5.shutdown()
                 continue
-
             balance = account_info.balance
-            if not (12.0 <= balance < 19.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+            equity = account_info.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 12.0 and balance >= 12.0:
+                log_and_print(f"Equity ${equity:.2f} < $12.0 while Balance ${balance:.2f} ≥ $12.0 → IN DRAWDOWN → SKIPPED", "WARNING")
                 mt5.shutdown()
                 continue
+            if equity >= 12.0 and balance < 12.0:
+                log_and_print(f"Equity ${equity:.2f} > $12.0 while Balance ${balance:.2f} < $12.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if not (12.0 <= balance < 19.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$19.99 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+            # === Only reaches here if: equity >= 8 AND balance in [8, 11.99) ===
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
+
+
 
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
@@ -6217,6 +6306,12 @@ def _12_20_orders():
                         issues_list.append({"symbol": symbol, "reason": result.comment})
 
                     # === Report ===
+                    if "cent" in RISK_FOLDER:
+                        risk_usd = 0.5
+                    else:
+                        risk_usd = float(RISK_FOLDER.split("_")[1].replace("usd", ""))
+
+                    # === Report ===
                     report_entry = {
                         "symbol": symbol,
                         "order_type": order_type_str,
@@ -6224,7 +6319,7 @@ def _12_20_orders():
                         "volume": volume,
                         "sl": sl,
                         "tp": tp,
-                        "risk_usd": 3.0,
+                        "risk_usd": risk_usd,   # ← Now correct: 0.5, 1.0, 2.0, 3.0, 4.0
                         "ticket": result.order if success else None,
                         "success": success,
                         "error_code": result.retcode if not success else None,
@@ -7014,12 +7109,25 @@ def _20_100_orders():
                 log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
                 mt5.shutdown()
                 continue
-
             balance = account_info.balance
-            if not (20.0 <= balance < 99.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+            equity = account_info.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 20.0 and balance >= 20.0:
+                log_and_print(f"Equity ${equity:.2f} < $20.0 while Balance ${balance:.2f} ≥ $20.0 → IN DRAWDOWN → SKIPPED", "WARNING")
                 mt5.shutdown()
                 continue
+            if equity >= 20.0 and balance < 20.0:
+                log_and_print(f"Equity ${equity:.2f} > $20.0 while Balance ${balance:.2f} < $20.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if not (20.0 <= balance < 99.99):
+                log_and_print(f"Balance ${balance:.2f} not in $20–$99.99 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+            # === Only reaches here if: equity >= 8 AND balance in [8, 11.99) ===
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
+
+
 
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
@@ -7144,6 +7252,12 @@ def _20_100_orders():
                         issues_list.append({"symbol": symbol, "reason": result.comment})
 
                     # === Report ===
+                    if "cent" in RISK_FOLDER:
+                        risk_usd = 0.5
+                    else:
+                        risk_usd = float(RISK_FOLDER.split("_")[1].replace("usd", ""))
+
+                    # === Report ===
                     report_entry = {
                         "symbol": symbol,
                         "order_type": order_type_str,
@@ -7151,7 +7265,7 @@ def _20_100_orders():
                         "volume": volume,
                         "sl": sl,
                         "tp": tp,
-                        "risk_usd": 3.0,
+                        "risk_usd": risk_usd,   # ← Now correct: 0.5, 1.0, 2.0, 3.0, 4.0
                         "ticket": result.order if success else None,
                         "success": success,
                         "error_code": result.retcode if not success else None,
@@ -8266,7 +8380,6 @@ def collect_all_brokers_limit_orders():
     return True
 
 
-
 def deduplicate_pending_orders():
     r"""
     Deduplicate pending BUY_LIMIT / SELL_LIMIT orders.
@@ -9050,7 +9163,7 @@ def _write_global_error_report(base_dir, risk_folders, error_msg):
             log_and_print(f"Failed to write global error report: {e}", "ERROR")         
 
 def calc_and_placeorders():  
-    delete_all_calculated_risk_jsons()
+    
     calculate_symbols_sl_tp_prices() 
     _12_20_orders()
     _0_50_4_orders()
@@ -9130,8 +9243,9 @@ def fetch_charts_all_brokers(
     # PATHS
     # ------------------------------------------------------------------
     delete_all_category_jsons()
+    delete_all_calculated_risk_jsons()
     delete_issue_jsons()
-    required_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allowedmarkets.json"
+    required_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     fallback_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     allsymbols_path       = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
     match_path            = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
@@ -9150,7 +9264,6 @@ def fetch_charts_all_brokers(
         return True
 
     def delete_symbol_folder(symbol: str, base_folder: str, reason: str = ""):
-        """Delete symbol folder with logging."""
         sym_folder = os.path.join(base_folder, symbol.replace(" ", "_"))
         if os.path.exists(sym_folder):
             try:
@@ -9161,29 +9274,23 @@ def fetch_charts_all_brokers(
         os.makedirs(base_folder, exist_ok=True)
 
     def delete_all_non_blocked_symbol_folders(broker_cfg: dict, blocked_symbols: set):
-        """Delete ALL symbol folders except those in blocked_symbols."""
         base_folder = broker_cfg["BASE_FOLDER"]
         if not os.path.exists(base_folder):
             return
-
         deleted = 0
         for item in os.listdir(base_folder):
             item_path = os.path.join(base_folder, item)
             if not os.path.isdir(item_path):
                 continue
-
-            # Extract symbol from folder name
             symbol = item.replace("_", " ")
             if symbol in blocked_symbols:
                 log_and_print(f"KEEPING folder {item} → {symbol} is BLOCKED", "INFO")
                 continue
-
             try:
                 shutil.rmtree(item_path)
                 deleted += 1
             except Exception as e:
                 log_and_print(f"FAILED to delete {item_path}: {e}", "ERROR")
-
         log_and_print(f"CLEANED {deleted} non-blocked symbol folders in {base_folder}", "SUCCESS")
 
     def breakeven_worker():
@@ -9206,25 +9313,21 @@ def fetch_charts_all_brokers(
 
         try:
             # ------------------------------------------------------------------
-            # 0. RE-LOAD BLOCKED SYMBOLS EVERY CYCLE
+            # 0. RE-LOAD BLOCKED SYMBOLS
             # ------------------------------------------------------------------
             blocked_symbols_per_broker = {bn: set() for bn in brokersdictionary.keys()}
-
             if os.path.exists(brokers_report_path):
                 try:
                     with open(brokers_report_path, "r", encoding="utf-8") as f:
                         report = json.load(f)
-
                     for order in report.get("pending_orders", []):
                         sym, broker = order.get("symbol"), order.get("broker")
                         if broker in blocked_symbols_per_broker:
                             blocked_symbols_per_broker[broker].add(sym)
-
                     for pos in report.get("open_positions", []):
                         sym, broker = pos.get("symbol"), pos.get("broker")
                         if broker in blocked_symbols_per_broker:
                             blocked_symbols_per_broker[broker].add(sym)
-
                     for hist in report.get("history_orders", []):
                         sym, broker = hist.get("symbol"), hist.get("broker")
                         age_str = hist.get("age", "")
@@ -9232,7 +9335,6 @@ def fetch_charts_all_brokers(
                             if any(p in age_str for p in ["m", "s"]) or ("h" in age_str and int(age_str.split("h")[0]) < 5):
                                 if broker in blocked_symbols_per_broker:
                                     blocked_symbols_per_broker[broker].add(sym)
-
                     log_and_print(f"Loaded blocked symbols from {brokers_report_path}", "INFO")
                     for bn, syms in blocked_symbols_per_broker.items():
                         if syms:
@@ -9243,7 +9345,7 @@ def fetch_charts_all_brokers(
                 log_and_print("brokerslimitorders.json not found – no blocks", "WARNING")
 
             # ------------------------------------------------------------------
-            # 0.5 DELETE ALL NON-BLOCKED SYMBOL FOLDERS (per broker)
+            # 0.5 DELETE NON-BLOCKED FOLDERS
             # ------------------------------------------------------------------
             for bn, cfg in brokersdictionary.items():
                 blocked = blocked_symbols_per_broker.get(bn, set())
@@ -9295,7 +9397,7 @@ def fetch_charts_all_brokers(
                 symbolsmatch_data = json.load(f)
 
             # ------------------------------------------------------------------
-            # 5. Build candidate list
+            # 5. Build candidate list WITH FINAL CASE-INSENSITIVE SYMBOLS CHECK
             # ------------------------------------------------------------------
             broker_name_mapping = {
                 "deriv": "deriv", "deriv1": "deriv", "deriv2": "deriv",
@@ -9311,6 +9413,16 @@ def fetch_charts_all_brokers(
                 candidates[broker_name] = {c: [] for c in all_cats}
                 blocked = blocked_symbols_per_broker.get(broker_name, set())
 
+                # Parse broker's SYMBOLS — case-insensitive
+                broker_symbols_raw = cfg.get("SYMBOLS", "").strip()
+                if broker_symbols_raw.lower() == "all":
+                    broker_allowed_symbols = None  # Allow all
+                else:
+                    # Normalize and store as uppercase set
+                    broker_allowed_symbols = {
+                        normalize_symbol(s) for s in broker_symbols_raw.split(",") if s.strip()
+                    }
+
                 ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
                 error_log.extend(errs)
                 if not ok:
@@ -9323,7 +9435,7 @@ def fetch_charts_all_brokers(
                         if sym not in avail:
                             continue
                         if sym in blocked:
-                            continue  # Skip blocked
+                            continue
 
                         cat = symbol_to_category.get(sym)
                         if not cat or cat not in all_cats:
@@ -9332,7 +9444,11 @@ def fetch_charts_all_brokers(
                             if normalize_symbol(sym) not in normalized_allowed.get(cat, set()):
                                 continue
 
-                        # QUEUED → DELETE FOLDER AGAIN (extra safety)
+                        # FINAL VERIFICATION: Broker-specific SYMBOLS check (case-insensitive)
+                        if broker_allowed_symbols is not None:
+                            if normalize_symbol(sym) not in broker_allowed_symbols:
+                                continue  # Skip if not in broker's SYMBOLS list
+
                         if symbol_needs_processing(sym, cfg["BASE_FOLDER"]):
                             delete_symbol_folder(sym, cfg["BASE_FOLDER"], "(pre-process cleanup)")
                             candidates[broker_name][cat].append(sym)
@@ -9445,8 +9561,8 @@ def fetch_charts_all_brokers(
 
         except Exception as e:
             log_and_print(f"MAIN LOOP CRASH: {e}\n{traceback.format_exc()}", "CRITICAL")
-            time.sleep(600)
-            
+            time.sleep(600)            
+
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
         bars=201,

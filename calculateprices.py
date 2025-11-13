@@ -7,27 +7,32 @@ from collections import defaultdict
 
 def symbolsorderfiltering():
     """
-    Filters ALL order data based on allowedmarkets.json:
-    - volumesandrisk.json (input)
-    - calculatedprices.json (output)
-    - hightolow.json / lowtohigh.json (categorized strategies)
-
-    Rules:
-      - limited: true + allowed list → keep only listed markets
-      - limited: true + empty list → delete ALL for that market
-      - limited: false → keep all
-
-    Returns True on success.
+    Filters ALL order data — NOW WITH CORRECT PATH TO allowedmarkets.json
     """
     from pathlib import Path
     import json
+    import re
 
     # ------------------------------------------------------------------
-    # PATHS & CONFIG
+    # NORMALIZATION
     # ------------------------------------------------------------------
-    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\symbols\allowedmarkets.json")
+    def normalize_symbol(s: str) -> str:
+        if not s:
+            return ""
+        return re.sub(r'[\/\s\-_]+', '', s.strip()).upper()
+
+    def normalize_market_key(key: str) -> str:
+        return key.strip().lower()
+
+    # ------------------------------------------------------------------
+    # CORRECT PATH TO allowedmarkets.json
+    # ------------------------------------------------------------------
+    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
     INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points")
     OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+
+    INPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
     INPUT_FILES = [
         "forexvolumesandrisk.json", "syntheticsvolumesandrisk.json", "cryptovolumesandrisk.json",
@@ -56,42 +61,56 @@ def symbolsorderfiltering():
     }
 
     CATEGORY_FILES = ["hightolow.json", "lowtohigh.json"]
-    FILENAME_TO_MARKET = {v: k for k, v in CALC_FILES.items()}
+    FILENAME_TO_MARKET = {v: normalize_market_key(k) for k, v in CALC_FILES.items()}
 
     total_removed = 0
     total_files   = 0
 
     # ------------------------------------------------------------------
-    # 1. Load allowed markets
+    # 1. LOAD allowedmarkets.json FROM CORRECT PATH
     # ------------------------------------------------------------------
+    print(f"[DEBUG] Loading allowedmarkets.json from: {ALLOWED_MARKETS_PATH}")
     if not ALLOWED_MARKETS_PATH.is_file():
+        print(f"[ERROR] FILE NOT FOUND: {ALLOWED_MARKETS_PATH}")
         return False
+
     try:
         with ALLOWED_MARKETS_PATH.open("r", encoding="utf-8") as f:
             allowed_config = json.load(f)
-    except Exception:
+        print(f"[DEBUG] LOADED allowedmarkets.json with keys: {list(allowed_config.keys())}")
+    except Exception as e:
+        print(f"[ERROR] JSON LOAD FAILED: {e}")
         return False
 
+    # ------------------------------------------------------------------
+    # 2. BUILD market_rules
+    # ------------------------------------------------------------------
     market_rules = {}
-    for market_key, cfg in allowed_config.items():
+    for raw_key, cfg in allowed_config.items():
+        market_key = normalize_market_key(raw_key)
         limited = cfg.get("limited", False)
-        allowed = set(cfg.get("allowed", []))
-        market_rules[market_key] = (limited, allowed)
+        raw_allowed = cfg.get("allowed", [])
+        normalized_allowed = {normalize_symbol(s) for s in raw_allowed if s}
+        market_rules[market_key] = (limited, normalized_allowed)
+        print(f"[RULE] '{raw_key}' → '{market_key}' | limited={limited} | allowed={list(normalized_allowed)[:3]}...")
 
     # ------------------------------------------------------------------
-    # Helper: print header + rules
+    # LOG RULES
     # ------------------------------------------------------------------
     print("\n" + "="*90)
-    print("SYMBOLS ORDER FILTERING (INPUT + OUTPUT + CATEGORIZED)".center(90))
-    print("="*90 + "\n")
-
+    print("SYMBOLS ORDER FILTERING (CORRECT PATH)".center(90))
+    print("="*90)
     for market_key, (limited, allowed) in market_rules.items():
         status = "DELETE ALL" if limited and not allowed else \
                  f"KEEP {len(allowed)}" if limited else "KEEP ALL"
-        #print(f"[RULE] {market_key.upper():12} → {status}")
+        sample = list(allowed)[:3]
+        if len(allowed) > 3:
+            sample.append("...")
+        print(f"[RULE] {market_key.upper():12} → {status} {sample if limited and allowed else ''}")
+    print()
 
     # ------------------------------------------------------------------
-    # Helper: filter list/dict by market
+    # Helper: filter
     # ------------------------------------------------------------------
     def filter_market_data(data, market_key):
         nonlocal total_removed
@@ -104,157 +123,151 @@ def symbolsorderfiltering():
             for key in list(data.keys()):
                 if not isinstance(data[key], list):
                     continue
-                orig = len(data[key])
+                orig_len = len(data[key])
                 if not allowed:
                     data[key][:] = []
                 else:
-                    data[key][:] = [e for e in data[key] if e.get("market") in allowed]
-                removed += orig - len(data[key])
+                    data[key][:] = [
+                        e for e in data[key]
+                        if normalize_symbol(e.get("market", "")) in allowed
+                    ]
+                removed += orig_len - len(data[key])
         elif isinstance(data, list):
-            orig = len(data)
+            orig_len = len(data)
             if not allowed:
                 data[:] = []
             else:
-                data[:] = [e for e in data if e.get("market") in allowed]
-            removed = orig - len(data)
+                data[:] = [
+                    e for e in data
+                    if normalize_symbol(e.get("market", "")) in allowed
+                ]
+            removed += orig_len - len(data)
         total_removed += removed
         return removed
 
     # ------------------------------------------------------------------
-    # Helper: rebuild summary for categorized files
-    # ------------------------------------------------------------------
-    def rebuild_summary(entries, source_map):
-        markets = {e["market"] for e in entries}
-        counts = {"allmarketssymbols": len(markets)}
-        for src in CALC_FILES.keys():
-            key = f"{src}symbols"
-            counts[key] = sum(1 for m in markets if any(CALC_FILES[src] in s for s in source_map.get(m, [])))
-        return counts
-
-    # ------------------------------------------------------------------
-    # 2. FILTER INPUT FILES (silent)
+    # 2. FILTER INPUT FILES
     # ------------------------------------------------------------------
     for fname in INPUT_FILES:
-        market_key = fname.split("volumesandrisk")[0].rstrip("_")
+        raw_key = fname.split("volumesandrisk")[0].rstrip("_")
+        market_key = normalize_market_key(raw_key)
+        fpath = INPUT_ROOT / fname
+
         if market_key not in market_rules:
             continue
-        fpath = INPUT_ROOT / fname
         if not fpath.is_file():
             continue
+
         try:
             with fpath.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
-            continue
-        filter_market_data(data, market_key)
-        total_files += 1
-        with fpath.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            removed = filter_market_data(data, market_key)
+            total_files += 1
+            with fpath.open("w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            if removed:
+                print(f"[INPUT] {fname} → REMOVED {removed} entries")
+        except Exception as e:
+            print(f"[ERROR] {fname}: {e}")
 
     # ------------------------------------------------------------------
-    # 3. FILTER OUTPUT & CATEGORIZED FILES (silent)
+    # 3. OUTPUT FILTERING (RE-ENABLED)
     # ------------------------------------------------------------------
-    for broker_dir in OUTPUT_ROOT.iterdir():
-        if not broker_dir.is_dir():
-            continue
-        for risk, folder in RISK_FOLDERS.items():
-            risk_dir = broker_dir / folder
-            if not risk_dir.is_dir():
+    if not any(OUTPUT_ROOT.iterdir()):
+        print(f"[INFO] No output folders — skipping")
+    else:
+        for broker_dir in OUTPUT_ROOT.iterdir():
+            if not broker_dir.is_dir():
                 continue
-
-            # ---- source_map -------------------------------------------------
-            source_map = {}
-            for calc_fname in CALC_FILES.values():
-                p = risk_dir / calc_fname
-                if not p.is_file():
-                    continue
-                try:
-                    with p.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    for e in (data if isinstance(data, list) else data.values()):
-                        if isinstance(e, dict) and "market" in e:
-                            m = e["market"]
-                            source_map.setdefault(m, []).append(calc_fname)
-                except Exception:
-                    pass
-
-            # ---- calculatedprices -------------------------------------------
-            for market_key, calc_fname in CALC_FILES.items():
-                p = risk_dir / calc_fname
-                if not p.is_file():
-                    continue
-                try:
-                    with p.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    continue
-                filter_market_data(data, market_key)
-                total_files += 1
-                with p.open("w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-
-            # ---- hightolow / lowtohigh --------------------------------------
-            for cat_file in CATEGORY_FILES:
-                p = risk_dir / cat_file
-                if not p.is_file():
-                    continue
-                try:
-                    with p.open("r", encoding="utf-8") as f:
-                        content = json.load(f)
-                    entries = content.get("entries", [])
-                    if not isinstance(entries, list):
-                        continue
-                    old = len(entries)
-                except Exception:
+            for risk, folder in RISK_FOLDERS.items():
+                risk_dir = broker_dir / folder
+                if not risk_dir.is_dir():
                     continue
 
-                filtered = []
-                for e in entries:
-                    market = e.get("market")
-                    if not market:
-                        continue
+                # source_map
+                source_map = {}
+                for calc_fname in CALC_FILES.values():
+                    p = risk_dir / calc_fname
+                    if p.is_file():
+                        try:
+                            with p.open("r") as f:
+                                calc_data = json.load(f)
+                            for e in (calc_data if isinstance(calc_data, list) else calc_data.values()):
+                                if isinstance(e, dict) and "market" in e:
+                                    source_map.setdefault(e["market"], []).append(calc_fname)
+                        except:
+                            pass
 
-                    # market category from source_map
-                    market_key = None
-                    for src in source_map.get(market, []):
-                        market_key = FILENAME_TO_MARKET.get(src)
-                        if market_key:
-                            break
-                    if not market_key:
-                        # fallback – any calc file in the folder
-                        for cf in CALC_FILES.values():
-                            if (risk_dir / cf).is_file():
-                                market_key = FILENAME_TO_MARKET.get(cf)
-                                break
-                    if not market_key:
-                        filtered.append(e)
-                        continue
+                # calculatedprices
+                for raw_mk, calc_fname in CALC_FILES.items():
+                    mk = normalize_market_key(raw_mk)
+                    p = risk_dir / calc_fname
+                    if p.is_file():
+                        try:
+                            with p.open("r") as f:
+                                data = json.load(f)
+                            removed = filter_market_data(data, mk)
+                            total_files += 1
+                            with p.open("w") as f:
+                                json.dump(data, f, indent=2)
+                            if removed:
+                                print(f"  [OUTPUT] {calc_fname} → removed {removed}")
+                        except Exception as e:
+                            print(f"  [ERROR] {p}: {e}")
 
-                    limited, allowed = market_rules.get(market_key, (False, set()))
-                    if not limited or (allowed and market in allowed):
-                        filtered.append(e)
-
-                # rebuild summary
-                content["entries"] = filtered
-                content["summary"] = rebuild_summary(filtered, source_map)
-
-                with p.open("w", encoding="utf-8") as f:
-                    json.dump(content, f, indent=2)
-
-                total_removed += old - len(filtered)
-                total_files   += 1
+                # categorized
+                for cat_file in CATEGORY_FILES:
+                    p = risk_dir / cat_file
+                    if p.is_file():
+                        try:
+                            with p.open("r") as f:
+                                content = json.load(f)
+                            entries = content.get("entries", [])
+                            old_len = len(entries)
+                            filtered = []
+                            for e in entries:
+                                market = e.get("market")
+                                if not market:
+                                    continue
+                                norm_market = normalize_symbol(market)
+                                mk = None
+                                for src in source_map.get(market, []):
+                                    mk = FILENAME_TO_MARKET.get(src)
+                                    if mk:
+                                        break
+                                if not mk:
+                                    for cf in CALC_FILES.values():
+                                        if (risk_dir / cf).is_file():
+                                            mk = FILENAME_TO_MARKET.get(cf)
+                                            break
+                                if not mk:
+                                    filtered.append(e)
+                                    continue
+                                limited, allowed = market_rules.get(mk, (False, set()))
+                                if not limited or (allowed and norm_market in allowed):
+                                    filtered.append(e)
+                            content["entries"] = filtered
+                            with p.open("w") as f:
+                                json.dump(content, f, indent=2)
+                            removed = old_len - len(filtered)
+                            if removed:
+                                print(f"  [CAT] {cat_file} → removed {removed}")
+                            total_removed += removed
+                            total_files += 1
+                        except Exception as e:
+                            print(f"  [ERROR] {p}: {e}")
 
     # ------------------------------------------------------------------
-    # FINAL REPORT (only what you asked for)
+    # FINAL REPORT
     # ------------------------------------------------------------------
     print("\n" + "="*90)
-    print(f"SYMBOLS FILTERING COMPLETE")
+    print("SYMBOLS FILTERING COMPLETE")
     print(f"   • {total_removed:,} entries removed")
-    print(f"   • {total_files} files processed (input + output + categorized)")
+    print(f"   • {total_files} files processed")
     print(f"   • Rules: {ALLOWED_MARKETS_PATH.name}")
     print("="*90 + "\n")
-    return True 
-
+    return True    
+    
 
 def clean_5m_timeframes():
     """
