@@ -3275,6 +3275,208 @@ def place_demo_orders():
     log_and_print("All demo brokers processed successfully.", "SUCCESS")
 
 def _0_50_4_orders():
+    def _0_50cent_usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $0.60
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 0.60 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (0.50 <= balance < 3.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_0_50cent_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 0.60 ---
+                    if risk_usd <= 0.60:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $0.60 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_0.60": kept,
+                "removed_risk_>_0.60": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 0.60",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $0.60) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
     def place_0_50cent_usd_orders():
         
 
@@ -3517,208 +3719,6 @@ def _0_50_4_orders():
         log_and_print("All $12–$20 accounts processed.", "SUCCESS")
         return True
 
-    def _0_50cent_usd_live_sl_tp_amounts():
-        
-        """
-        READS: hightolow.json
-        CALCULATES: Live $3 risk & profit
-        PRINTS: 3-line block for every market
-        SAVES:
-            - live_risk_profit_all.json → only valid ≤ $0.60
-            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
-        FILTER: Delete any order with live_risk_usd > 0.60 from BOTH files
-        """
-
-        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-        INPUT_FILE = "hightolow.json"
-        OUTPUT_FILE = "live_risk_profit_all.json"
-
-        for broker_name, cfg in brokersdictionary.items():
-            TERMINAL_PATH = cfg["TERMINAL_PATH"]
-            LOGIN_ID = cfg["LOGIN_ID"]
-            PASSWORD = cfg["PASSWORD"]
-            SERVER = cfg["SERVER"]
-
-            log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
-            log_and_print(f"{'='*60}", "INFO")
-
-            # ------------------- CONNECT TO MT5 -------------------
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
-                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-                continue
-            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            account = mt5.account_info()
-            if not account:
-                log_and_print("No account info", "ERROR")
-                mt5.shutdown()
-                continue
-
-            balance = account.balance
-            if not (0.50 <= balance < 3.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
-                mt5.shutdown()
-                continue
-
-            currency = account.currency
-            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
-
-            # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_0_50cent_usd" / INPUT_FILE
-            if not json_path.exists():
-                log_and_print(f"JSON not found: {json_path}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            try:
-                with json_path.open("r", encoding="utf-8") as f:
-                    original_data = json.load(f)
-                entries = original_data.get("entries", [])
-            except Exception as e:
-                log_and_print(f"Failed to read JSON: {e}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            if not entries:
-                log_and_print("No entries in JSON.", "INFO")
-                mt5.shutdown()
-                continue
-
-            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
-
-            # ------------------- PROCESS & FILTER -------------------
-            valid_entries = []        # For overwriting hightolow.json
-            results = []              # For live_risk_profit_all.json
-            total = len(entries)
-            kept = 0
-            removed = 0
-
-            for i, entry in enumerate(entries, 1):
-                market = entry["market"]
-                try:
-                    price = float(entry["entry_price"])
-                    sl = float(entry["sl_price"])
-                    tp = float(entry["tp_price"])
-                    volume = float(entry["volume"])
-                    order_type = entry["limit_order"]
-                    sl_pips = float(entry.get("sl_pips", 0))
-                    tp_pips = float(entry.get("tp_pips", 0))
-
-                    # --- LIVE DATA ---
-                    info = mt5.symbol_info(market)
-                    tick = mt5.symbol_info_tick(market)
-
-                    if not info or not tick:
-                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
-                        pip_value = 0.1
-                        risk_usd = volume * sl_pips * pip_value
-                        profit_usd = volume * tp_pips * pip_value
-                    else:
-                        point = info.point
-                        contract = info.trade_contract_size
-
-                        risk_points = abs(price - sl) / point
-                        profit_points = abs(tp - price) / point
-
-                        point_val = contract * point
-                        if "JPY" in market and currency == "USD":
-                            point_val /= 100
-
-                        risk_ac = risk_points * point_val * volume
-                        profit_ac = profit_points * point_val * volume
-
-                        risk_usd = risk_ac
-                        profit_usd = profit_ac
-
-                        if currency != "USD":
-                            conv = f"USD{currency}"
-                            rate_tick = mt5.symbol_info_tick(conv)
-                            rate = rate_tick.bid if rate_tick else 1.0
-                            risk_usd /= rate
-                            profit_usd /= rate
-
-                    risk_usd = round(risk_usd, 2)
-                    profit_usd = round(profit_usd, 2)
-
-                    # --- PRINT ALL ---
-                    print(f"market: {market}")
-                    print(f"risk: {risk_usd} USD")
-                    print(f"profit: {profit_usd} USD")
-                    print("---")
-
-                    # --- FILTER: KEEP ONLY <= 0.60 ---
-                    if risk_usd <= 0.60:
-                        # Keep in BOTH files
-                        valid_entries.append(entry)  # Original format
-                        results.append({
-                            "market": market,
-                            "order_type": order_type,
-                            "entry_price": round(price, 6),
-                            "sl": round(sl, 6),
-                            "tp": round(tp, 6),
-                            "volume": round(volume, 5),
-                            "live_risk_usd": risk_usd,
-                            "live_profit_usd": profit_usd,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "has_live_tick": bool(info and tick),
-                            "current_bid": round(tick.bid, 6) if tick else None,
-                            "current_ask": round(tick.ask, 6) if tick else None,
-                        })
-                        kept += 1
-                    else:
-                        removed += 1
-                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $0.60 → DELETED FROM BOTH JSON FILES", "WARNING")
-
-                except Exception as e:
-                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
-                    removed += 1
-
-                if i % 5 == 0 or i == total:
-                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
-
-            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
-            out_path = json_path.parent / OUTPUT_FILE
-            report = {
-                "broker": broker_name,
-                "account_currency": currency,
-                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
-                "source_file": str(json_path),
-                "total_entries": total,
-                "kept_risk_<=_0.60": kept,
-                "removed_risk_>_0.60": removed,
-                "filter_applied": "Delete from both input & output if live_risk_usd > 0.60",
-                "orders": results
-            }
-
-            try:
-                with out_path.open("w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
-                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Save failed: {e}", "ERROR")
-
-            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
-            cleaned_input = original_data.copy()
-            cleaned_input["entries"] = valid_entries  # Only good ones
-
-            try:
-                with json_path.open("w", encoding="utf-8") as f:
-                    json.dump(cleaned_input, f, indent=2)
-                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
-
-            mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
-
-        log_and_print("\nALL DONE – BAD ORDERS (> $0.60) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
-        return True
-    
     def _0_50cent_usd_history_and_deduplication():
         """
         HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
@@ -3767,8 +3767,18 @@ def _0_50_4_orders():
                 continue
 
             balance = account.balance
+            equity = account.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 0.50 and balance >= 0.50:
+                log_and_print(f"Equity ${equity:.2f} < $0.50 while Balance ${balance:.2f} ≥ $0.50 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 0.50 and balance < 0.50:
+                log_and_print(f"Equity ${equity:.2f} > $0.50 while Balance ${balance:.2f} < $0.50 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
             if not (0.50 <= balance < 3.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                log_and_print(f"Balance ${balance:.2f} not in $0.50–$3.99 range → SKIPPED", "INFO")
                 mt5.shutdown()
                 continue
 
@@ -4234,6 +4244,208 @@ def _0_50_4_orders():
     _0_50cent_usd_ratio_levels()
 
 def _4_8_orders():
+    def _1usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $1.10
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 1.10 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (4.0 <= balance < 7.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_1_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 1.10 ---
+                    if risk_usd <= 1.10:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $1.10 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_1.10": kept,
+                "removed_risk_>_1.10": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 1.10",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $1.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
     def place_1usd_orders():
         
 
@@ -4464,208 +4676,6 @@ def _4_8_orders():
         log_and_print("All $12–$20 accounts processed.", "SUCCESS")
         return True
 
-    def _1usd_live_sl_tp_amounts():
-        
-        """
-        READS: hightolow.json
-        CALCULATES: Live $3 risk & profit
-        PRINTS: 3-line block for every market
-        SAVES:
-            - live_risk_profit_all.json → only valid ≤ $1.10
-            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
-        FILTER: Delete any order with live_risk_usd > 1.10 from BOTH files
-        """
-
-        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-        INPUT_FILE = "hightolow.json"
-        OUTPUT_FILE = "live_risk_profit_all.json"
-
-        for broker_name, cfg in brokersdictionary.items():
-            TERMINAL_PATH = cfg["TERMINAL_PATH"]
-            LOGIN_ID = cfg["LOGIN_ID"]
-            PASSWORD = cfg["PASSWORD"]
-            SERVER = cfg["SERVER"]
-
-            log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
-            log_and_print(f"{'='*60}", "INFO")
-
-            # ------------------- CONNECT TO MT5 -------------------
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
-                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-                continue
-            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            account = mt5.account_info()
-            if not account:
-                log_and_print("No account info", "ERROR")
-                mt5.shutdown()
-                continue
-
-            balance = account.balance
-            if not (4.0 <= balance < 7.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
-                mt5.shutdown()
-                continue
-
-            currency = account.currency
-            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
-
-            # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_1_usd" / INPUT_FILE
-            if not json_path.exists():
-                log_and_print(f"JSON not found: {json_path}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            try:
-                with json_path.open("r", encoding="utf-8") as f:
-                    original_data = json.load(f)
-                entries = original_data.get("entries", [])
-            except Exception as e:
-                log_and_print(f"Failed to read JSON: {e}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            if not entries:
-                log_and_print("No entries in JSON.", "INFO")
-                mt5.shutdown()
-                continue
-
-            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
-
-            # ------------------- PROCESS & FILTER -------------------
-            valid_entries = []        # For overwriting hightolow.json
-            results = []              # For live_risk_profit_all.json
-            total = len(entries)
-            kept = 0
-            removed = 0
-
-            for i, entry in enumerate(entries, 1):
-                market = entry["market"]
-                try:
-                    price = float(entry["entry_price"])
-                    sl = float(entry["sl_price"])
-                    tp = float(entry["tp_price"])
-                    volume = float(entry["volume"])
-                    order_type = entry["limit_order"]
-                    sl_pips = float(entry.get("sl_pips", 0))
-                    tp_pips = float(entry.get("tp_pips", 0))
-
-                    # --- LIVE DATA ---
-                    info = mt5.symbol_info(market)
-                    tick = mt5.symbol_info_tick(market)
-
-                    if not info or not tick:
-                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
-                        pip_value = 0.1
-                        risk_usd = volume * sl_pips * pip_value
-                        profit_usd = volume * tp_pips * pip_value
-                    else:
-                        point = info.point
-                        contract = info.trade_contract_size
-
-                        risk_points = abs(price - sl) / point
-                        profit_points = abs(tp - price) / point
-
-                        point_val = contract * point
-                        if "JPY" in market and currency == "USD":
-                            point_val /= 100
-
-                        risk_ac = risk_points * point_val * volume
-                        profit_ac = profit_points * point_val * volume
-
-                        risk_usd = risk_ac
-                        profit_usd = profit_ac
-
-                        if currency != "USD":
-                            conv = f"USD{currency}"
-                            rate_tick = mt5.symbol_info_tick(conv)
-                            rate = rate_tick.bid if rate_tick else 1.0
-                            risk_usd /= rate
-                            profit_usd /= rate
-
-                    risk_usd = round(risk_usd, 2)
-                    profit_usd = round(profit_usd, 2)
-
-                    # --- PRINT ALL ---
-                    print(f"market: {market}")
-                    print(f"risk: {risk_usd} USD")
-                    print(f"profit: {profit_usd} USD")
-                    print("---")
-
-                    # --- FILTER: KEEP ONLY <= 1.10 ---
-                    if risk_usd <= 1.10:
-                        # Keep in BOTH files
-                        valid_entries.append(entry)  # Original format
-                        results.append({
-                            "market": market,
-                            "order_type": order_type,
-                            "entry_price": round(price, 6),
-                            "sl": round(sl, 6),
-                            "tp": round(tp, 6),
-                            "volume": round(volume, 5),
-                            "live_risk_usd": risk_usd,
-                            "live_profit_usd": profit_usd,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "has_live_tick": bool(info and tick),
-                            "current_bid": round(tick.bid, 6) if tick else None,
-                            "current_ask": round(tick.ask, 6) if tick else None,
-                        })
-                        kept += 1
-                    else:
-                        removed += 1
-                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $1.10 → DELETED FROM BOTH JSON FILES", "WARNING")
-
-                except Exception as e:
-                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
-                    removed += 1
-
-                if i % 5 == 0 or i == total:
-                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
-
-            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
-            out_path = json_path.parent / OUTPUT_FILE
-            report = {
-                "broker": broker_name,
-                "account_currency": currency,
-                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
-                "source_file": str(json_path),
-                "total_entries": total,
-                "kept_risk_<=_1.10": kept,
-                "removed_risk_>_1.10": removed,
-                "filter_applied": "Delete from both input & output if live_risk_usd > 1.10",
-                "orders": results
-            }
-
-            try:
-                with out_path.open("w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
-                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Save failed: {e}", "ERROR")
-
-            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
-            cleaned_input = original_data.copy()
-            cleaned_input["entries"] = valid_entries  # Only good ones
-
-            try:
-                with json_path.open("w", encoding="utf-8") as f:
-                    json.dump(cleaned_input, f, indent=2)
-                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
-
-            mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
-
-        log_and_print("\nALL DONE – BAD ORDERS (> $1.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
-        return True
-    
     def _1usd_history_and_deduplication():
         """
         HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
@@ -4714,8 +4724,18 @@ def _4_8_orders():
                 continue
 
             balance = account.balance
+            equity = account.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 4.0 and balance >= 4.0:
+                log_and_print(f"Equity ${equity:.2f} < $4.0 while Balance ${balance:.2f} ≥ $4.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 4.0 and balance < 4.0:
+                log_and_print(f"Equity ${equity:.2f} > $4.0 while Balance ${balance:.2f} < $4.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
             if not (4.0 <= balance < 7.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                log_and_print(f"Balance ${balance:.2f} not in $4–$7.99 range → SKIPPED", "INFO")
                 mt5.shutdown()
                 continue
 
@@ -5181,6 +5201,208 @@ def _4_8_orders():
     _1usd_ratio_levels()
 
 def _8_12_orders():
+    def _2usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $2.10
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 2.10 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (8.0 <= balance < 11.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_2_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 2.10 ---
+                    if risk_usd <= 2.10:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $2.10 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_2.10": kept,
+                "removed_risk_>_2.10": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 2.10",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $2.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
     def place_2usd_orders():
         
 
@@ -5408,208 +5630,6 @@ def _8_12_orders():
         log_and_print("All $12–$20 accounts processed.", "SUCCESS")
         return True
 
-    def _2usd_live_sl_tp_amounts():
-        
-        """
-        READS: hightolow.json
-        CALCULATES: Live $3 risk & profit
-        PRINTS: 3-line block for every market
-        SAVES:
-            - live_risk_profit_all.json → only valid ≤ $2.10
-            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
-        FILTER: Delete any order with live_risk_usd > 2.10 from BOTH files
-        """
-
-        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-        INPUT_FILE = "hightolow.json"
-        OUTPUT_FILE = "live_risk_profit_all.json"
-
-        for broker_name, cfg in brokersdictionary.items():
-            TERMINAL_PATH = cfg["TERMINAL_PATH"]
-            LOGIN_ID = cfg["LOGIN_ID"]
-            PASSWORD = cfg["PASSWORD"]
-            SERVER = cfg["SERVER"]
-
-            log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
-            log_and_print(f"{'='*60}", "INFO")
-
-            # ------------------- CONNECT TO MT5 -------------------
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
-                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-                continue
-            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            account = mt5.account_info()
-            if not account:
-                log_and_print("No account info", "ERROR")
-                mt5.shutdown()
-                continue
-
-            balance = account.balance
-            if not (8.0 <= balance < 11.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
-                mt5.shutdown()
-                continue
-
-            currency = account.currency
-            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
-
-            # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_2_usd" / INPUT_FILE
-            if not json_path.exists():
-                log_and_print(f"JSON not found: {json_path}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            try:
-                with json_path.open("r", encoding="utf-8") as f:
-                    original_data = json.load(f)
-                entries = original_data.get("entries", [])
-            except Exception as e:
-                log_and_print(f"Failed to read JSON: {e}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            if not entries:
-                log_and_print("No entries in JSON.", "INFO")
-                mt5.shutdown()
-                continue
-
-            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
-
-            # ------------------- PROCESS & FILTER -------------------
-            valid_entries = []        # For overwriting hightolow.json
-            results = []              # For live_risk_profit_all.json
-            total = len(entries)
-            kept = 0
-            removed = 0
-
-            for i, entry in enumerate(entries, 1):
-                market = entry["market"]
-                try:
-                    price = float(entry["entry_price"])
-                    sl = float(entry["sl_price"])
-                    tp = float(entry["tp_price"])
-                    volume = float(entry["volume"])
-                    order_type = entry["limit_order"]
-                    sl_pips = float(entry.get("sl_pips", 0))
-                    tp_pips = float(entry.get("tp_pips", 0))
-
-                    # --- LIVE DATA ---
-                    info = mt5.symbol_info(market)
-                    tick = mt5.symbol_info_tick(market)
-
-                    if not info or not tick:
-                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
-                        pip_value = 0.1
-                        risk_usd = volume * sl_pips * pip_value
-                        profit_usd = volume * tp_pips * pip_value
-                    else:
-                        point = info.point
-                        contract = info.trade_contract_size
-
-                        risk_points = abs(price - sl) / point
-                        profit_points = abs(tp - price) / point
-
-                        point_val = contract * point
-                        if "JPY" in market and currency == "USD":
-                            point_val /= 100
-
-                        risk_ac = risk_points * point_val * volume
-                        profit_ac = profit_points * point_val * volume
-
-                        risk_usd = risk_ac
-                        profit_usd = profit_ac
-
-                        if currency != "USD":
-                            conv = f"USD{currency}"
-                            rate_tick = mt5.symbol_info_tick(conv)
-                            rate = rate_tick.bid if rate_tick else 1.0
-                            risk_usd /= rate
-                            profit_usd /= rate
-
-                    risk_usd = round(risk_usd, 2)
-                    profit_usd = round(profit_usd, 2)
-
-                    # --- PRINT ALL ---
-                    print(f"market: {market}")
-                    print(f"risk: {risk_usd} USD")
-                    print(f"profit: {profit_usd} USD")
-                    print("---")
-
-                    # --- FILTER: KEEP ONLY <= 2.10 ---
-                    if risk_usd <= 2.10:
-                        # Keep in BOTH files
-                        valid_entries.append(entry)  # Original format
-                        results.append({
-                            "market": market,
-                            "order_type": order_type,
-                            "entry_price": round(price, 6),
-                            "sl": round(sl, 6),
-                            "tp": round(tp, 6),
-                            "volume": round(volume, 5),
-                            "live_risk_usd": risk_usd,
-                            "live_profit_usd": profit_usd,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "has_live_tick": bool(info and tick),
-                            "current_bid": round(tick.bid, 6) if tick else None,
-                            "current_ask": round(tick.ask, 6) if tick else None,
-                        })
-                        kept += 1
-                    else:
-                        removed += 1
-                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $2.10 → DELETED FROM BOTH JSON FILES", "WARNING")
-
-                except Exception as e:
-                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
-                    removed += 1
-
-                if i % 5 == 0 or i == total:
-                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
-
-            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
-            out_path = json_path.parent / OUTPUT_FILE
-            report = {
-                "broker": broker_name,
-                "account_currency": currency,
-                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
-                "source_file": str(json_path),
-                "total_entries": total,
-                "kept_risk_<=_2.10": kept,
-                "removed_risk_>_2.10": removed,
-                "filter_applied": "Delete from both input & output if live_risk_usd > 2.10",
-                "orders": results
-            }
-
-            try:
-                with out_path.open("w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
-                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Save failed: {e}", "ERROR")
-
-            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
-            cleaned_input = original_data.copy()
-            cleaned_input["entries"] = valid_entries  # Only good ones
-
-            try:
-                with json_path.open("w", encoding="utf-8") as f:
-                    json.dump(cleaned_input, f, indent=2)
-                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
-
-            mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
-
-        log_and_print("\nALL DONE – BAD ORDERS (> $2.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
-        return True
-    
     def _2usd_history_and_deduplication():
         """
         HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
@@ -5658,8 +5678,18 @@ def _8_12_orders():
                 continue
 
             balance = account.balance
+            equity = account.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 8.0 and balance >= 8.0:
+                log_and_print(f"Equity ${equity:.2f} < $8.0 while Balance ${balance:.2f} ≥ $8.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 8.0 and balance < 8.0:
+                log_and_print(f"Equity ${equity:.2f} > $8.0 while Balance ${balance:.2f} < $8.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
             if not (8.0 <= balance < 11.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                log_and_print(f"Balance ${balance:.2f} not in $8–$11.99 range → SKIPPED", "INFO")
                 mt5.shutdown()
                 continue
 
@@ -6125,6 +6155,208 @@ def _8_12_orders():
     _2usd_ratio_levels()
 
 def _12_20_orders():
+    def _3usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $3.10
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 3.10 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (12.0 <= balance < 19.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_3_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 3.10 ---
+                    if risk_usd <= 3.10:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $3.10 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_3.10": kept,
+                "removed_risk_>_3.10": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 3.10",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $3.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
     def place_3usd_orders():
         
 
@@ -6356,208 +6588,6 @@ def _12_20_orders():
         log_and_print("All $12–$20 accounts processed.", "SUCCESS")
         return True
 
-    def _3usd_live_sl_tp_amounts():
-        
-        """
-        READS: hightolow.json
-        CALCULATES: Live $3 risk & profit
-        PRINTS: 3-line block for every market
-        SAVES:
-            - live_risk_profit_all.json → only valid ≤ $3.10
-            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
-        FILTER: Delete any order with live_risk_usd > 3.10 from BOTH files
-        """
-
-        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-        INPUT_FILE = "hightolow.json"
-        OUTPUT_FILE = "live_risk_profit_all.json"
-
-        for broker_name, cfg in brokersdictionary.items():
-            TERMINAL_PATH = cfg["TERMINAL_PATH"]
-            LOGIN_ID = cfg["LOGIN_ID"]
-            PASSWORD = cfg["PASSWORD"]
-            SERVER = cfg["SERVER"]
-
-            log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
-            log_and_print(f"{'='*60}", "INFO")
-
-            # ------------------- CONNECT TO MT5 -------------------
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
-                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-                continue
-            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            account = mt5.account_info()
-            if not account:
-                log_and_print("No account info", "ERROR")
-                mt5.shutdown()
-                continue
-
-            balance = account.balance
-            if not (12.0 <= balance < 19.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
-                mt5.shutdown()
-                continue
-
-            currency = account.currency
-            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
-
-            # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_3_usd" / INPUT_FILE
-            if not json_path.exists():
-                log_and_print(f"JSON not found: {json_path}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            try:
-                with json_path.open("r", encoding="utf-8") as f:
-                    original_data = json.load(f)
-                entries = original_data.get("entries", [])
-            except Exception as e:
-                log_and_print(f"Failed to read JSON: {e}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            if not entries:
-                log_and_print("No entries in JSON.", "INFO")
-                mt5.shutdown()
-                continue
-
-            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
-
-            # ------------------- PROCESS & FILTER -------------------
-            valid_entries = []        # For overwriting hightolow.json
-            results = []              # For live_risk_profit_all.json
-            total = len(entries)
-            kept = 0
-            removed = 0
-
-            for i, entry in enumerate(entries, 1):
-                market = entry["market"]
-                try:
-                    price = float(entry["entry_price"])
-                    sl = float(entry["sl_price"])
-                    tp = float(entry["tp_price"])
-                    volume = float(entry["volume"])
-                    order_type = entry["limit_order"]
-                    sl_pips = float(entry.get("sl_pips", 0))
-                    tp_pips = float(entry.get("tp_pips", 0))
-
-                    # --- LIVE DATA ---
-                    info = mt5.symbol_info(market)
-                    tick = mt5.symbol_info_tick(market)
-
-                    if not info or not tick:
-                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
-                        pip_value = 0.1
-                        risk_usd = volume * sl_pips * pip_value
-                        profit_usd = volume * tp_pips * pip_value
-                    else:
-                        point = info.point
-                        contract = info.trade_contract_size
-
-                        risk_points = abs(price - sl) / point
-                        profit_points = abs(tp - price) / point
-
-                        point_val = contract * point
-                        if "JPY" in market and currency == "USD":
-                            point_val /= 100
-
-                        risk_ac = risk_points * point_val * volume
-                        profit_ac = profit_points * point_val * volume
-
-                        risk_usd = risk_ac
-                        profit_usd = profit_ac
-
-                        if currency != "USD":
-                            conv = f"USD{currency}"
-                            rate_tick = mt5.symbol_info_tick(conv)
-                            rate = rate_tick.bid if rate_tick else 1.0
-                            risk_usd /= rate
-                            profit_usd /= rate
-
-                    risk_usd = round(risk_usd, 2)
-                    profit_usd = round(profit_usd, 2)
-
-                    # --- PRINT ALL ---
-                    print(f"market: {market}")
-                    print(f"risk: {risk_usd} USD")
-                    print(f"profit: {profit_usd} USD")
-                    print("---")
-
-                    # --- FILTER: KEEP ONLY <= 3.10 ---
-                    if risk_usd <= 3.10:
-                        # Keep in BOTH files
-                        valid_entries.append(entry)  # Original format
-                        results.append({
-                            "market": market,
-                            "order_type": order_type,
-                            "entry_price": round(price, 6),
-                            "sl": round(sl, 6),
-                            "tp": round(tp, 6),
-                            "volume": round(volume, 5),
-                            "live_risk_usd": risk_usd,
-                            "live_profit_usd": profit_usd,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "has_live_tick": bool(info and tick),
-                            "current_bid": round(tick.bid, 6) if tick else None,
-                            "current_ask": round(tick.ask, 6) if tick else None,
-                        })
-                        kept += 1
-                    else:
-                        removed += 1
-                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $3.10 → DELETED FROM BOTH JSON FILES", "WARNING")
-
-                except Exception as e:
-                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
-                    removed += 1
-
-                if i % 5 == 0 or i == total:
-                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
-
-            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
-            out_path = json_path.parent / OUTPUT_FILE
-            report = {
-                "broker": broker_name,
-                "account_currency": currency,
-                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
-                "source_file": str(json_path),
-                "total_entries": total,
-                "kept_risk_<=_3.10": kept,
-                "removed_risk_>_3.10": removed,
-                "filter_applied": "Delete from both input & output if live_risk_usd > 3.10",
-                "orders": results
-            }
-
-            try:
-                with out_path.open("w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
-                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Save failed: {e}", "ERROR")
-
-            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
-            cleaned_input = original_data.copy()
-            cleaned_input["entries"] = valid_entries  # Only good ones
-
-            try:
-                with json_path.open("w", encoding="utf-8") as f:
-                    json.dump(cleaned_input, f, indent=2)
-                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
-
-            mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
-
-        log_and_print("\nALL DONE – BAD ORDERS (> $3.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
-        return True
-    
     def _3usd_history_and_deduplication():
         """
         HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
@@ -6606,8 +6636,18 @@ def _12_20_orders():
                 continue
 
             balance = account.balance
+            equity = account.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 12.0 and balance >= 12.0:
+                log_and_print(f"Equity ${equity:.2f} < $12.0 while Balance ${balance:.2f} ≥ $12.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 12.0 and balance < 12.0:
+                log_and_print(f"Equity ${equity:.2f} > $12.0 while Balance ${balance:.2f} < $12.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
             if not (12.0 <= balance < 19.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                log_and_print(f"Balance ${balance:.2f} not in $12–$19.99 range → SKIPPED", "INFO")
                 mt5.shutdown()
                 continue
 
@@ -7073,6 +7113,208 @@ def _12_20_orders():
     _3usd_ratio_levels()
 
 def _20_100_orders():
+    def _4usd_live_sl_tp_amounts():
+        
+        """
+        READS: hightolow.json
+        CALCULATES: Live $3 risk & profit
+        PRINTS: 3-line block for every market
+        SAVES:
+            - live_risk_profit_all.json → only valid ≤ $4.10
+            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
+        FILTER: Delete any order with live_risk_usd > 4.10 from BOTH files
+        """
+
+        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+        INPUT_FILE = "hightolow.json"
+        OUTPUT_FILE = "live_risk_profit_all.json"
+
+        for broker_name, cfg in brokersdictionary.items():
+            TERMINAL_PATH = cfg["TERMINAL_PATH"]
+            LOGIN_ID = cfg["LOGIN_ID"]
+            PASSWORD = cfg["PASSWORD"]
+            SERVER = cfg["SERVER"]
+
+            log_and_print(f"\n{'='*60}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"{'='*60}", "INFO")
+
+            # ------------------- CONNECT TO MT5 -------------------
+            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+                continue
+            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
+                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            account = mt5.account_info()
+            if not account:
+                log_and_print("No account info", "ERROR")
+                mt5.shutdown()
+                continue
+
+            balance = account.balance
+            if not (20.0 <= balance < 99.99):
+                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                mt5.shutdown()
+                continue
+
+            currency = account.currency
+            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
+
+            # ------------------- LOAD JSON -------------------
+            json_path = Path(BASE_DIR) / broker_name / "risk_4_usd" / INPUT_FILE
+            if not json_path.exists():
+                log_and_print(f"JSON not found: {json_path}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            try:
+                with json_path.open("r", encoding="utf-8") as f:
+                    original_data = json.load(f)
+                entries = original_data.get("entries", [])
+            except Exception as e:
+                log_and_print(f"Failed to read JSON: {e}", "ERROR")
+                mt5.shutdown()
+                continue
+
+            if not entries:
+                log_and_print("No entries in JSON.", "INFO")
+                mt5.shutdown()
+                continue
+
+            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
+
+            # ------------------- PROCESS & FILTER -------------------
+            valid_entries = []        # For overwriting hightolow.json
+            results = []              # For live_risk_profit_all.json
+            total = len(entries)
+            kept = 0
+            removed = 0
+
+            for i, entry in enumerate(entries, 1):
+                market = entry["market"]
+                try:
+                    price = float(entry["entry_price"])
+                    sl = float(entry["sl_price"])
+                    tp = float(entry["tp_price"])
+                    volume = float(entry["volume"])
+                    order_type = entry["limit_order"]
+                    sl_pips = float(entry.get("sl_pips", 0))
+                    tp_pips = float(entry.get("tp_pips", 0))
+
+                    # --- LIVE DATA ---
+                    info = mt5.symbol_info(market)
+                    tick = mt5.symbol_info_tick(market)
+
+                    if not info or not tick:
+                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
+                        pip_value = 0.1
+                        risk_usd = volume * sl_pips * pip_value
+                        profit_usd = volume * tp_pips * pip_value
+                    else:
+                        point = info.point
+                        contract = info.trade_contract_size
+
+                        risk_points = abs(price - sl) / point
+                        profit_points = abs(tp - price) / point
+
+                        point_val = contract * point
+                        if "JPY" in market and currency == "USD":
+                            point_val /= 100
+
+                        risk_ac = risk_points * point_val * volume
+                        profit_ac = profit_points * point_val * volume
+
+                        risk_usd = risk_ac
+                        profit_usd = profit_ac
+
+                        if currency != "USD":
+                            conv = f"USD{currency}"
+                            rate_tick = mt5.symbol_info_tick(conv)
+                            rate = rate_tick.bid if rate_tick else 1.0
+                            risk_usd /= rate
+                            profit_usd /= rate
+
+                    risk_usd = round(risk_usd, 2)
+                    profit_usd = round(profit_usd, 2)
+
+                    # --- PRINT ALL ---
+                    print(f"market: {market}")
+                    print(f"risk: {risk_usd} USD")
+                    print(f"profit: {profit_usd} USD")
+                    print("---")
+
+                    # --- FILTER: KEEP ONLY <= 4.10 ---
+                    if risk_usd <= 4.10:
+                        # Keep in BOTH files
+                        valid_entries.append(entry)  # Original format
+                        results.append({
+                            "market": market,
+                            "order_type": order_type,
+                            "entry_price": round(price, 6),
+                            "sl": round(sl, 6),
+                            "tp": round(tp, 6),
+                            "volume": round(volume, 5),
+                            "live_risk_usd": risk_usd,
+                            "live_profit_usd": profit_usd,
+                            "sl_pips": round(sl_pips, 2),
+                            "tp_pips": round(tp_pips, 2),
+                            "has_live_tick": bool(info and tick),
+                            "current_bid": round(tick.bid, 6) if tick else None,
+                            "current_ask": round(tick.ask, 6) if tick else None,
+                        })
+                        kept += 1
+                    else:
+                        removed += 1
+                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $4.10 → DELETED FROM BOTH JSON FILES", "WARNING")
+
+                except Exception as e:
+                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
+                    removed += 1
+
+                if i % 5 == 0 or i == total:
+                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
+
+            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
+            out_path = json_path.parent / OUTPUT_FILE
+            report = {
+                "broker": broker_name,
+                "account_currency": currency,
+                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
+                "source_file": str(json_path),
+                "total_entries": total,
+                "kept_risk_<=_4.10": kept,
+                "removed_risk_>_4.10": removed,
+                "filter_applied": "Delete from both input & output if live_risk_usd > 4.10",
+                "orders": results
+            }
+
+            try:
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(report, f, indent=2)
+                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Save failed: {e}", "ERROR")
+
+            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
+            cleaned_input = original_data.copy()
+            cleaned_input["entries"] = valid_entries  # Only good ones
+
+            try:
+                with json_path.open("w", encoding="utf-8") as f:
+                    json.dump(cleaned_input, f, indent=2)
+                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
+
+            mt5.shutdown()
+            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+
+        log_and_print("\nALL DONE – BAD ORDERS (> $4.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
+        return True
+    
     def place_4usd_orders():
         
 
@@ -7301,209 +7543,7 @@ def _20_100_orders():
 
         log_and_print("All $12–$20 accounts processed.", "SUCCESS")
         return True
-
-    def _4usd_live_sl_tp_amounts():
-        
-        """
-        READS: hightolow.json
-        CALCULATES: Live $3 risk & profit
-        PRINTS: 3-line block for every market
-        SAVES:
-            - live_risk_profit_all.json → only valid ≤ $4.10
-            - OVERWRITES hightolow.json → REMOVES bad orders PERMANENTLY
-        FILTER: Delete any order with live_risk_usd > 4.10 from BOTH files
-        """
-
-        BASE_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
-        INPUT_FILE = "hightolow.json"
-        OUTPUT_FILE = "live_risk_profit_all.json"
-
-        for broker_name, cfg in brokersdictionary.items():
-            TERMINAL_PATH = cfg["TERMINAL_PATH"]
-            LOGIN_ID = cfg["LOGIN_ID"]
-            PASSWORD = cfg["PASSWORD"]
-            SERVER = cfg["SERVER"]
-
-            log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
-            log_and_print(f"{'='*60}", "INFO")
-
-            # ------------------- CONNECT TO MT5 -------------------
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
-                log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-                continue
-            if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            account = mt5.account_info()
-            if not account:
-                log_and_print("No account info", "ERROR")
-                mt5.shutdown()
-                continue
-
-            balance = account.balance
-            if not (20.0 <= balance < 99.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
-                mt5.shutdown()
-                continue
-
-            currency = account.currency
-            log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
-
-            # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_4_usd" / INPUT_FILE
-            if not json_path.exists():
-                log_and_print(f"JSON not found: {json_path}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            try:
-                with json_path.open("r", encoding="utf-8") as f:
-                    original_data = json.load(f)
-                entries = original_data.get("entries", [])
-            except Exception as e:
-                log_and_print(f"Failed to read JSON: {e}", "ERROR")
-                mt5.shutdown()
-                continue
-
-            if not entries:
-                log_and_print("No entries in JSON.", "INFO")
-                mt5.shutdown()
-                continue
-
-            log_and_print(f"Loaded {len(entries)} entries → Calculating LIVE risk...", "INFO")
-
-            # ------------------- PROCESS & FILTER -------------------
-            valid_entries = []        # For overwriting hightolow.json
-            results = []              # For live_risk_profit_all.json
-            total = len(entries)
-            kept = 0
-            removed = 0
-
-            for i, entry in enumerate(entries, 1):
-                market = entry["market"]
-                try:
-                    price = float(entry["entry_price"])
-                    sl = float(entry["sl_price"])
-                    tp = float(entry["tp_price"])
-                    volume = float(entry["volume"])
-                    order_type = entry["limit_order"]
-                    sl_pips = float(entry.get("sl_pips", 0))
-                    tp_pips = float(entry.get("tp_pips", 0))
-
-                    # --- LIVE DATA ---
-                    info = mt5.symbol_info(market)
-                    tick = mt5.symbol_info_tick(market)
-
-                    if not info or not tick:
-                        log_and_print(f"NO LIVE DATA for {market} → Using fallback", "WARNING")
-                        pip_value = 0.1
-                        risk_usd = volume * sl_pips * pip_value
-                        profit_usd = volume * tp_pips * pip_value
-                    else:
-                        point = info.point
-                        contract = info.trade_contract_size
-
-                        risk_points = abs(price - sl) / point
-                        profit_points = abs(tp - price) / point
-
-                        point_val = contract * point
-                        if "JPY" in market and currency == "USD":
-                            point_val /= 100
-
-                        risk_ac = risk_points * point_val * volume
-                        profit_ac = profit_points * point_val * volume
-
-                        risk_usd = risk_ac
-                        profit_usd = profit_ac
-
-                        if currency != "USD":
-                            conv = f"USD{currency}"
-                            rate_tick = mt5.symbol_info_tick(conv)
-                            rate = rate_tick.bid if rate_tick else 1.0
-                            risk_usd /= rate
-                            profit_usd /= rate
-
-                    risk_usd = round(risk_usd, 2)
-                    profit_usd = round(profit_usd, 2)
-
-                    # --- PRINT ALL ---
-                    print(f"market: {market}")
-                    print(f"risk: {risk_usd} USD")
-                    print(f"profit: {profit_usd} USD")
-                    print("---")
-
-                    # --- FILTER: KEEP ONLY <= 4.10 ---
-                    if risk_usd <= 4.10:
-                        # Keep in BOTH files
-                        valid_entries.append(entry)  # Original format
-                        results.append({
-                            "market": market,
-                            "order_type": order_type,
-                            "entry_price": round(price, 6),
-                            "sl": round(sl, 6),
-                            "tp": round(tp, 6),
-                            "volume": round(volume, 5),
-                            "live_risk_usd": risk_usd,
-                            "live_profit_usd": profit_usd,
-                            "sl_pips": round(sl_pips, 2),
-                            "tp_pips": round(tp_pips, 2),
-                            "has_live_tick": bool(info and tick),
-                            "current_bid": round(tick.bid, 6) if tick else None,
-                            "current_ask": round(tick.ask, 6) if tick else None,
-                        })
-                        kept += 1
-                    else:
-                        removed += 1
-                        log_and_print(f"REMOVED {market}: live risk ${risk_usd} > $4.10 → DELETED FROM BOTH JSON FILES", "WARNING")
-
-                except Exception as e:
-                    log_and_print(f"ERROR on {market}: {e}", "ERROR")
-                    removed += 1
-
-                if i % 5 == 0 or i == total:
-                    log_and_print(f"Processed {i}/{total} | Kept: {kept} | Removed: {removed}", "INFO")
-
-            # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
-            out_path = json_path.parent / OUTPUT_FILE
-            report = {
-                "broker": broker_name,
-                "account_currency": currency,
-                "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
-                "source_file": str(json_path),
-                "total_entries": total,
-                "kept_risk_<=_4.10": kept,
-                "removed_risk_>_4.10": removed,
-                "filter_applied": "Delete from both input & output if live_risk_usd > 4.10",
-                "orders": results
-            }
-
-            try:
-                with out_path.open("w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2)
-                log_and_print(f"SAVED → {out_path} | Kept: {kept} | Removed: {removed}", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Save failed: {e}", "ERROR")
-
-            # ------------------- OVERWRITE INPUT: hightolow.json -------------------
-            cleaned_input = original_data.copy()
-            cleaned_input["entries"] = valid_entries  # Only good ones
-
-            try:
-                with json_path.open("w", encoding="utf-8") as f:
-                    json.dump(cleaned_input, f, indent=2)
-                log_and_print(f"OVERWRITTEN → {json_path} | Now has {len(valid_entries)} entries (removed {removed})", "SUCCESS")
-            except Exception as e:
-                log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
-
-            mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
-
-        log_and_print("\nALL DONE – BAD ORDERS (> $4.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
-        return True
-    
+  
     def _4usd_history_and_deduplication():
         """
         HISTORY + PENDING + POSITION DUPLICATE DETECTOR + RISK SNIPER
@@ -7552,8 +7592,18 @@ def _20_100_orders():
                 continue
 
             balance = account.balance
+            equity = account.equity
+            log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+            if equity < 20.0 and balance >= 20.0:
+                log_and_print(f"Equity ${equity:.2f} < $20.0 while Balance ${balance:.2f} ≥ $20.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
+            if equity >= 20.0 and balance < 20.0:
+                log_and_print(f"Equity ${equity:.2f} > $20.0 while Balance ${balance:.2f} < $20.0 → IN DRAWDOWN → SKIPPED", "WARNING")
+                mt5.shutdown()
+                continue
             if not (20.0 <= balance < 99.99):
-                log_and_print(f"Balance ${balance:.2f} not in $12–$20 range → SKIPPED", "INFO")
+                log_and_print(f"Balance ${balance:.2f} not in $20–$99.99 range → SKIPPED", "INFO")
                 mt5.shutdown()
                 continue
 
