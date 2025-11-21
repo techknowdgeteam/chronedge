@@ -1996,126 +1996,123 @@ def calculate_commodities_sl_tp_markets():
     print(f"[Commodities] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
     return True
 
-
 def scale_lowerorders_proportionally():
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
     RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
         3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
     }
-    ASSET_CLASSES = {
-        "forex": "forexcalculatedprices.json",
-        "synthetics": "syntheticscalculatedprices.json",
-        "crypto": "cryptocalculatedprices.json",
-        "basketindices": "basketindicescalculatedprices.json",
-        "indices": "indicescalculatedprices.json",
-        "metals": "metalscalculatedprices.json",
-        "stocks": "stockscalculatedprices.json",
-        "etfs": "etfscalculatedprices.json",
-        "equities": "equitiescalculatedprices.json",
-        "energies": "energiescalculatedprices.json",
-        "commodities": "commoditiescalculatedprices.json",
-    }
+    STRATEGY_FILES = ["hightolow.json", "lowtohigh.json"]
 
     total_promoted = 0
 
-    for broker_dir in Path(BASE_INPUT_DIR).iterdir():
+    for broker_dir in BASE_INPUT_DIR.iterdir():
         if not broker_dir.is_dir():
             continue
         broker = broker_dir.name
-        print(f"\n[Promoter] Processing broker: {broker}", "INFO")
+        print(f"\n[Promoter] Processing broker: {broker}")
 
-        # Collect ALL valid source entries from ALL risk levels
-        source_entries = {}  # (asset, market, direction) → (src_risk, entry)
+        # Step 1: Collect all NATIVE (non-promoted) entries from ALL risk levels + both strategies
+        native_entries = []  # List of (risk, strategy_file, entry_dict)
 
-        for asset, filename in ASSET_CLASSES.items():
-            for risk in RISK_LEVELS:
-                file_path = broker_dir / RISK_FOLDERS[risk] / filename
+        for risk in RISK_LEVELS:
+            risk_folder = broker_dir / RISK_FOLDERS[risk]
+            if not risk_folder.is_dir():
+                continue
+
+            for strategy_file in STRATEGY_FILES:
+                file_path = risk_folder / strategy_file
                 if not file_path.is_file():
                     continue
+
                 try:
-                    with file_path.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    for entry in data:
-                        market = entry["market"]
-                        direction = entry["limit_order"]  # buy_limit/sell_limit
-                        key = (asset, market, direction)
-
-                        # Only use native (non-promoted) entries as source
+                    data = json.loads(file_path.read_text(encoding="utf-8"))
+                    entries = data.get("entries", [])
+                    for entry in entries:
                         criteria = entry.get("selection_criteria", "")
-                        if criteria.startswith("promoted_from_"):
+                        # Only native entries (not already promoted)
+                        if criteria and criteria.startswith("promoted_from_"):
                             continue
-
-                        # Keep if not seen or from lower risk
-                        if key not in source_entries or risk < source_entries[key][0]:
-                            source_entries[key] = (risk, entry)
+                        # Must have these fields
+                        if all(k in entry for k in ["market", "limit_order", "entry_price", "volume", "riskusd_amount"]):
+                            native_entries.append((risk, strategy_file, entry))
                 except Exception as e:
-                    print(f"[Promoter] Failed to read {file_path}: {e}", "ERROR")
+                    print(f"[Promoter] Failed reading {file_path}: {e}")
 
-        if not source_entries:
-            print(f"[Promoter] No source data for {broker}", "WARNING")
+        if not native_entries:
+            print(f"[Promoter] No native entries found for {broker}")
             continue
 
-        # Promote EVERY source entry to EVERY higher risk
-        for (asset, market, direction), (base_risk, base_entry) in source_entries.items():
-            filename = ASSET_CLASSES[asset]
+        print(f"[Promoter] Found {len(native_entries)} native entries to promote")
+
+        # Step 2: Promote each native entry to all HIGHER risk levels
+        for base_risk, strategy_file, base_entry in native_entries:
+            base_volume = base_entry["volume"]
+            market = base_entry["market"]
+            direction = base_entry["limit_order"]
 
             for target_risk in RISK_LEVELS:
                 if target_risk <= base_risk:
                     continue
 
                 scale_factor = target_risk / base_risk
-                new_volume = round(base_entry["volume"] * scale_factor, 8)
+                new_volume = round(base_volume * scale_factor, 8)
 
-                promoted_entry = {
-                    "market": market,
-                    "limit_order": direction,
-                    "timeframe": base_entry.get("timeframe", ""),
-                    "entry_price": base_entry["entry_price"],
+                # Create promoted copy
+                promoted_entry = base_entry.copy()
+                promoted_entry.update({
                     "volume": new_volume,
                     "riskusd_amount": target_risk,
-                    "sl_price": base_entry["sl_price"],
-                    "sl_pips": base_entry["sl_pips"],
-                    "tp_price": base_entry["tp_price"],
-                    "tp_pips": base_entry["tp_pips"],
-                    "rr_ratio": 3.0,
                     "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "selection_criteria": f"promoted_from_${base_risk}_scaled_x{scale_factor}",
                     "broker": broker
-                }
+                })
 
-                target_file = broker_dir / RISK_FOLDERS[target_risk] / filename
-                existing_data = []
+                # Target file (same strategy file in higher risk folder)
+                target_folder = broker_dir / RISK_FOLDERS[target_risk]
+                target_file = target_folder / strategy_file
+
+                # Load existing data
+                existing_data = {"summary": {}, "entries": []}
                 if target_file.is_file():
                     try:
-                        with target_file.open("r", encoding="utf-8") as f:
-                            existing_data = json.load(f)
+                        existing_data = json.loads(target_file.read_text(encoding="utf-8"))
+                        if "entries" not in existing_data:
+                            existing_data["entries"] = []
                     except:
-                        existing_data = []
+                        existing_data = {"summary": {}, "entries": []}
 
-                # Avoid duplicates
-                already_exists = any(
-                    e.get("selection_criteria", "").startswith(f"promoted_from_${base_risk}")
-                    and e["market"] == market
-                    and e["limit_order"] == direction
-                    for e in existing_data
+                entries = existing_data["entries"]
+
+                # Avoid duplicate (same market + direction + promoted from same base risk)
+                duplicate = any(
+                    e.get("market") == market
+                    and e.get("limit_order") == direction
+                    and e.get("selection_criteria", "").startswith(f"promoted_from_${base_risk}")
+                    for e in entries
                 )
-                if already_exists:
+
+                if duplicate:
                     continue
 
-                existing_data.append(promoted_entry)
+                # Add promoted entry
+                entries.append(promoted_entry)
+
+                # Write back
                 try:
-                    target_file.parent.mkdir(parents=True, exist_ok=True)
-                    with target_file.open("w", encoding="utf-8") as f:
-                        json.dump(existing_data, f, indent=2)
-                    print(f"[Promoter] {asset.upper()} | {market} {direction} | ${base_risk}→${target_risk} (×{scale_factor})", "SUCCESS")
+                    target_folder.mkdir(parents=True, exist_ok=True)
+                    target_file.write_text(
+                        json.dumps(existing_data, indent=2),
+                        encoding="utf-8"
+                    )
+                    print(f"[Promoter] PROMOTED | {market} {direction} | {strategy_file} | "
+                          f"${base_risk} → ${target_risk} (×{scale_factor}) | Vol: {base_volume} → {new_volume}")
                     total_promoted += 1
                 except Exception as e:
-                    print(f"[Promoter] Save failed {target_file}: {e}", "ERROR")
+                    print(f"[Promoter] FAILED to write {target_file}: {e}")
 
-    print(f"\n[Promoter] Promotion complete – {total_promoted} entries promoted.", "SUCCESS")
-    checkriskorders()  # Ensure integrity
+    print(f"\n[Promoter] Promotion complete – {total_promoted} entries promoted across all brokers & strategies.")
     return True
 
 
@@ -2297,7 +2294,10 @@ def checkriskorders():
 
 def categorise_strategy():
     BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
+    RISK_FOLDERS = {
+        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
+        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
+    }
     CALC_FILES = {
         "forex": "forexcalculatedprices.json",
         "synthetics": "syntheticscalculatedprices.json",
@@ -2313,8 +2313,8 @@ def categorise_strategy():
     }
     TIMEFRAME_ORDER = ["4h", "1h", "30m", "15m", "5m"]
 
-    total_high = 0
-    total_low  = 0
+    total_high_to_low = 0
+    total_low_to_high = 0
 
     for broker_dir in BASE_DIR.iterdir():
         if not broker_dir.is_dir():
@@ -2326,170 +2326,168 @@ def categorise_strategy():
             if not folder_path.is_dir():
                 continue
 
-            symbol_data = defaultdict(list)
-            source_map  = defaultdict(list)
+            # -------------------------------------------------
+            # 1. Load all files for this risk folder
+            # -------------------------------------------------
+            symbol_data = defaultdict(list)   # market → list of entries
+            source_map = defaultdict(set)     # market → set of source filenames
 
             for source, fname in CALC_FILES.items():
                 fpath = folder_path / fname
                 if not fpath.is_file():
                     continue
                 try:
-                    with fpath.open("r", encoding="utf-8") as f:
-                        entries = json.load(f)
-                    for e in entries:
+                    data = json.loads(fpath.read_text(encoding="utf-8"))
+                    for e in data:
                         market = e["market"]
                         symbol_data[market].append(e)
-                        if fname not in source_map[market]:
-                            source_map[market].append(fname)
+                        source_map[market].add(fname)
                 except Exception as exc:
-                    print(f"[Categorise][{broker}] Error reading {fpath}: {exc}", "ERROR")
+                    print(f"[Categorise][{broker}] Error reading {fpath}: {exc}")
 
             if not symbol_data:
                 continue
 
-            def price_distance(e1, e2):
-                if e1["limit_order"] == "buy_limit":
-                    return abs(e1["sl_price"] - e2["entry_price"])
-                else:
-                    return abs(e2["sl_price"] - e1["entry_price"])
+            # -------------------------------------------------
+            # 2. Helper
+            # -------------------------------------------------
+            def price_distance(buy_entry, sell_entry):
+                # distance between the two entry prices
+                return abs(buy_entry["entry_price"] - sell_entry["entry_price"])
 
-            # HIGH-TO-LOW
-            hightolow_entries = []
-            market_sources = defaultdict(set)
-            for market, all_entries in symbol_data.items():
+            def required_distance(buy_entry, sell_entry):
+                tick_sz = buy_entry.get("tick_size", 1e-5)
+                pip_sz = 10 * tick_sz
+                required_pips = 3 * min(buy_entry.get("sl_pips", 0), sell_entry.get("sl_pips", 0))
+                return required_pips * pip_sz
+
+            # -------------------------------------------------
+            # 3. Process every market once
+            # -------------------------------------------------
+            hightolow_entries = []   # high buy + low sell
+            lowtohigh_entries = []   # low buy + high sell
+            market_sources_htl = {}
+            market_sources_lth = {}
+
+            for market, entries in symbol_data.items():
+                # Group by timeframe (higher TF has priority)
                 tf_groups = defaultdict(list)
-                for e in all_entries:
+                for e in entries:
                     tf = e.get("timeframe", "").strip()
-                    if tf not in TIMEFRAME_ORDER:
-                        tf = "unknown"
+                    tf = tf if tf in TIMEFRAME_ORDER else "unknown"
                     tf_groups[tf].append(e)
 
-                buy = sell = None
+                # Candidates selected from highest timeframe downwards
+                best_high_buy = None   # highest price buy_limit
+                best_low_buy  = None   # lowest  price buy_limit
+                best_high_sell = None  # highest price sell_limit
+                best_low_sell  = None  # lowest  price sell_limit
+
                 for tf in TIMEFRAME_ORDER:
                     if tf not in tf_groups:
                         continue
                     candidates = tf_groups[tf]
+
                     buys  = [c for c in candidates if c["limit_order"] == "buy_limit"]
                     sells = [c for c in candidates if c["limit_order"] == "sell_limit"]
 
+                    # ---- buys ----
                     if buys:
-                        best = min(buys, key=lambda x: x["entry_price"])
-                        if buy is None or best["entry_price"] < buy["entry_price"]:
-                            buy = best
+                        # highest entry price
+                        highest = max(buys, key=lambda x: x["entry_price"])
+                        if best_high_buy is None or highest["entry_price"] > best_high_buy["entry_price"]:
+                            best_high_buy = highest
+
+                        # lowest entry price
+                        lowest = min(buys, key=lambda x: x["entry_price"])
+                        if best_low_buy is None or lowest["entry_price"] < best_low_buy["entry_price"]:
+                            best_low_buy = lowest
+
+                    # ---- sells ----
                     if sells:
-                        best = max(sells, key=lambda x: x["entry_price"])
-                        if sell is None or best["entry_price"] > sell["entry_price"]:
-                            sell = best
+                        highest = max(sells, key=lambda x: x["entry_price"])
+                        if best_high_sell is None or highest["entry_price"] > best_high_sell["entry_price"]:
+                            best_high_sell = highest
 
-                    if buy and sell:
-                        tick_sz = buy.get("tick_size", 1e-5)
-                        pip_sz = 10 * tick_sz
-                        required = 3 * min(buy["sl_pips"], sell["sl_pips"]) * pip_sz
-                        dist = price_distance(buy, sell)
-                        if dist >= required:
-                            hightolow_entries.extend([buy, sell])
-                            market_sources[market].update(source_map[market])
-                            break
-                        else:
-                            if buy["calculated_at"] <= sell["calculated_at"]:
-                                sell = None
-                            else:
-                                buy = None
+                        lowest = min(sells, key=lambda x: x["entry_price"])
+                        if best_low_sell is None or lowest["entry_price"] < best_low_sell["entry_price"]:
+                            best_low_sell = lowest
 
-                if buy and not sell:
-                    hightolow_entries.append(buy)
-                    market_sources[market].update(source_map[market])
-                if sell and not buy:
-                    hightolow_entries.append(sell)
-                    market_sources[market].update(source_map[market])
+                # -------------------------------------------------
+                # 4. Build HIGH→LOW (high buy + low sell)
+                # -------------------------------------------------
+                if best_high_buy and best_low_sell:
+                    if price_distance(best_high_buy, best_low_sell) >= required_distance(best_high_buy, best_low_sell):
+                        hightolow_entries.extend([best_high_buy, best_low_sell])
+                        market_sources_htl[market] = source_map[market]
+                elif best_high_buy:                     # only buy → still valid for HIGH→LOW if we expect reversal down
+                    hightolow_entries.append(best_high_buy)
+                    market_sources_htl[market] = source_map[market]
+                elif best_low_sell:                     # only sell → valid for HIGH→LOW
+                    hightolow_entries.append(best_low_sell)
+                    market_sources_htl[market] = source_map[market]
 
-            # LOW-TO-HIGH
-            lowtohigh_entries = []
-            market_sources_low = defaultdict(set)
-            for market, all_entries in symbol_data.items():
-                tf_groups = defaultdict(list)
-                for e in all_entries:
-                    tf = e.get("timeframe", "").strip()
-                    if tf not in TIMEFRAME_ORDER:
-                        tf = "unknown"
-                    tf_groups[tf].append(e)
+                # -------------------------------------------------
+                # 5. Build LOW→HIGH (low buy + high sell)
+                # -------------------------------------------------
+                if best_low_buy and best_high_sell:
+                    if price_distance(best_low_buy, best_high_sell) >= required_distance(best_low_buy, best_high_sell):
+                        lowtohigh_entries.extend([best_low_buy, best_high_sell])
+                        market_sources_lth[market] = source_map[market]
+                elif best_low_buy:                      # only low buy → valid for LOW→HIGH
+                    lowtohigh_entries.append(best_low_buy)
+                    market_sources_lth[market] = source_map[market]
+                elif best_high_sell:                    # only high sell → valid for LOW→HIGH
+                    lowtohigh_entries.append(best_high_sell)
+                    market_sources_lth[market] = source_map[market]
 
-                buy = sell = None
-                for tf in TIMEFRAME_ORDER:
-                    if tf not in tf_groups:
-                        continue
-                    candidates = tf_groups[tf]
-                    buys  = [c for c in candidates if c["limit_order"] == "buy_limit"]
-                    sells = [c for c in candidates if c["limit_order"] == "sell_limit"]
-
-                    if buys:
-                        best = max(buys, key=lambda x: x["entry_price"])
-                        if buy is None or best["entry_price"] > buy["entry_price"]:
-                            buy = best
-                    if sells:
-                        best = min(sells, key=lambda x: x["entry_price"])
-                        if sell is None or best["entry_price"] < sell["entry_price"]:
-                            sell = best
-
-                    if buy and sell:
-                        tick_sz = buy.get("tick_size", 1e-5)
-                        pip_sz = 10 * tick_sz
-                        required = 3 * min(buy["sl_pips"], sell["sl_pips"]) * pip_sz
-                        dist = price_distance(buy, sell)
-                        if dist >= required:
-                            lowtohigh_entries.extend([buy, sell])
-                            market_sources_low[market].update(source_map[market])
-                            break
-                        else:
-                            if buy["calculated_at"] <= sell["calculated_at"]:
-                                sell = None
-                            else:
-                                buy = None
-
-                if buy and not sell:
-                    lowtohigh_entries.append(buy)
-                    market_sources_low[market].update(source_map[market])
-                if sell and not buy:
-                    lowtohigh_entries.append(sell)
-                    market_sources_low[market].update(source_map[market])
-
-            # Summary
+            # -------------------------------------------------
+            # 6. Summary helper
+            # -------------------------------------------------
             def build_summary(market_sources_dict):
                 counts = {"allmarketssymbols": len(market_sources_dict)}
-                for src in CALC_FILES.keys():
+                for src, fname in CALC_FILES.items():
                     key = f"{src}symbols"
-                    counts[key] = sum(1 for srcs in market_sources_dict.values() if CALC_FILES[src] in srcs)
+                    counts[key] = sum(1 for src_set in market_sources_dict.values() if fname in src_set)
                 return counts
 
-            summary_high = build_summary(market_sources)
-            summary_low  = build_summary(market_sources_low)
+            summary_htl = build_summary(market_sources_htl)
+            summary_lth = build_summary(market_sources_lth)
 
-            # Write
+            # -------------------------------------------------
+            # 7. Write files
+            # -------------------------------------------------
             out_folder = folder_path
             out_folder.mkdir(parents=True, exist_ok=True)
 
+            # HIGH→LOW
             high_path = out_folder / "hightolow.json"
             try:
-                with high_path.open("w", encoding="utf-8") as f:
-                    json.dump({"summary": summary_high, "entries": hightolow_entries}, f, indent=2)
-                print(f"[Categorise][{broker}] ${risk_usd} hightolow.json → {len(hightolow_entries)} entries", "SUCCESS")
-                total_high += len(hightolow_entries)
+                high_path.write_text(json.dumps({
+                    "summary": summary_htl,
+                    "entries": hightolow_entries
+                }, indent=2), encoding="utf-8")
+                print(f"[Categorise][{broker}] ${risk_usd} hightolow.json → {len(hightolow_entries)} entries")
+                total_high_to_low += len(hightolow_entries)
             except Exception as e:
-                print(f"[Categorise][{broker}] Failed hightolow.json ${risk_usd}: {e}", "ERROR")
+                print(f"[Categorise][{broker}] Failed hightolow.json ${risk_usd}: {e}")
 
+            # LOW→HIGH
             low_path = out_folder / "lowtohigh.json"
             try:
-                with low_path.open("w", encoding="utf-8") as f:
-                    json.dump({"summary": summary_low, "entries": lowtohigh_entries}, f, indent=2)
-                print(f"[Categorise][{broker}] ${risk_usd} lowtohigh.json → {len(lowtohigh_entries)} entries", "SUCCESS")
-                total_low += len(lowtohigh_entries)
+                low_path.write_text(json.dumps({
+                    "summary": summary_lth,
+                    "entries": lowtohigh_entries
+                }, indent=2), encoding="utf-8")
+                print(f"[Categorise][{broker}] ${risk_usd} lowtohigh.json → {len(lowtohigh_entries)} entries")
+                total_low_to_high += len(lowtohigh_entries)
             except Exception as e:
-                print(f"[Categorise][{broker}] Failed lowtohigh.json ${risk_usd}: {e}", "ERROR")
+                print(f"[Categorise][{broker}] Failed lowtohigh.json ${risk_usd}: {e}")
 
-    print(f"\n[Categorise] Strategy categorisation complete – "
-          f"{total_high} HIGH→LOW entries | {total_low} LOW→HIGH entries across all brokers & risks.", "SUCCESS")
+    print(f"\n[Categorise] Finished – "
+          f"{total_high_to_low} HIGH→LOW entries | {total_low_to_high} LOW→HIGH entries")
     return True
-
+    
 def symbolvolumeupdater():
     '''NUCLEAR COMMAND: ALL RECORDS OF A SYMBOL = YOUR RULE
     Now also triggers recalculation of SL/TP for affected asset classes.'''
@@ -2701,12 +2699,7 @@ def main():
 
     print(f"\n{calc_success} calculation(s) succeeded, {calc_failed} skipped/failed. Continuing...\n", "INFO")
 
-    # Phase 2: Promote lower risk orders
-    print("PHASE 2: Promoting lower-risk orders proportionally...", "PHASE")
-    if not scale_lowerorders_proportionally():
-        print("Promotion phase failed.", "ERROR")
-        return False
-    print("Promotion phase completed.\n", "SUCCESS")
+    
 
     # Phase 3: Categorise strategies
     print("PHASE 3: Categorising strategies (HIGH→LOW / LOW→HIGH)...", "PHASE")
@@ -2714,6 +2707,12 @@ def main():
         print("Strategy categorisation failed.", "ERROR")
         return False
     print("Strategy categorisation completed.\n", "SUCCESS")
+    # Phase 2: Promote lower risk orders
+    print("PHASE 2: Promoting lower-risk orders proportionally...", "PHASE")
+    if not scale_lowerorders_proportionally():
+        print("Promotion phase failed.", "ERROR")
+        return False
+    print("Promotion phase completed.\n", "SUCCESS")
     clean_5m_timeframes()
     print("="*60, "FOOTER")
     print("FULL PIPELINE COMPLETED SUCCESSFULLY!", "SUCCESS")

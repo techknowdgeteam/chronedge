@@ -428,4 +428,3 @@ def current_time():
 def main():
     deletejson()   
     update_calendar()
-main()

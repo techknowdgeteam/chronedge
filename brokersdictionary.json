@@ -1,0 +1,41 @@
+{
+  "deriv1": {
+    "TERMINAL_PATH": "c:\\xampp\\htdocs\\CIPHER\\metaTrader5\\cipher i\\MetaTrader 5 deriv 1\\terminal64.exe",
+    "LOGIN_ID": "140357859",
+    "PASSWORD": "@Ayomide12#",
+    "SERVER": "DerivSVG-Server-03",
+    "ACCOUNT": "real",
+    "STRATEGY": "hightolow",
+    "SCALE": "consistency",
+    "RISKREWARD": 3,
+    "SYMBOLS": "all",
+    "MARTINGALE_MARKETS": "neth25, usdjpy",
+    "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\chart\\deriv 1\\deriv1symbols"
+  },
+  "deriv2": {
+    "TERMINAL_PATH": "c:\\xampp\\htdocs\\CIPHER\\metaTrader5\\cipher i\\MetaTrader 5 deriv 2\\terminal64.exe",
+    "LOGIN_ID": "140357853",
+    "PASSWORD": "@Ayomide12#",
+    "SERVER": "DerivSVG-Server-03",
+    "ACCOUNT": "real",
+    "STRATEGY": "hightolow",
+    "SCALE": "consistency",
+    "RISKREWARD": 3,
+    "SYMBOLS": "all",
+    "MARTINGALE_MARKETS": "neth25, usdjpy",
+    "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\chart\\deriv 2\\deriv2symbols"
+  },
+  "bybit1": {
+    "TERMINAL_PATH": "c:\\xampp\\htdocs\\CIPHER\\metaTrader5\\cipher i\\MetaTrader 5 bybit 1\\terminal64.exe",
+    "LOGIN_ID": "4836528",
+    "PASSWORD": "@Techknowdge12#",
+    "SERVER": "Bybit-Live",
+    "ACCOUNT": "real",
+    "STRATEGY": "hightolow",
+    "RISKREWARD": 2,
+    "SCALE": "consistency",
+    "SYMBOLS": "all",
+    "MARTINGALE_MARKETS": "neth25, usdjpy",
+    "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\chart\\bybit 1\\bybit1symbols"
+  }
+}

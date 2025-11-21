@@ -1,0 +1,41 @@
+Execute ordersstatus() only in Africa/Lagos timezone using current datetime.
+Set AGE_LIMIT as a human-readable string like "5 days old" to define minimum order age.
+Set CHOSEN_BUY_MODE to either "lowest" or "highest" to pick buy limit price.
+Set CHOSEN_SELL_MODE to either "highest" or "lowest" to pick sell limit price.
+Reject execution if CHOSEN_BUY_MODE or CHOSEN_SELL_MODE is invalid.
+Convert AGE_LIMIT string into total minutes (supporting minutes, hours, days, weeks).
+Default to 7200 minutes (5 days) if AGE_LIMIT parsing fails or is empty.
+Scan all directories recursively to find every "alltimeframeslimitorders.json" file.
+Skip processing folders named in GLOBAL_SKIP set.
+For each symbol, load its JSON and extract market name and oldest age across timeframes.
+Compare oldest age in minutes against AGE_LIMIT; mark as old enough if greater or equal.
+Flatten all orders from all timeframes into a single list.
+Identify single_buy and single_sell orders if flagged.
+Collect all buy_limit and sell_limit orders separately.
+Choose buy price: single_buy first, else lowest or highest entry_price based on CHOSEN_BUY_MODE.
+Choose sell price: single_sell first, else highest or lowest entry_price based on CHOSEN_SELL_MODE.
+Determine order status: pending (no entry), win (TP hit), lost (SL hit), running (entry hit, no TP/SL).
+Classify symbol into one of three global categories — no overlap allowed:
+→ If any chosen buy or sell is running → classify as RUNNING.
+→ Else if both or one side pending AND age < AGE_LIMIT → classify as PENDING_YOUNG.
+→ Else (aged enough OR completed) → classify as FREE.
+Record reason for each classification.
+For FREE symbols: include chosen buy/sell limits and reason.
+For RUNNING: include both limits, statuses, and age.
+For PENDING_YOUNG: include limits, age, and reason.
+Save per-symbol JSON ("allnotimeframesorders.json") in same folder with classification result.
+Aggregate all FREE orders into one global file per broker.
+Aggregate all RUNNING orders into one global file per broker.
+Aggregate all PENDING_YOUNG orders into one global file per broker.
+Detect broker name from path structure (first matching known broker folder).
+Create global files inside broker’s symbols directory.
+Track two history modes separately:
+→ Mode 1: BUY=lowest, SELL=highest → save to highselllowbuy_history.json
+→ Mode 2: BUY=highest, SELL=lowest → save to lowsellhighbuy_history.json
+In history, record every order (all timeframes) with: market, type, entry, SL, TP, status, single flag, timestamp.
+In history summary: count running, profit, stoploss, pending.
+Print real-time logs with timestamps, actions, and final counts.
+Ensure perfect separation: no running orders in free list, no old orders in young pending.
+End with summary: FREE count, RUNNING count, PENDING_YOUNG count.
+Print final confirmation: "PERFECT SEPARATION. DONE."
+
