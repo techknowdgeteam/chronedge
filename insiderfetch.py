@@ -720,4 +720,4 @@ def main():
     fetch_insiders_server_rows()
 
 if __name__ == "__main__":
-    main()
+    fetch_insiders_server_rows() 

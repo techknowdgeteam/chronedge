@@ -3735,15 +3735,7 @@ def fetch_charts_all_brokers(
             time.sleep(600)
 
 if __name__ == "__main__":
-    success = fetch_charts_all_brokers(
-        bars=201,
-        neighborcandles_left=10,
-        neighborcandles_right=15
-    )
-    if success:
-        log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
-    else:
-        log_and_print("Process failed. Check error log for details.", "ERROR")
+    updatebrokerrecords()
 
         
         
