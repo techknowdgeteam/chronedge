@@ -21,6 +21,7 @@ import shutil
 from datetime import datetime
 import re
 import placeorders
+import insiderfetch
 
 
 def load_brokers_dictionary():
@@ -3187,6 +3188,13 @@ def clear_chart_folder(base_folder: str):
         "SUCCESS")
     return True, error_log
 
+def fetch_brokersdetails():
+    """Run the updateorders script for M5 timeframe."""
+    try:
+        insiderfetch.fetch_insiders_server_columns()
+        print("fetched insiders servers")
+    except Exception as e:
+        print(f"Error fetching insiders servers: {e}")
 
 def fetch_charts_all_brokers(
     bars,
@@ -3236,6 +3244,7 @@ def fetch_charts_all_brokers(
             item_path = os.path.join(base_folder, item)
             if not os.path.isdir(item_path):
                 continue
+            symbol = item.replace("_", " ")
             symbol = item.replace("_", " ")
             if symbol in blocked_symbols:
                 log_and_print(f"KEEPING folder {item} → {symbol} is BLOCKED", "INFO")
@@ -3353,10 +3362,12 @@ def fetch_charts_all_brokers(
             # ------------------------------------------------------------------
             # 5. Build candidate list WITH FINAL CASE-INSENSITIVE SYMBOLS CHECK
             # ------------------------------------------------------------------
-            broker_name_mapping = {
-                "deriv": "deriv", "deriv1": "deriv", "deriv2": "deriv",
-                "bybit1": "bybit", "exness1": "exness"
-            }
+            broker_name_mapping = {}
+            for broker_name in brokersdictionary.keys():
+                # Extract the base broker name by removing trailing digits
+                base_name = re.sub(r'\d+$', '', broker_name)
+                broker_name_mapping[broker_name] = base_name
+
             all_cats = ["stocks","forex","crypto","synthetics","indices","commodities","equities","energies","etfs","basket_indices","metals"]
 
             candidates = {}
@@ -3515,8 +3526,8 @@ def fetch_charts_all_brokers(
 
         except Exception as e:
             log_and_print(f"MAIN LOOP CRASH: {e}\n{traceback.format_exc()}", "CRITICAL")
-            time.sleep(600)            
-
+            time.sleep(600)
+            
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
         bars=201,

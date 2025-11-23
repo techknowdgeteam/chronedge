@@ -70,5 +70,29 @@
         "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "reset",
         "PROFITANDLOSS_HISTORY": "0.00,-1.00",
         "LOYALTIES": "justjoined"
+    },
+    "deriv5": {
+        "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\mt5\\MetaTrader 5 deriv 5\\terminal64.exe",
+        "LOGIN_ID": "101201",
+        "PASSWORD": "@Techknowdge12#",
+        "SERVER": "DerivSVG-Server-03",
+        "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\chart\\deriv 5",
+        "EXECUTION_START_DATE": null,
+        "BROKER_BALANCE": 0.0,
+        "PROFITANDLOSS": 0.0,
+        "DB_APPLICATION_STATUS": "declined",
+        "BROKER_BALANCE_HISTORY": "",
+        "EXECUTION_DATES_HISTORY": "",
+        "PROFITANDLOSS_HISTORY": "",
+        "TRADES": "",
+        "LOYALTIES": "low",
+        "ACCOUNT": "real",
+        "STRATEGY": "hightolow",
+        "SCALE": "consistency",
+        "RISKREWARD": 3,
+        "SYMBOLS": "all",
+        "MARTINGALE_MARKETS": "neth25, usdjpy",
+        "ACCOUNT_VERIFICATION": "waiting",
+        "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "none"
     }
 }
