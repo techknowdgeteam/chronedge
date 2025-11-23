@@ -4,6 +4,7 @@ import os
 import shutil
 from datetime import datetime
 from colorama import Fore, Style, init
+import chronedge
 
 # Initialize colorama for cross-platform terminal colors
 init()
@@ -81,454 +82,575 @@ def update_history_string(current_history, new_value):
     
     return f"{current_history_str},{new_value_str}"
 
+def mt5brokersupdater():
+    """Run the updateorders script for M5 timeframe."""
+    try:
+        chronedge.updatebrokerrecords()
+        print("updated broker records")
+    except Exception as e:
+        print(f"Error updating broker records: {e}")
+
+def recordsfrom_brokersdictionary():
+    """
+    Copies/Updates ALL broker records from brokersdictionary.json
+    → into updatedusersdictionary.json
+
+    - If the broker name (key) already exists in updatedusersdictionary.json → UPDATE it
+    - If it doesn't exist → ADD it (append)
+    - brokersdictionary.json is treated as the SOURCE OF TRUTH (latest data)
+    - Safe, idempotent, can be run anytime (e.g. every hour or after updatebrokerrecords())
+    """
+
+    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
+    USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
+
+    # Load brokersdictionary.json (source of truth)
+    if not os.path.exists(BROKERS_JSON):
+        print(f"CRITICAL: {BROKERS_JSON} not found! Cannot sync.", "CRITICAL")
+        return
+
+    try:
+        with open(BROKERS_JSON, "r", encoding="utf-8") as f:
+            brokers_dict = json.load(f)
+        if not isinstance(brokers_dict, dict):
+            print("brokersdictionary.json is not a valid dictionary", "ERROR")
+            return
+    except Exception as e:
+        print(f"Failed to read brokersdictionary.json: {e}", "CRITICAL")
+        return
+
+    # Load updatedusersdictionary.json (target)
+    if os.path.exists(USERS_JSON):
+        try:
+            with open(USERS_JSON, "r", encoding="utf-8") as f:
+                users_dict = json.load(f)
+            if not isinstance(users_dict, dict):
+                users_dict = {}
+        except Exception as e:
+            print(f"updatedusersdictionary.json corrupted, starting fresh: {e}", "WARNING")
+            users_dict = {}
+    else:
+        print("updatedusersdictionary.json not found → will be created", "INFO")
+        users_dict = {}
+
+    updated_count = 0
+    added_count = 0
+
+    for broker_name, broker_data in brokers_dict.items():
+        # Clean copy: remove fields that shouldn't go into users dictionary
+        clean_data = broker_data.copy()
+
+        # Remove MT5-specific or temporary fields (optional but recommended)
+        fields_to_exclude = {
+            "TERMINAL_PATH",
+            "BASE_FOLDER",
+            "RESET_EXECUTION_DATE_AND_BROKER_BALANCE",
+            # Add more if needed later
+        }
+        for field in fields_to_exclude:
+            clean_data.pop(field, None)
+
+        if broker_name in users_dict:
+            # Update existing record
+            old_balance = users_dict[broker_name].get("BROKER_BALANCE")
+            new_balance = clean_data.get("BROKER_BALANCE")
+            users_dict[broker_name] = clean_data
+            print(f"{broker_name}: UPDATED in updatedusersdictionary.json "
+                  f"(Balance: {old_balance} → {new_balance})", "INFO")
+            updated_count += 1
+        else:
+            # Add new record
+            users_dict[broker_name] = clean_data
+            print(f"{broker_name}: ADDED to updatedusersdictionary.json "
+                  f"(Balance: {clean_data.get('BROKER_BALANCE', 0.0)})", "SUCCESS")
+            added_count += 1
+
+    # Save updated updatedusersdictionary.json
+    try:
+        with open(USERS_JSON, "w", encoding="utf-8") as f:
+            json.dump(users_dict, f, indent=4, ensure_ascii=False)
+            f.write("\n")
+        print(f"SYNC COMPLETE! {added_count} added, {updated_count} updated → updatedusersdictionary.json", "SUCCESS")
+    except Exception as e:
+        print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
+
+def account_verification():
+    """
+    Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
+    from usersdictionary.json into both brokersdictionary.json and updatedusersdictionary.json.
+    
+    The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
+    the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
+    - 'invalid' -> 'declined'
+    - 'verified' -> 'approved'
+    - 'waiting' -> 'pending'
+    
+    This function ONLY updates the status fields, preserving all other data in the target files.
+    """
+    UPDATED_USERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
+    log_and_print("--- Starting Status Sync: usersdictionary → brokers & updatedusers ---", "TITLE")
+
+    # 1. Load Source Dictionary (usersdictionary.json)
+    if not os.path.exists(OUTPUT_FILE_PATH):
+        log_and_print(f"Source file not found: {OUTPUT_FILE_PATH}. Cannot sync.", "CRITICAL")
+        return
+    try:
+        with open(OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+            source_dict = json.load(f)
+    except Exception as e:
+        log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
+        return
+
+    # 2. Load Target Dictionaries (brokersdictionary.json & updatedusersdictionary.json)
+    
+    # Load Brokers Dictionary
+    brokers_dict = {}
+    if os.path.exists(BROKERS_OUTPUT_FILE_PATH):
+        try:
+            with open(BROKERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                brokers_dict = json.load(f)
+        except Exception as e:
+            log_and_print(f"Brokers dictionary corrupted, starting fresh in memory: {e}", "WARNING")
+            brokers_dict = {}
+
+    # Load Updated Users Dictionary
+    updated_users_dict = {}
+    if os.path.exists(UPDATED_USERS_OUTPUT_FILE_PATH):
+        try:
+            with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                updated_users_dict = json.load(f)
+        except Exception as e:
+            log_and_print(f"Updated Users dictionary corrupted, starting fresh in memory: {e}", "WARNING")
+            updated_users_dict = {}
+
+    # 3. Synchronize Fields
+    brokers_updated_count = 0
+    updated_users_updated_count = 0
+    source_updated_count = 0 # Counter for usersdictionary updates
+    
+    for key, data in source_dict.items():
+        # Get ACCOUNT_VERIFICATION status from the source
+        verification = str(data.get("ACCOUNT_VERIFICATION", "waiting")).strip().lower()
+
+        # Determine the derived DB_APPLICATION_STATUS
+        if verification == "invalid":
+            app_status = "declined"
+        elif verification == "verified":
+            app_status = "approved"
+        elif verification == "waiting":
+            app_status = "pending"
+        else:
+            app_status = "pending"
+
+        # **NEW LOGIC: Update Source Dictionary (usersdictionary.json) in memory**
+        current_app_status = str(data.get("DB_APPLICATION_STATUS")).strip().lower()
+        if current_app_status != app_status:
+             source_dict[key]["DB_APPLICATION_STATUS"] = app_status
+             source_updated_count += 1
+             log_and_print(f"Source: Updated DB_APPLICATION_STATUS for {key} to '{app_status}'", "INFO")
+
+
+        # Update Brokers Dictionary
+        if key in brokers_dict:
+            brokers_dict[key]["ACCOUNT_VERIFICATION"] = verification
+            brokers_dict[key]["DB_APPLICATION_STATUS"] = app_status
+            brokers_updated_count += 1
+            log_and_print(f"Brokers: Updated status for {key} to Verification='{verification}', Status='{app_status}'", "INFO")
+        
+        # Update UpdatedUsers Dictionary
+        if key in updated_users_dict:
+            updated_users_dict[key]["ACCOUNT_VERIFICATION"] = verification
+            updated_users_dict[key]["DB_APPLICATION_STATUS"] = app_status
+            updated_users_updated_count += 1
+            log_and_print(f"Updated Users: Updated status for {key}", "INFO")
+
+
+    # 4. Save Target Files (Including the updated Source Dictionary)
+    
+    # Save Source Dictionary (usersdictionary.json)
+    if source_updated_count > 0:
+        try:
+            os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
+            with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(source_dict, f, indent=4, ensure_ascii=False)
+            log_and_print(f"Saved usersdictionary.json. Updated {source_updated_count} records.", "SUCCESS")
+        except Exception as e:
+            log_and_print(f"FAILED to save usersdictionary.json: {e}", "CRITICAL")
+            
+    # Save Brokers Dictionary
+    try:
+        os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
+        with open(BROKERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
+        log_and_print(f"Saved brokersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
+    except Exception as e:
+        log_and_print(f"FAILED to save brokersdictionary.json: {e}", "CRITICAL")
+
+    # Save Updated Users Dictionary
+    try:
+        os.makedirs(os.path.dirname(UPDATED_USERS_OUTPUT_FILE_PATH), exist_ok=True)
+        with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(updated_users_dict, f, indent=4, ensure_ascii=False)
+        log_and_print(f"Saved updatedusersdictionary.json. Updated {updated_users_updated_count} records.", "SUCCESS")
+    except Exception as e:
+        log_and_print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
+    
+    log_and_print("--- Status Sync Complete ---", "TITLE")
+
+def update_table_fromupdatedusers():
+    """
+    Reads updatedusersdictionary.json and pushes ALL relevant fields BACK to insiders_server table.
+    Now 100% reliable key matching + proper escaping + full field sync.
+    FIX: Ensures CONTRACT_DAYS_LEFT is updated in its own column and not concatenated to 'loyalties'.
+    """
+    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
+    INSIDERS_TABLE = "insiders_server"
+
+    if not os.path.exists(USERS_JSON_PATH):
+        log_and_print(f"{USERS_JSON_PATH} not found! Nothing to sync.", "CRITICAL")
+        return
+
+    try:
+        with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
+            users_dict = json.load(f)
+        if not isinstance(users_dict, dict) or not users_dict:
+            log_and_print("updatedusersdictionary.json is empty or invalid.", "ERROR")
+            return
+    except Exception as e:
+        log_and_print(f"Failed to read JSON: {e}", "CRITICAL")
+        return
+
+    log_and_print("=== Syncing updatedusersdictionary.json → Database ===", "TITLE")
+
+    # Fetch all valid broker + id rows
+    query = f"""
+        SELECT id, broker, login
+        FROM {INSIDERS_TABLE}
+        WHERE broker IS NOT NULL
+          AND TRIM(broker) != ''
+          AND broker != 'None'
+    """
+    result = db.execute_query(query)
+    if result.get('status') != 'success':
+        log_and_print("Failed to fetch broker mapping.", "ERROR")
+        return
+
+    # Build reliable map: normalized_key → db_id
+    broker_to_id = {}
+    for row in result['results']:
+        broker_raw = str(row['broker']).strip()
+        if not broker_raw:
+            continue
+        broker_norm = broker_raw.lower().replace(" ", "")
+        key = f"{broker_norm}{row['id']}"
+        broker_to_id[key] = row['id']
+
+    updated = skipped = errors = 0
+
+    for json_key, data in users_dict.items():
+        db_id = broker_to_id.get(json_key.lower())
+
+        if not db_id:
+            log_and_print(f"SKIP: No DB match for key '{json_key}'", "WARNING")
+            skipped += 1
+            continue
+
+        # Loyalty string - ONLY the base loyalty is used for the database 'loyalties' column
+        base_loyalty = str(data.get("LOYALTIES", "low")).strip()
+        loyalty_str = base_loyalty # <--- FIX: Removed contract_days_left concatenation
+
+        # Build update fields
+        fields = []
+
+        # Numeric
+        if "BROKER_BALANCE" in data:
+            fields.append(f"broker_balance = {safe_float(data['BROKER_BALANCE'])}")
+        if "PROFITANDLOSS" in data:
+            fields.append(f"profitandloss = {safe_float(data['PROFITANDLOSS'])}")
+            
+        # Contract Days Left (UPDATED IN ITS OWN COLUMN)
+        contract_days_update = data.get("CONTRACT_DAYS_LEFT")
+        if contract_days_update is not None and str(contract_days_update).strip() not in ("None", "null", ""):
+            # Use safe_float for database insertion to handle potential floats and set NULL if invalid
+            safe_days = safe_float(contract_days_update)
+            fields.append(f"contract_days_left = {safe_days}")
+        else:
+             # Add this to explicitly set it to NULL if not present/valid in JSON
+             fields.append("contract_days_left = NULL")
+
+        # Date
+        exec_date = data.get("EXECUTION_START_DATE")
+        if exec_date and str(exec_date).strip() not in ("None", "null", ""):
+            date_str = str(exec_date).split(" ")[0]
+            fields.append(f"execution_start_date = '{date_str}'")
+        else:
+            fields.append("execution_start_date = NULL")
+
+        # Text history fields
+        for json_field, db_field in [
+            ("BROKER_BALANCE_HISTORY", "broker_balance_history"),
+            ("EXECUTION_DATES_HISTORY", "execution_dates_history"),
+            ("PROFITANDLOSS_HISTORY", "profitandlosshistory"),
+            ("TRADES", "trades"),
+        ]:
+            if json_field in data:
+                val = str(data[json_field]).replace("'", "''")
+                fields.append(f"{db_field} = '{val}'")
+
+        # Application status
+        verification = str(data.get("ACCOUNT_VERIFICATION", "")).lower().strip()
+        if verification == "verified":
+            fields.append("application_status = 'approved'")
+        elif verification == "invalid":
+            fields.append("application_status = 'declined'")
+        else:
+            fields.append("application_status = 'pending'")
+
+        # Loyalty (Only the base string)
+        safe_loyalty = loyalty_str.replace("'", "''")
+        fields.append(f"loyalties = '{safe_loyalty}'") # <--- FIX: loyalty_str no longer contains contract_days_left
+
+        if not fields:
+            continue
+
+        sql = f"UPDATE {INSIDERS_TABLE} SET " + ", ".join(fields) + f" WHERE id = {db_id}"
+        res = db.execute_query(sql)
+
+        if res.get('status') == 'success':
+            log_and_print(f"UPDATED → {json_key} (ID: {db_id}) | Loyalty: {loyalty_str}", "SUCCESS")
+            updated += 1
+        else:
+            log_and_print(f"FAILED → {json_key} (ID: {db_id}): {res.get('message')}", "ERROR")
+            errors += 1
+
+    log_and_print("=== Sync Complete ===", "TITLE")
+    log_and_print(f"Updated: {updated} | Skipped: {skipped} | Errors: {errors}", "INFO")
 
 def fetch_insiders_server_rows():
     """
-    Connects to the database, fetches all rows, filters out entries with 'None' broker,
-    and writes the processed data to the specified JSON file based on verification status.
-    
-    FIX: Ensures the in-memory data updated during the DB RESET in Pass 1 is correctly 
-    transferred to the final JSON output, overriding the potentially stale values 
-    from the Pass 2 database fetch.
-    
-    MODIFICATION: Sets BASE_FOLDER to the parent directory (e.g., ...\chart\deriv 3) 
-    instead of the subfolder (...deriv3symbols), and ensures this applies to all users.
+    Pure DB to JSON export.
+    ACCOUNT_VERIFICATION is now treated as persistent/config field.
+    It is NEVER derived from application_status.
+    Only defaults to "waiting" for completely new users (first export).
+    Existing values are fully preserved across exports.
     """
-    # Configuration Section
     INSIDERS_TABLE = "insiders_server"
     
-    # --- Default Configuration to Append ---
-    DEFAULT_CONFIG = {
+    # These are the ONLY fields that do NOT exist in the database
+    CONFIG_ONLY_FIELDS = {
         "ACCOUNT": "real",
         "STRATEGY": "hightolow",
         "SCALE": "consistency",
         "RISKREWARD": 3,
         "SYMBOLS": "all",
         "MARTINGALE_MARKETS": "neth25, usdjpy",
-        "ACCOUNT_VERIFICATION": "waiting",
-        # NEW FIELDS for database interaction and JSON structure
-        "BROKER_BALANCE": 0.00,
-        "PROFITANDLOSS": 0.00,
-        "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "none", # JSON COMMAND FIELD
-        # New history fields (initialized as empty strings for consistency)
-        "BROKER_BALANCE_HISTORY": "",
-        "EXECUTION_DATES_HISTORY": "",
-        "PROFITANDLOSS_HISTORY": "",
-        "TRADES": "",
-        "LOYALTIES": "low", # <--- Default value for loyalties
+        "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "none",
     }
     
-    # The dictionary that will hold the state updated during Pass 1 (JSON-to-DB)
-    # and then used as the base for the final Pass 2 (DB-to-JSON).
-    users_dictionary = {}
-    existing_users_dictionary = {}
+    JSON_KEY_ORDER = [
+        "LOGIN_ID", "PASSWORD", "SERVER", "EXECUTION_START_DATE",
+        "BROKER_BALANCE", "PROFITANDLOSS", 
+        "ACCOUNT", "STRATEGY", "SCALE", "RISKREWARD",
+        "SYMBOLS", "MARTINGALE_MARKETS",
+        "ACCOUNT_VERIFICATION", "DB_APPLICATION_STATUS", "LOYALTIES",
+        "PROFITANDLOSS_HISTORY", "BROKER_BALANCE_HISTORY", "EXECUTION_DATES_HISTORY",
+        "RESET_EXECUTION_DATE_AND_BROKER_BALANCE",
+        "CONTRACT_DAYS_LEFT", "TRADES",
+        "BASE_FOLDER", "TERMINAL_PATH"
+    ]
     
+    users_dictionary = {}
     skipped_count = 0
-    updated_db_declined_count = 0
-    updated_db_approved_count = 0
-    skipped_verified_count = 0
-    updated_db_pending_count = 0
-    updated_db_reset_count = 0
-    updated_db_pnl_count = 0
-    updated_db_balance_count = 0
+    
+    # Load existing JSON first to preserve ACCOUNT_VERIFICATION (and any future manual fields)
+    existing_data = {}
+    if os.path.exists(OUTPUT_FILE_PATH):
+        try:
+            with open(OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+        except Exception as e:
+            log_and_print(f"Could not load existing JSON for preservation: {e}", "WARNING")
+    
+    try:
+        log_and_print(f"\n===== Exporting Fresh Data from DB to JSON =====", "TITLE")
+        
+        query = f"""
+            SELECT 
+                id, broker, login, password, server, execution_start_date,
+                application_status, broker_balance, profitandloss,
+                broker_balance_history, execution_dates_history, profitandlosshistory,
+                trades, loyalties, contract_days_left
+            FROM {INSIDERS_TABLE}
+        """
+        result = db.execute_query(query)
+        if result.get('status') != 'success' or not result.get('results'):
+            log_and_print("No data returned from database.", "WARNING")
+            return
+        
+        rows = result['results']
+        log_and_print(f"Fetched {len(rows)} rows from {INSIDERS_TABLE}.", "SUCCESS")
+        
+        for row in rows:
+            broker_raw = row.get('broker')
+            if not broker_raw or str(broker_raw).strip().lower() in ('', 'none', 'null'):
+                skipped_count += 1
+                continue
+                
+            broker_clean = str(broker_raw).strip()
+            broker_key = broker_clean.lower().replace(" ", "")
+            user_id = str(row.get('id', ''))
+            json_key = f"{broker_key}{user_id}"
+            
+            # Paths
+            base_folder = rf"C:\xampp\htdocs\chronedge\chart\{broker_clean} {user_id}"
+            terminal_folder = rf"C:\xampp\htdocs\chronedge\mt5\MetaTrader 5 {broker_clean} {user_id}"
+            terminal_path = os.path.join(terminal_folder, "terminal64.exe")
+            os.makedirs(base_folder, exist_ok=True)
+            if not os.path.isdir(terminal_folder):
+                try:
+                    shutil.copytree(MT5_TEMPLATE_SOURCE_DIR, terminal_folder)
+                    log_and_print(f"Auto-created MT5 folder: {terminal_folder}", "INFO")
+                except Exception as e:
+                    log_and_print(f"Failed to create MT5 folder: {e}", "ERROR")
+            
+            # Loyalty logic
+            exec_history = str(row.get('execution_dates_history') or '').strip()
+            db_loyalty = str(row.get('loyalties') or '').strip()
+            final_loyalty = "justjoined" if not exec_history or exec_history.lower() in ('none', 'null', '') else db_loyalty
+            
+            # Application status (only for display, no longer controls verification)
+            app_status_raw = str(row.get('application_status') or '').lower().strip()
+            app_status = app_status_raw if app_status_raw in ('approved', 'declined', 'pending') else 'pending'
+            
+            # Safe contract days
+            db_contract_days = row.get('contract_days_left')
+            contract_days_value = None
+            if db_contract_days is not None:
+                cds = str(db_contract_days).strip().lower()
+                if cds not in ('none', 'null', ''):
+                    try:
+                        contract_days_value = int(float(db_contract_days))
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Build fresh user data
+            user_data = {
+                "LOGIN_ID": str(row.get('login', '')),
+                "PASSWORD": str(row.get('password', '')),
+                "SERVER": str(row.get('server', '')),
+                "EXECUTION_START_DATE": row.get('execution_start_date'),
+                "BROKER_BALANCE": safe_float(row.get('broker_balance', 0.0)),
+                "PROFITANDLOSS": safe_float(row.get('profitandloss', 0.0)),
+                "TRADES": str(row.get('trades') or ''),
+                "DB_APPLICATION_STATUS": app_status,
+                "LOYALTIES": final_loyalty,
+                "PROFITANDLOSS_HISTORY": str(row.get('profitandlosshistory') or ''),
+                "BROKER_BALANCE_HISTORY": str(row.get('broker_balance_history') or ''),
+                "EXECUTION_DATES_HISTORY": exec_history,
+                "BASE_FOLDER": base_folder,
+                "TERMINAL_PATH": terminal_path,
+                "CONTRACT_DAYS_LEFT": contract_days_value
+            }
+            
+            # Merge with existing record to preserve ACCOUNT_VERIFICATION
+            existing_record = existing_data.get(json_key, {})
+            if "ACCOUNT_VERIFICATION" in existing_record:
+                user_data["ACCOUNT_VERIFICATION"] = existing_record["ACCOUNT_VERIFICATION"]
+            else:
+                user_data["ACCOUNT_VERIFICATION"] = "waiting"  # Only for brand-new users
+            
+            # Add config-only fields
+            user_data.update(CONFIG_ONLY_FIELDS)
+            
+            # Enforce key order
+            ordered_data = {key: user_data.get(key) for key in JSON_KEY_ORDER}
+            users_dictionary[json_key] = ordered_data
+        
+        # Write final JSON
+        os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
+        with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(users_dictionary, f, indent=4)
+            
+        log_and_print(f"Successfully exported {len(users_dictionary)} accounts to JSON.", "SUCCESS")
+        if skipped_count:
+            log_and_print(f"Skipped {skipped_count} rows (invalid broker).", "INFO")
+            
+    except Exception as e:
+        log_and_print(f"Critical error in fetch_insiders_server_rows(): {e}", "ERROR")
+    finally:
+        db.shutdown()
+        log_and_print("===== Export Complete =====", "TITLE")
+
+def update_application_status():
+    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\usersdictionary.json"
+    INSIDERS_TABLE = "insiders_server"
+
+    if not os.path.exists(USERS_JSON_PATH):
+        log_and_print(f"{USERS_JSON_PATH} not found! Skipping application status sync.", "WARNING")
+        return
 
     try:
-        print("\n")
-        log_and_print(f"===== Fetching ALL ROWS for Table: {INSIDERS_TABLE} =====", "TITLE")
-        
-        # --- LOGIC: Load existing JSON data for status check ---
-        if os.path.exists(OUTPUT_FILE_PATH):
-            try:
-                with open(OUTPUT_FILE_PATH, 'r') as f:
-                    existing_users_dictionary = json.load(f)
-                
-                # Pre-populate users_dictionary with existing JSON data 
-                # This is the in-memory state we will modify.
-                for key, data in existing_users_dictionary.items():
-                    users_dictionary[key] = data.copy()
-            except (IOError, json.JSONDecodeError):
-                log_and_print("WARNING: Existing JSON file found but could not be loaded/parsed. Starting fresh dictionary.", "WARNING")
-                pass
-        
-        # 1. Define the SQL query to fetch all data, INCLUDING the new history and loyalties columns.
-        select_all_query = (
-            f"SELECT id, broker, login, password, server, execution_start_date, application_status, broker_balance, profitandloss, "
-            f"broker_balance_history, execution_dates_history, profitandlosshistory, trades, loyalties " # loyalties ADDED HERE
-            f"FROM {INSIDERS_TABLE}"
-        )
-        log_and_print(f"Sending query: {select_all_query}", "INFO")
-        
-        # 2. Execute the query (Initial DB state fetch for Pass 1)
-        result = db.execute_query(select_all_query)
-        
-        print("\n")
-        log_and_print("--- Database Query Results ---", "TITLE")
-
-        # Convert initial DB rows to map for easy access during Pass 1 updates
-        db_rows_map_initial = {}
-        if result.get('status') == 'success' and isinstance(result.get('results'), list):
-            rows_initial = result['results']
-            db_rows_map_initial = {str(row['id']): row for row in rows_initial}
-        
-        
-        if db_rows_map_initial:
-            log_and_print(f"Successfully fetched {len(rows_initial)} rows from '{INSIDERS_TABLE}'.", "SUCCESS")
-            
-            # --- JSON-to-DB UPDATE LOGIC (Pass 1) ---
-            log_and_print("--- Executing JSON-to-DB Update Passes ---", "TITLE")
-            
-            for json_key, json_data in existing_users_dictionary.items():
-                
-                # Reverse lookup ID from JSON key (broker+ID)
-                id_number = next((row['id'] for row in rows_initial if f"{str(row['broker']).lower().replace(' ', '')}{row['id']}" == json_key), None)
-                if not id_number:
-                    continue
-                    
-                id_number_str = str(id_number)
-                db_row = db_rows_map_initial.get(id_number_str)
-                
-                if not db_row:
-                    continue
-                    
-                current_verification_status = str(json_data.get("ACCOUNT_VERIFICATION", DEFAULT_CONFIG["ACCOUNT_VERIFICATION"])).lower().strip()
-                reset_flag = str(json_data.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", DEFAULT_CONFIG["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"])).lower().strip()
-                
-                json_broker_balance_float = safe_float(json_data.get("BROKER_BALANCE", DEFAULT_CONFIG["BROKER_BALANCE"]))
-                json_profitandloss_raw = json_data.get("PROFITANDLOSS")
-                if json_profitandloss_raw is None:
-                    json_profitandloss_raw = json_data.get("PROFIT_AND_LOSS", DEFAULT_CONFIG["PROFITANDLOSS"])
-                json_profitandloss_float = safe_float(json_profitandloss_raw)
-                
-                # Get current DB values for comparison/history
-                db_balance_float = safe_float(db_row.get('broker_balance'))
-                db_pnl_float = safe_float(db_row.get('profitandloss'))
-                db_status = str(db_row.get('application_status', '')).lower().strip()
-
-                # --- 1. RESET LOGIC: 'reset' flag ---
-                if reset_flag == "reset":
-                    db_balance_history = str(db_row.get('broker_balance_history', ''))
-                    db_dates_history = str(db_row.get('execution_dates_history', ''))
-                    db_pnl_history = str(db_row.get('profitandlosshistory', ''))
-                    
-                    raw_db_balance = str(db_row.get('broker_balance', '0.00'))
-                    raw_db_execution_date = str(db_row.get('execution_start_date', 'None'))
-                    raw_db_pnl = str(db_row.get('profitandloss', '0.00'))
-                    
-                    new_balance_history = update_history_string(db_balance_history, raw_db_balance)
-                    new_dates_history = update_history_string(db_dates_history, raw_db_execution_date)
-                    new_pnl_history = update_history_string(db_pnl_history, raw_db_pnl)
-
-                    update_query = (
-                        f"UPDATE {INSIDERS_TABLE} SET "
-                        f"execution_start_date = NULL, "
-                        f"broker_balance = {json_broker_balance_float}, "
-                        f"broker_balance_history = '{new_balance_history}', "
-                        f"execution_dates_history = '{new_dates_history}', "
-                        f"profitandlosshistory = '{new_pnl_history}' "
-                        f"WHERE id = {id_number_str}"
-                    )
-                    update_result = db.execute_query(update_query)
-
-                    if update_result.get('status') == 'success':
-                        log_and_print(f"User {json_key}: DB RESET performed. Balance: {db_balance_float} -> {json_broker_balance_float}. History updated.", "WARNING")
-                        updated_db_reset_count += 1
-                        
-                        # --- CRITICAL FIX: Update IN-MEMORY data with new values ---
-                        # This ensures the new history and null/cleared values are present 
-                        # in the `users_dictionary` for the final JSON write.
-                        if json_key in users_dictionary:
-                            users_dictionary[json_key]["BROKER_BALANCE_HISTORY"] = new_balance_history
-                            users_dictionary[json_key]["EXECUTION_DATES_HISTORY"] = new_dates_history
-                            users_dictionary[json_key]["PROFITANDLOSS_HISTORY"] = new_pnl_history
-                            users_dictionary[json_key]["EXECUTION_START_DATE"] = None # Set to None (null in DB)
-                            users_dictionary[json_key]["BROKER_BALANCE"] = json_broker_balance_float # Set new balance
-                            
-                    else:
-                        log_and_print(f"ERROR: Failed DB RESET for ID {id_number_str}. Msg: {update_result.get('message')}", "ERROR")
-
-                # --- 2. ALWAYS UPDATE PROFITANDLOSS LOGIC (JSON to DB) ---
-                if abs(json_profitandloss_float - db_pnl_float) > 0.0001:
-                    pnl_update_query = (
-                        f"UPDATE {INSIDERS_TABLE} SET "
-                        f"profitandloss = {json_profitandloss_float} "
-                        f"WHERE id = {id_number_str}"
-                    )
-                    pnl_update_result = db.execute_query(pnl_update_query)
-
-                    if pnl_update_result.get('status') == 'success':
-                        updated_db_pnl_count += 1
-                        # Update in-memory data for consistency
-                        if json_key in users_dictionary:
-                            users_dictionary[json_key]["PROFITANDLOSS"] = json_profitandloss_float
-                    else:
-                        log_and_print(f"ERROR: Failed to update profitandloss for ID {id_number_str}. Msg: {pnl_update_result.get('message')}", "ERROR")
-
-                # --- 3. 'none' flag BALANCE UPDATE LOGIC (JSON to DB) ---
-                if reset_flag == "none":
-                    if abs(json_broker_balance_float - db_balance_float) > 0.0001:
-                        balance_update_query = (
-                            f"UPDATE {INSIDERS_TABLE} SET "
-                            f"broker_balance = {json_broker_balance_float} "
-                            f"WHERE id = {id_number_str}"
-                        )
-                        balance_update_result = db.execute_query(balance_update_query)
-
-                        if balance_update_result.get('status') == 'success':
-                            log_and_print(f"User {json_key}: 'none' flag update. DB Balance updated to {json_broker_balance_float}.", "INFO")
-                            updated_db_balance_count += 1
-                            # Update in-memory data for consistency
-                            if json_key in users_dictionary:
-                                users_dictionary[json_key]["BROKER_BALANCE"] = json_broker_balance_float
-                        else:
-                            log_and_print(f"ERROR: Failed to update broker_balance for ID {id_number_str} ('none' flag). Msg: {balance_update_result.get('message')}", "ERROR")
-                
-                # --- 4. ACCOUNT_VERIFICATION Status Update to DB ---
-                if current_verification_status == "verified" and db_status != 'approved':
-                    update_query = f"UPDATE {INSIDERS_TABLE} SET application_status = 'approved' WHERE id = {id_number_str}"
-                    update_result = db.execute_query(update_query)
-                    if update_result.get('status') == 'success':
-                        updated_db_approved_count += 1
-                        # Update in-memory data
-                        if json_key in users_dictionary:
-                            users_dictionary[json_key]["DB_APPLICATION_STATUS"] = 'approved'
-                    else:
-                        log_and_print(f"ERROR: Failed to update status to 'approved' for ID {id_number_str}. Msg: {update_result.get('message')}", "ERROR")
-                        
-                elif current_verification_status == "invalidcredentials" and db_status != 'declined':
-                    update_query = f"UPDATE {INSIDERS_TABLE} SET application_status = 'declined' WHERE id = {id_number_str}"
-                    update_result = db.execute_query(update_query)
-                    if update_result.get('status') == 'success':
-                        updated_db_declined_count += 1
-                        # Update in-memory data
-                        if json_key in users_dictionary:
-                            users_dictionary[json_key]["DB_APPLICATION_STATUS"] = 'declined'
-                    else:
-                        log_and_print(f"ERROR: Failed to update status to 'declined' for ID {id_number_str}. Msg: {update_result.get('message')}", "ERROR")
-                        
-            log_and_print("--- Finished JSON-to-DB Update Passes ---", "TITLE")
-            
-            # --- DB-to-JSON Processing and File/Folder Creation (Pass 2) ---
-            log_and_print("--- Executing DB-to-JSON and File/Folder Creation ---", "TITLE")
-
-            # Re-run query after updates to get the most current DB state 
-            result = db.execute_query(select_all_query)
-            if result.get('status') == 'success' and isinstance(result.get('results'), list):
-                rows_current = result['results']
-            else:
-                log_and_print("WARNING: Second DB fetch failed. Using original data for JSON processing.", "WARNING")
-                rows_current = rows_initial # Fallback to initial rows
-                
-            
-            new_users_dictionary = {} # Use a new dictionary for the output
-            
-            for i, row in enumerate(rows_current, 1):
-                broker_value = row.get('broker')
-                
-                # 🔔 FILTERING LOGIC: Skip rows if 'broker' is None, or the string 'None'
-                if broker_value is None or str(broker_value).strip().lower() == 'none':
-                    skipped_count += 1
-                    continue
-                    
-                # Get necessary values (as strings initially)
-                broker = str(broker_value).lower().replace(" ", "")
-                login = str(row.get('login', 'None'))
-                password = str(row.get('password', 'None'))
-                server = str(row.get('server', 'None'))
-                id_number = str(row.get('id', '0'))
-                db_execution_start_date = str(row.get('execution_start_date', 'None'))
-                db_broker_balance = str(row.get('broker_balance', '0.00'))
-                db_profitandloss = str(row.get('profitandloss', '0.00'))
-                db_broker_balance_history = str(row.get('broker_balance_history', ''))
-                db_execution_dates_history = str(row.get('execution_dates_history', ''))
-                db_pnl_history = str(row.get('profitandlosshistory', ''))
-                db_trades = str(row.get('trades', ''))
-                db_application_status = str(row.get('application_status', 'None')).lower().strip()
-                db_loyalties = str(row.get('loyalties', DEFAULT_CONFIG["LOYALTIES"]))
-                
-                json_key = f"{broker}{id_number}"
-                in_memory_user_data = users_dictionary.get(json_key) # Get the updated data from Pass 1
-                
-                # *** MODIFIED PATH LOGIC START ***
-                mt5_terminal_dir = rf"C:\xampp\htdocs\chronedge\mt5\MetaTrader 5 {broker} {id_number}"
-                terminal_path = os.path.join(mt5_terminal_dir, "terminal64.exe")
-                
-                # Set BASE_FOLDER to the PARENT folder directory path (e.g., C:\...\chart\deriv 3)
-                base_folder_dir = rf"C:\xampp\htdocs\chronedge\chart\{broker} {id_number}" 
-                base_folder_path = base_folder_dir
-                # *** MODIFIED PATH LOGIC END ***
-
-                # --- NEW LOGIC: Check Execution Dates History for "justjoined" Loyalty ---
-                if not db_execution_dates_history or db_execution_dates_history.lower() in ('none', 'null'):
-                    db_loyalties = "justjoined"
-                    log_and_print(f"User {json_key}: Loyalty set to 'justjoined' because execution_dates_history is empty or 'None'.", "INFO")
-
-
-                # --- JSON OVERWRITE PREVENTION FOR VERIFIED USERS ---
-                if in_memory_user_data and in_memory_user_data.get("ACCOUNT_VERIFICATION", "").lower().strip() == "verified":
-                    
-                    # Start with the in-memory data (which holds the current config and any Pass 1 reset updates)
-                    user_data = in_memory_user_data.copy()
-                    
-                    # Update DB-sourced fields with the latest DB values (from the second fetch)
-                    # ONLY if the 'reset' flag was not active for that field in Pass 1.
-                    if user_data.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "none") == "none":
-                        user_data["BROKER_BALANCE"] = safe_float(db_broker_balance)
-                        user_data["EXECUTION_START_DATE"] = db_execution_start_date if db_execution_start_date != 'None' else None
-                        
-                        # Use the DB history, but if the history was updated in Pass 1, in_memory already has the correct value.
-                        if not user_data["BROKER_BALANCE_HISTORY"]:
-                            user_data["BROKER_BALANCE_HISTORY"] = db_broker_balance_history
-                        if not user_data["EXECUTION_DATES_HISTORY"]:
-                            user_data["EXECUTION_DATES_HISTORY"] = db_execution_dates_history
-                        if not user_data["PROFITANDLOSS_HISTORY"]:
-                            user_data["PROFITANDLOSS_HISTORY"] = db_pnl_history
-                        
-                    # PNL and status are always updated to the latest DB value (which was updated in Pass 1)
-                    user_data["PROFITANDLOSS"] = safe_float(db_profitandloss)
-                    user_data["TRADES"] = db_trades
-                    user_data["DB_APPLICATION_STATUS"] = db_application_status
-                    user_data["LOYALTIES"] = db_loyalties # Use the potentially updated 'justjoined' value
-
-                    # *** CRITICAL FIX: Ensure BASE_FOLDER is updated for existing/verified users ***
-                    user_data["BASE_FOLDER"] = base_folder_path
-                    # ******************************************************************************
-                    
-                    new_users_dictionary[json_key] = user_data
-                    skipped_verified_count += 1
-                    continue
-                    
-                # --- DB APPLICATION STATUS Normalization (For new/non-verified/non-declined users) ---
-                if db_application_status not in ["pending", "approved", "declined"]:
-                    db_application_status = 'pending'
-
-                # Console print of the row (only first 5 valid rows printed)
-                row_str = ", ".join([f"{k}: {repr(v)}" for k, v in row.items()])
-                
-                valid_index = i - skipped_count - skipped_verified_count
-                if valid_index <= 5 and valid_index >= 1:
-                    print(f"{Fore.GREEN}Row {i}: DB App Status '{db_application_status}': {row_str}{Style.RESET_ALL}")
-                    
-                # --- Check and Copy MT5 Template (unchanged) ---
-                if not os.path.isdir(mt5_terminal_dir):
-                    log_and_print(f"MT5 folder for user {id_number} does not exist. Copying template...", "WARNING")
-                    try:
-                        shutil.copytree(MT5_TEMPLATE_SOURCE_DIR, mt5_terminal_dir)
-                        log_and_print(f"Successfully created MT5 folder: {mt5_terminal_dir}", "SUCCESS")
-                    except FileExistsError:
-                        pass
-                    except Exception as copy_error:
-                        log_and_print(f"ERROR: Failed to copy MT5 template for user {id_number}: {copy_error}", "ERROR")
-                else:
-                    pass
-                    
-                # --- Ensure Chart Base Folder Exists (unchanged, but uses the modified base_folder_dir) ---
-                try:
-                    os.makedirs(base_folder_dir, exist_ok=True)
-                except Exception:
-                    pass
-
-
-                # Construct the value dictionary from the DB row (Second fetch - DB is the source of truth for current state)
-                user_data = {
-                    "TERMINAL_PATH": terminal_path,
-                    "LOGIN_ID": login,
-                    "PASSWORD": password,
-                    "SERVER": server,
-                    "BASE_FOLDER": base_folder_path, # Now set to the parent directory, correctly
-                    "EXECUTION_START_DATE": db_execution_start_date if db_execution_start_date != 'None' else None,
-                    "BROKER_BALANCE": safe_float(db_broker_balance),
-                    "PROFITANDLOSS": safe_float(db_profitandloss),
-                    "DB_APPLICATION_STATUS": db_application_status,
-                    "BROKER_BALANCE_HISTORY": db_broker_balance_history,
-                    "EXECUTION_DATES_HISTORY": db_execution_dates_history,
-                    "PROFITANDLOSS_HISTORY": db_pnl_history,
-                    "TRADES": db_trades,
-                    "LOYALTIES": db_loyalties # Use the potentially updated 'justjoined' value
-                }
-                
-                user_config = DEFAULT_CONFIG.copy()
-                
-                # --- CRITICAL FIX: Merge with in_memory_user_data for all users ---
-                if in_memory_user_data:
-                    # 1. Merge configuration keys (strategy, riskreward, etc.)
-                    for key in DEFAULT_CONFIG.keys():
-                        if key not in user_data: # Don't overwrite the core DB fields
-                            user_config[key] = in_memory_user_data.get(key, DEFAULT_CONFIG[key])
-                    
-                    # 2. Overwrite DB data with the UPDATED in-memory history/balance if a reset occurred.
-                    if in_memory_user_data.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "none") == "reset":
-                        user_data["BROKER_BALANCE_HISTORY"] = in_memory_user_data["BROKER_BALANCE_HISTORY"]
-                        user_data["EXECUTION_DATES_HISTORY"] = in_memory_user_data["EXECUTION_DATES_HISTORY"]
-                        user_data["PROFITANDLOSS_HISTORY"] = in_memory_user_data["PROFITANDLOSS_HISTORY"]
-                        user_data["EXECUTION_START_DATE"] = in_memory_user_data["EXECUTION_START_DATE"]
-                        user_data["BROKER_BALANCE"] = in_memory_user_data["BROKER_BALANCE"]
-                        
-                    # 3. Always ensure the JSON flag is preserved from in-memory data
-                    user_config["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = in_memory_user_data.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "none")
-
-                # Append the configuration 
-                user_data.update(user_config)
-                
-                # Add to the main dictionary 
-                new_users_dictionary[json_key] = user_data
-            
-            # Update the main dictionary reference for writing
-            users_dictionary = new_users_dictionary
-            
-            # --- Reporting and Finalizing ---
-            log_and_print("--- Final Processing Summary ---", "TITLE")
-            if skipped_count > 0:
-                log_and_print(f"Skipped {skipped_count} row(s) due to missing 'broker' value.", "INFO")
-            if skipped_verified_count > 0:
-                log_and_print(f"Preserved {skipped_verified_count} user(s) from existing JSON (status 'verified').", "INFO")
-            if updated_db_approved_count > 0:
-                log_and_print(f"Approved {updated_db_approved_count} user(s) in DB for 'verified' JSON status.", "SUCCESS")
-            if updated_db_declined_count > 0:
-                log_and_print(f"Declined {updated_db_declined_count} user(s) in DB for 'invalidcredentials' JSON status.", "WARNING")
-            if updated_db_pending_count > 0:
-                log_and_print(f"Set {updated_db_pending_count} user(s) to 'pending' in DB for normalization.", "INFO")
-            if updated_db_reset_count > 0:
-                log_and_print(f"Executed {updated_db_reset_count} DB RESET(s) with history update (Balance, Dates, PNL). JSON flags not reset.", "WARNING")
-            if updated_db_balance_count > 0:
-                log_and_print(f"Updated {updated_db_balance_count} DB broker_balance(s) from JSON ('none' flag).", "INFO")
-            if updated_db_pnl_count > 0:
-                log_and_print(f"Updated {updated_db_pnl_count} user(s) profitandloss in DB.", "INFO")
-
-            valid_processed_count = len(users_dictionary)
-            if len(rows_current) > 5 and valid_processed_count > 5:
-                log_and_print(f"... and {valid_processed_count - 5} more valid row(s) processed (not all displayed).", "INFO")
-            
-            print("---")
-            log_and_print("Finished processing all fetched rows.", "SUCCESS")
-            
-            # 4. Write the final dictionary to the JSON file
-            log_and_print(f"Attempting to write data to file: {OUTPUT_FILE_PATH}", "INFO")
-            try:
-                os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
-                
-                if users_dictionary:
-                    with open(OUTPUT_FILE_PATH, 'w') as f:
-                        json.dump(users_dictionary, f, indent=4)
-                    log_and_print(f"Successfully wrote {len(users_dictionary)} user configurations to JSON.", "SUCCESS")
-                else:
-                    log_and_print("No valid user data to write to JSON after filtering and skipping.", "WARNING")
-                    
-            except IOError as file_error:
-                log_and_print(f"Failed to write to JSON file. Check path/permissions: {file_error}", "ERROR")
-
-        else:
-            log_and_print(f"The query was successful but returned 0 rows for '{INSIDERS_TABLE}'. The table is empty. No JSON file created/updated.", "WARNING")
-    
+        with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
+            users_dict = json.load(f)
+        if not isinstance(users_dict, dict) or not users_dict:
+            log_and_print("usersdictionary.json is empty or invalid.", "ERROR")
+            return
     except Exception as e:
-        log_and_print(f"An unexpected error occurred during database operations or processing: {str(e)}", "ERROR")
-        
-    finally:
-        log_and_print("--- Cleanup Operations ---", "TITLE")
-        db.shutdown()
-        log_and_print("Database connection closed.", "SUCCESS")
-        print("\n")
-        log_and_print("===== Row Fetch and JSON Export Completed =====", "TITLE")
-        
+        log_and_print(f"Failed to read usersdictionary.json: {e}", "CRITICAL")
+        return
+
+    log_and_print("=== Updating Application Status from usersdictionary.json ===", "TITLE")
+
+    # Build broker + id → db_id map (same logic as original function)
+    query = f"""
+        SELECT id, broker
+        FROM {INSIDERS_TABLE}
+        WHERE broker IS NOT NULL AND TRIM(broker) != '' AND broker != 'None'
+    """
+    result = db.execute_query(query)
+    if result.get('status') != 'success':
+        log_and_print("Failed to fetch broker mapping for application status sync.", "ERROR")
+        return
+
+    broker_to_id = {}
+    for row in result['results']:
+        broker_norm = str(row['broker']).strip().lower().replace(" ", "")
+        key = f"{broker_norm}{row['id']}"
+        broker_to_id[key] = row['id']
+
+    updated = skipped = 0
+
+    for json_key, data in users_dict.items():
+        db_id = broker_to_id.get(json_key.lower())
+
+        if not db_id:
+            log_and_print(f"SKIP (no DB match): {json_key}", "WARNING")
+            skipped += 1
+            continue
+
+        verification = str(data.get("ACCOUNT_VERIFICATION", "")).strip().lower()
+
+        if verification == "verified":
+            new_status = "approved"
+        elif verification == "invalid":
+            new_status = "declined"
+        elif verification == "waiting":
+            new_status = "pending"
+        else:
+            new_status = "pending"  # default/fallback
+
+        sql = f"UPDATE {INSIDERS_TABLE} SET application_status = '{new_status}' WHERE id = {db_id}"
+        res = db.execute_query(sql)
+
+        if res.get('status') == 'success':
+            log_and_print(f"STATUS → {json_key} (ID: {db_id}) | {verification} → {new_status}", "SUCCESS")
+            updated += 1
+        else:
+            log_and_print(f"FAILED → {json_key} (ID: {db_id}): {res.get('message')}", "ERROR")
+
+    log_and_print("=== Application Status Sync Complete ===", "TITLE")
+    log_and_print(f"Updated: {updated} | Skipped: {skipped}", "INFO")
+
 def copy_verified_users_to_brokers_dictionary():
     """
     Reads the main user dictionary, filters users where:
@@ -585,8 +707,17 @@ def copy_verified_users_to_brokers_dictionary():
         log_and_print("No qualified users found to copy. Brokers JSON file remains unchanged.", "INFO")
 
     log_and_print("--- Finished Copy Verified Users to Brokers Dictionary ---", "TITLE")
-    
-if __name__ == "__main__":
-    fetch_insiders_server_rows()
-    fetch_insiders_server_rows()
+
+
+
+def main():  
+    fetch_insiders_server_rows() 
     copy_verified_users_to_brokers_dictionary()
+    mt5brokersupdater()
+    recordsfrom_brokersdictionary() 
+    account_verification()
+    update_table_fromupdatedusers()
+    fetch_insiders_server_rows()
+
+if __name__ == "__main__":
+    main()

@@ -3125,6 +3125,212 @@ def BreakevenRunningPositions():
     log_and_print("All brokers breakeven processed.", "SUCCESS")
 
 
+def updatebrokerrecords():
+    """
+    FULLY FIXED & FINAL VERSION
+    • Real days-left calculation done EARLY → used for ALL logic (move, reset, loyalty)
+    • Accounts with <5 days left AND LOYALTIES="elligible" → moved to updatedusersdictionary.json
+    • justjoined OR member with >=25 days left → auto-upgrade + reset
+    """
+    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
+    USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
+    CONTRACT_DURATION_DAYS = 30
+
+    if not os.path.exists(BROKERS_JSON):
+        print(f"CRITICAL: {BROKERS_JSON} not found!", "CRITICAL")
+        return
+
+    try:
+        with open(BROKERS_JSON, "r", encoding="utf-8") as f:
+            brokers_dict = json.load(f)
+    except Exception as e:
+        print(f"Failed to load brokers JSON: {e}", "CRITICAL")
+        return
+
+    users_dict = {}
+    if os.path.exists(USERS_JSON):
+        try:
+            with open(USERS_JSON, "r", encoding="utf-8") as f:
+                users_dict = json.load(f)
+            if not isinstance(users_dict, dict):
+                users_dict = {}
+        except:
+            users_dict = {}
+
+    updated_any = False
+    move_list = []
+    lagos_tz = pytz.timezone("Africa/Lagos")
+    now_dt = datetime.now(lagos_tz)
+    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    now_ts = int(now_dt.timestamp())
+
+    # === PHASE 1: Calculate REAL days left + Loyalty & Move Logic ===
+    for broker_name, cfg in list(brokers_dict.items()):
+        loyalty = str(cfg.get("LOYALTIES", "")).strip().lower()
+
+        # === Calculate REAL days left from EXECUTION_START_DATE ===
+        start_str = str(cfg.get("EXECUTION_START_DATE", "")).strip()
+        if not start_str or start_str.lower() in ("null", "none", ""):
+            real_days_left = CONTRACT_DURATION_DAYS
+            start_dt = now_dt
+        else:
+            try:
+                start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                try:
+                    start_dt = datetime.strptime(start_str, "%Y-%m-%d")
+                    start_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                except:
+                    start_dt = now_dt
+                    real_days_left = CONTRACT_DURATION_DAYS
+                else:
+                    if start_dt.tzinfo is None:
+                        start_dt = lagos_tz.localize(start_dt)
+                    real_days_left = max(0, CONTRACT_DURATION_DAYS - (now_dt - start_dt).days)
+            else:
+                if start_dt.tzinfo is None:
+                    start_dt = lagos_tz.localize(start_dt)
+                real_days_left = max(0, CONTRACT_DURATION_DAYS - (now_dt - start_dt).days)
+
+        # Store correct days_left early so it's consistent
+        cfg["CONTRACT_DAYS_LEFT"] = real_days_left
+        updated_any = True
+
+        # === Auto-upgrade + reset: justjoined OR member with >=25 days left ===
+        if loyalty in ("justjoined", "member") and real_days_left >= 25:
+            print(f"{broker_name}: Loyalty '{loyalty}' → 'elligible' + AUTO RESET ({real_days_left} days left)", "INFO")
+            cfg["LOYALTIES"] = "elligible"
+            cfg["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = "reset"
+            updated_any = True
+
+        # === Move expired eligible accounts (<5 days) ===
+        elif loyalty == "elligible" and real_days_left < 5:
+            print(f"{broker_name}: EXPIRED → Moving to updatedusersdictionary.json ({real_days_left} days left)", "WARNING")
+            move_list.append(broker_name)
+
+    # === PHASE 2: Perform the move ===
+    for broker_name in move_list:
+        if broker_name not in brokers_dict:
+            continue
+        broker_data = brokers_dict.pop(broker_name)
+        for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
+            broker_data.pop(field, None)
+        users_dict[broker_name] = broker_data
+        print(f"{broker_name}: SUCCESSFULLY MOVED to updatedusersdictionary.json", "SUCCESS")
+        updated_any = True
+
+    # === PHASE 3: Update remaining active brokers ===
+    for broker_name, cfg in brokers_dict.items():
+        print(f"{broker_name}: Updating live data...", "INFO")
+
+        terminal_path = cfg.get("TERMINAL_PATH")
+        login_id = cfg.get("LOGIN_ID")
+        password = cfg.get("PASSWORD")
+        server = cfg.get("SERVER")
+
+        if not all([terminal_path, login_id, password, server]):
+            print(f"{broker_name}: Missing credentials", "ERROR")
+            continue
+
+        if not mt5.initialize(path=terminal_path, timeout=30000):
+            print(f"{broker_name}: MT5 init failed", "ERROR")
+            continue
+        if not mt5.login(int(login_id), password=password, server=server):
+            print(f"{broker_name}: Login failed", "ERROR")
+            mt5.shutdown()
+            continue
+
+        account_info = mt5.account_info()
+        if not account_info:
+            print(f"{broker_name}: No account info", "ERROR")
+            mt5.shutdown()
+            continue
+
+        current_balance = round(account_info.balance, 2)
+        from_ts = int((lagos_tz.localize(datetime.strptime(cfg.get("EXECUTION_START_DATE", now_str), "%Y-%m-%d %H:%M:%S") if " " in cfg.get("EXECUTION_START_DATE", "") else datetime.strptime(cfg.get("EXECUTION_START_DATE", now_str), "%Y-%m-%d"))).timestamp())
+
+        # Get deals from cycle start
+        deals = mt5.history_deals_get(from_ts, now_ts + 120)
+        realized_pnl = 0.0
+        total_trades = won_trades = lost_trades = 0
+        wins_by_symbol = {}
+        losses_by_symbol = {}
+
+        if deals:
+            for deal in deals:
+                if deal.entry not in (1, 3):
+                    continue
+                profit = deal.profit
+                symbol = deal.symbol or "Unknown"
+                realized_pnl += profit
+                if profit > 0:
+                    won_trades += 1
+                    wins_by_symbol[symbol] = wins_by_symbol.get(symbol, 0) + profit
+                elif profit < 0:
+                    lost_trades += 1
+                    losses_by_symbol[symbol] = losses_by_symbol.get(symbol, 0) + profit
+                else:
+                    won_trades += 1
+            total_trades = won_trades + lost_trades
+
+        realized_pnl = round(realized_pnl, 2)
+
+        wins_list = [f"{s}:{p:.2f}" for s, p in sorted(wins_by_symbol.items(), key=lambda x: -x[1])]
+        losses_list = [f"{s}:{p:.2f}" for s, p in sorted(losses_by_symbol.items(), key=lambda x: x[1])]
+
+        trades_summary = (
+            f"{total_trades}:Trades, {won_trades}:Won, {lost_trades}:Lost, "
+            f"symbolsthatlost:({', '.join(losses_list) if losses_list else 'None'}), "
+            f"symbolsthatwon:({', '.join(wins_list) if wins_list else 'None'})"
+        )
+
+        # === Handle Reset ===
+        if str(cfg.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "")).strip().lower() == "reset":
+            old_balance = cfg.get("BROKER_BALANCE", 0)
+            old_pnl = realized_pnl
+
+            cfg["BROKER_BALANCE_HISTORY"] = f"{cfg.get('BROKER_BALANCE_HISTORY', '0.00')},{old_balance}".lstrip(',')
+            cfg["PROFITANDLOSS_HISTORY"] = f"{cfg.get('PROFITANDLOSS_HISTORY', '0.00')},{old_pnl}".lstrip(',')
+            cfg["EXECUTION_DATES_HISTORY"] = f"{cfg.get('EXECUTION_DATES_HISTORY', 'None')}, {cfg.get('EXECUTION_START_DATE', 'Unknown')}".strip()
+
+            cfg["EXECUTION_START_DATE"] = now_str
+            cfg["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = "none"
+            realized_pnl = 0.0
+            trades_summary = "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)"
+            cfg["CONTRACT_DAYS_LEFT"] = CONTRACT_DURATION_DAYS
+            print(f"{broker_name}: FULL RESET → New cycle started", "SUCCESS")
+
+        # Final update
+        cfg["BROKER_BALANCE"] = current_balance
+        cfg["PROFITANDLOSS"] = realized_pnl
+        cfg["TRADES"] = trades_summary
+
+        print(f"{broker_name}: Updated → Bal: {current_balance:.2f} | P&L: {realized_pnl:+.2f} | "
+              f"Days Left: {cfg['CONTRACT_DAYS_LEFT']} | Loyalty: {cfg.get('LOYALTIES')}", "INFO")
+
+        updated_any = True
+        mt5.shutdown()
+
+    # === SAVE FILES ===
+    if updated_any:
+        try:
+            with open(BROKERS_JSON, "w", encoding="utf-8") as f:
+                json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
+                f.write("\n")
+            print("brokersdictionary.json → Saved (active only)", "SUCCESS")
+        except Exception as e:
+            print(f"Save failed (brokers): {e}", "CRITICAL")
+
+        try:
+            with open(USERS_JSON, "w", encoding="utf-8") as f:
+                json.dump(users_dict, f, indent=4, ensure_ascii=False)
+                f.write("\n")
+            print("updatedusersdictionary.json → Updated with expired accounts", "SUCCESS")
+        except Exception as e:
+            print(f"Save failed (users): {e}", "CRITICAL")
+    else:
+        print("No changes detected", "INFO")      
+
 def calc_and_placeorders():  
     calculate_symbols_sl_tp_prices() 
     placeallorders()
@@ -3527,7 +3733,7 @@ def fetch_charts_all_brokers(
         except Exception as e:
             log_and_print(f"MAIN LOOP CRASH: {e}\n{traceback.format_exc()}", "CRITICAL")
             time.sleep(600)
-            
+
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
         bars=201,
