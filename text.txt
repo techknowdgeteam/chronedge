@@ -282,3 +282,7 @@ def fetch_insiders_server_rows():
 if __name__ == "__main__":
     fetch_insiders_server_rows()
     fetch_insider_rows()
+
+
+
+    
