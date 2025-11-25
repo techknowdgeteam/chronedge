@@ -3,7 +3,7 @@ import json
 import calendar
 from datetime import datetime
 import os
-
+import insiders_server
 
 def update_calendar():
     """Update the calendar and write to JSON, using only type, saving to script directory."""
@@ -405,10 +405,15 @@ def update_timeschedule():
     print(f"Schedule updated: {schedules_path}")
 
 def current_time():
-    """Save current time in 12h and 24h format to currenttime.json in script directory."""
+    """
+    Save current time in 12h and 24h format to current_time.json in script directory.
+    If the next_schedule in {type}schedules.json is in the past (or missing), 
+    automatically call update_calendar() to refresh the calendar and schedules.
+    """
+    # Get current time info
     now = datetime.now()
-    time_12h = now.strftime("%I:%M %p").lower()  # e.g., "07:31 pm"
-    time_24h = now.strftime("%H:%M")            # e.g., "19:31"
+    time_12h = now.strftime("%I:%M %p").lstrip("0").replace(" 0", " ").lower()
+    time_24h = now.strftime("%H:%M")
     
     current_time_data = {
         "time_12hour": time_12h,
@@ -419,12 +424,83 @@ def current_time():
     output_path = os.path.join(script_dir, "current_time.json")
     
     print(f"Saving current time: {time_12h} ({time_24h}) → {output_path}")
-    
     with open(output_path, 'w') as f:
         json.dump(current_time_data, f, indent=4)
-    
     print(f"Current time saved to {output_path}")
+    
+    # --- Check if we need to refresh the calendar because next_schedule is outdated ---
+    
+    # First get the current 'type' from timeauthor.json
+    pageauthors_path = r"C:\xampp\htdocs\chronedge\timeauthor.json"
+    type_value = None
+    try:
+        with open(pageauthors_path, 'r') as f:
+            pageauthors = json.load(f)
+            type_value = pageauthors.get('type')
+    except Exception as e:
+        print(f"Could not read type from timeauthor.json: {e}")
+        return
+    
+    if not type_value:
+        print("No 'type' found in timeauthor.json – skipping schedule check")
+        return
+    
+    # Path to the schedules file for this type
+    schedules_path = os.path.join(script_dir, f"{type_value}schedules.json")
+    
+    need_update = False
+    
+    if not os.path.exists(schedules_path):
+        print(f"{type_value}schedules.json not found → forcing calendar update")
+        need_update = True
+    else:
+        try:
+            with open(schedules_path, 'r') as f:
+                sched_data = json.load(f)
+            
+            next_sched = sched_data.get("next_schedule")
+            if not next_sched:
+                print("No next_schedule in schedules.json → forcing update")
+                need_update = True
+            else:
+                # Combine date + time from next_schedule
+                sched_date_str = next_sched.get("date")      # "dd/mm/yyyy"
+                sched_time_str = next_sched.get("time_24hour")  # "HH:MM"
+                
+                if not sched_date_str or not sched_time_str:
+                    print("Invalid next_schedule format → forcing update")
+                    need_update = True
+                else:
+                    next_datetime_str = f"{sched_date_str} {sched_time_str}"
+                    next_datetime = datetime.strptime(next_datetime_str, "%d/%m/%Y %H:%M")
+                    
+                    if now >= next_datetime:
+                        print(f"Next schedule {next_sched['time_12hour']} on {sched_date_str} is in the past or now → updating calendar")
+                        need_update = True
+                    else:
+                        print(f"Next schedule still ahead ({next_sched['time_12hour']} on {sched_date_str}) – no update needed")
+        
+        except Exception as e:
+            print(f"Error reading/parsing {type_value}schedules.json: {e} → forcing update")
+            need_update = True
+    
+    # If needed, trigger full calendar + schedule refresh
+    if need_update:
+        print("Calling update_calendar() to refresh everything...")
+        update_calendar()
+        updating_insiderservers()
+    else:
+        print("Schedule is up to date.")
 
-def main():
-    deletejson()   
-    update_calendar()
+def updating_insiderservers():
+    """Run the updateorders script for M5 timeframe."""
+    try:
+        insiders_server.update_table_fromupdatedusers()
+        print("updated table")
+    except Exception as e:
+        print(f"Error updating table{e}")
+    
+
+
+if __name__ == "__main__":
+    current_time()

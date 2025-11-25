@@ -4,7 +4,6 @@ import os
 import shutil
 from datetime import datetime
 from colorama import Fore, Style, init
-import chronedge
 
 # Initialize colorama for cross-platform terminal colors
 init()
@@ -82,229 +81,79 @@ def update_history_string(current_history, new_value):
     
     return f"{current_history_str},{new_value_str}"
 
-def mt5brokersupdater():
-    """Run the updateorders script for M5 timeframe."""
-    try:
-        chronedge.updatebrokerrecords()
-        print("updated broker records")
-    except Exception as e:
-        print(f"Error updating broker records: {e}")
 
-def recordsfrom_brokersdictionary():
+def cleanup_stale_records_in_updatedusers():
     """
-    Copies/Updates ALL broker records from brokersdictionary.json
-    → into updatedusersdictionary.json
-
-    - If the broker name (key) already exists in updatedusersdictionary.json → UPDATE it
-    - If it doesn't exist → ADD it (append)
-    - brokersdictionary.json is treated as the SOURCE OF TRUTH (latest data)
-    - Safe, idempotent, can be run anytime (e.g. every hour or after updatebrokerrecords())
+    Removes any record from updatedusersdictionary.json
+    that no longer exists in the main usersdictionary.json (fresh DB export).
+    
+    This ensures updatedusersdictionary.json only contains accounts
+    that are known to the system (past or present).
     """
+    USERSDICTIONARY_JSON = r"C:\xampp\htdocs\chronedge\usersdictionary.json"
+    UPDATEDUSERS_JSON    = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
 
-    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
-    USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
-
-    # Load brokersdictionary.json (source of truth)
-    if not os.path.exists(BROKERS_JSON):
-        print(f"CRITICAL: {BROKERS_JSON} not found! Cannot sync.", "CRITICAL")
+    # --- Load fresh usersdictionary.json (source of truth) ---
+    if not os.path.exists(USERSDICTIONARY_JSON):
+        print(f"ERROR: {USERSDICTIONARY_JSON} not found! Cannot perform cleanup.", "CRITICAL")
         return
 
     try:
-        with open(BROKERS_JSON, "r", encoding="utf-8") as f:
-            brokers_dict = json.load(f)
-        if not isinstance(brokers_dict, dict):
-            print("brokersdictionary.json is not a valid dictionary", "ERROR")
+        with open(USERSDICTIONARY_JSON, "r", encoding="utf-8") as f:
+            users_dict = json.load(f)
+        valid_keys = set(users_dict.keys())
+        print(f"Loaded {len(valid_keys)} valid records from usersdictionary.json", "INFO")
+    except Exception as e:
+        print(f"Failed to load usersdictionary.json: {e}", "CRITICAL")
+        return
+
+    # --- Load updatedusersdictionary.json (the one we clean) ---
+    if not os.path.exists(UPDATEDUSERS_JSON):
+        print(f"No updatedusersdictionary.json found. Nothing to clean.", "INFO")
+        return
+
+    try:
+        with open(UPDATEDUSERS_JSON, "r", encoding="utf-8") as f:
+            updated_users = json.load(f)
+        if not isinstance(updated_users, dict):
+            print("Invalid data in updatedusersdictionary.json", "ERROR")
             return
     except Exception as e:
-        print(f"Failed to read brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load updatedusersdictionary.json: {e}", "CRITICAL")
         return
 
-    # Load updatedusersdictionary.json (target)
-    if os.path.exists(USERS_JSON):
-        try:
-            with open(USERS_JSON, "r", encoding="utf-8") as f:
-                users_dict = json.load(f)
-            if not isinstance(users_dict, dict):
-                users_dict = {}
-        except Exception as e:
-            print(f"updatedusersdictionary.json corrupted, starting fresh: {e}", "WARNING")
-            users_dict = {}
-    else:
-        print("updatedusersdictionary.json not found → will be created", "INFO")
-        users_dict = {}
+    initial_count = len(updated_users)
+    keys_to_remove = [key for key in updated_users if key not in valid_keys]
 
-    updated_count = 0
-    added_count = 0
+    if not keys_to_remove:
+        print(f"No stale records found. All {initial_count} entries are valid.", "INFO")
+        return
 
-    for broker_name, broker_data in brokers_dict.items():
-        # Clean copy: remove fields that shouldn't go into users dictionary
-        clean_data = broker_data.copy()
+    removed = 0
+    for key in keys_to_remove:
+        stale_record = updated_users.pop(key, None)
+        display_name = stale_record.get("BROKER", key) if isinstance(stale_record, dict) else key
+        print(f"DELETED STALE: {key} ({display_name}) → Not in current usersdictionary.json", "WARNING")
+        removed += 1
 
-        # Remove MT5-specific or temporary fields (optional but recommended)
-        fields_to_exclude = {
-            "TERMINAL_PATH",
-            "BASE_FOLDER",
-            "RESET_EXECUTION_DATE_AND_BROKER_BALANCE",
-            # Add more if needed later
-        }
-        for field in fields_to_exclude:
-            clean_data.pop(field, None)
-
-        if broker_name in users_dict:
-            # Update existing record
-            old_balance = users_dict[broker_name].get("BROKER_BALANCE")
-            new_balance = clean_data.get("BROKER_BALANCE")
-            users_dict[broker_name] = clean_data
-            print(f"{broker_name}: UPDATED in updatedusersdictionary.json "
-                  f"(Balance: {old_balance} → {new_balance})", "INFO")
-            updated_count += 1
-        else:
-            # Add new record
-            users_dict[broker_name] = clean_data
-            print(f"{broker_name}: ADDED to updatedusersdictionary.json "
-                  f"(Balance: {clean_data.get('BROKER_BALANCE', 0.0)})", "SUCCESS")
-            added_count += 1
-
-    # Save updated updatedusersdictionary.json
+    # --- Save cleaned file ---
     try:
-        with open(USERS_JSON, "w", encoding="utf-8") as f:
-            json.dump(users_dict, f, indent=4, ensure_ascii=False)
+        with open(UPDATEDUSERS_JSON, "w", encoding="utf-8") as f:
+            json.dump(updated_users, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print(f"SYNC COMPLETE! {added_count} added, {updated_count} updated → updatedusersdictionary.json", "SUCCESS")
+        print(f"CLEANUP DONE: Removed {removed}/{initial_count} stale records from updatedusersdictionary.json", "SUCCESS")
     except Exception as e:
-        print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
-
-def account_verification():
-    """
-    Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
-    from usersdictionary.json into both brokersdictionary.json and updatedusersdictionary.json.
-    
-    The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
-    the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
-    - 'invalid' -> 'declined'
-    - 'verified' -> 'approved'
-    - 'waiting' -> 'pending'
-    
-    This function ONLY updates the status fields, preserving all other data in the target files.
-    """
-    UPDATED_USERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
-    log_and_print("--- Starting Status Sync: usersdictionary → brokers & updatedusers ---", "TITLE")
-
-    # 1. Load Source Dictionary (usersdictionary.json)
-    if not os.path.exists(OUTPUT_FILE_PATH):
-        log_and_print(f"Source file not found: {OUTPUT_FILE_PATH}. Cannot sync.", "CRITICAL")
-        return
-    try:
-        with open(OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
-            source_dict = json.load(f)
-    except Exception as e:
-        log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
-        return
-
-    # 2. Load Target Dictionaries (brokersdictionary.json & updatedusersdictionary.json)
-    
-    # Load Brokers Dictionary
-    brokers_dict = {}
-    if os.path.exists(BROKERS_OUTPUT_FILE_PATH):
-        try:
-            with open(BROKERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
-                brokers_dict = json.load(f)
-        except Exception as e:
-            log_and_print(f"Brokers dictionary corrupted, starting fresh in memory: {e}", "WARNING")
-            brokers_dict = {}
-
-    # Load Updated Users Dictionary
-    updated_users_dict = {}
-    if os.path.exists(UPDATED_USERS_OUTPUT_FILE_PATH):
-        try:
-            with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
-                updated_users_dict = json.load(f)
-        except Exception as e:
-            log_and_print(f"Updated Users dictionary corrupted, starting fresh in memory: {e}", "WARNING")
-            updated_users_dict = {}
-
-    # 3. Synchronize Fields
-    brokers_updated_count = 0
-    updated_users_updated_count = 0
-    source_updated_count = 0 # Counter for usersdictionary updates
-    
-    for key, data in source_dict.items():
-        # Get ACCOUNT_VERIFICATION status from the source
-        verification = str(data.get("ACCOUNT_VERIFICATION", "waiting")).strip().lower()
-
-        # Determine the derived DB_APPLICATION_STATUS
-        if verification == "invalid":
-            app_status = "declined"
-        elif verification == "verified":
-            app_status = "approved"
-        elif verification == "waiting":
-            app_status = "pending"
-        else:
-            app_status = "pending"
-
-        # **NEW LOGIC: Update Source Dictionary (usersdictionary.json) in memory**
-        current_app_status = str(data.get("DB_APPLICATION_STATUS")).strip().lower()
-        if current_app_status != app_status:
-             source_dict[key]["DB_APPLICATION_STATUS"] = app_status
-             source_updated_count += 1
-             log_and_print(f"Source: Updated DB_APPLICATION_STATUS for {key} to '{app_status}'", "INFO")
-
-
-        # Update Brokers Dictionary
-        if key in brokers_dict:
-            brokers_dict[key]["ACCOUNT_VERIFICATION"] = verification
-            brokers_dict[key]["DB_APPLICATION_STATUS"] = app_status
-            brokers_updated_count += 1
-            log_and_print(f"Brokers: Updated status for {key} to Verification='{verification}', Status='{app_status}'", "INFO")
-        
-        # Update UpdatedUsers Dictionary
-        if key in updated_users_dict:
-            updated_users_dict[key]["ACCOUNT_VERIFICATION"] = verification
-            updated_users_dict[key]["DB_APPLICATION_STATUS"] = app_status
-            updated_users_updated_count += 1
-            log_and_print(f"Updated Users: Updated status for {key}", "INFO")
-
-
-    # 4. Save Target Files (Including the updated Source Dictionary)
-    
-    # Save Source Dictionary (usersdictionary.json)
-    if source_updated_count > 0:
-        try:
-            os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
-            with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
-                json.dump(source_dict, f, indent=4, ensure_ascii=False)
-            log_and_print(f"Saved usersdictionary.json. Updated {source_updated_count} records.", "SUCCESS")
-        except Exception as e:
-            log_and_print(f"FAILED to save usersdictionary.json: {e}", "CRITICAL")
-            
-    # Save Brokers Dictionary
-    try:
-        os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
-        with open(BROKERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
-            json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
-        log_and_print(f"Saved brokersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
-    except Exception as e:
-        log_and_print(f"FAILED to save brokersdictionary.json: {e}", "CRITICAL")
-
-    # Save Updated Users Dictionary
-    try:
-        os.makedirs(os.path.dirname(UPDATED_USERS_OUTPUT_FILE_PATH), exist_ok=True)
-        with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
-            json.dump(updated_users_dict, f, indent=4, ensure_ascii=False)
-        log_and_print(f"Saved updatedusersdictionary.json. Updated {updated_users_updated_count} records.", "SUCCESS")
-    except Exception as e:
-        log_and_print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
-    
-    log_and_print("--- Status Sync Complete ---", "TITLE")
+        print(f"Failed to save cleaned file: {e}", "CRITICAL")
 
 def update_table_fromupdatedusers():
+    cleanup_stale_records_in_updatedusers()
     """
-    Reads updatedusersdictionary.json and pushes ALL relevant fields BACK to insiders table.
+    Reads updatedusersdictionary.json and pushes ALL relevant fields BACK to insiders_server table.
     Now 100% reliable key matching + proper escaping + full field sync.
     FIX: Ensures CONTRACT_DAYS_LEFT is updated in its own column and not concatenated to 'loyalties'.
     """
     USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
-    INSIDERS_TABLE = "insiders"
+    insiders_server_TABLE = "insiders_server"
 
     if not os.path.exists(USERS_JSON_PATH):
         log_and_print(f"{USERS_JSON_PATH} not found! Nothing to sync.", "CRITICAL")
@@ -325,7 +174,7 @@ def update_table_fromupdatedusers():
     # Fetch all valid broker + id rows
     query = f"""
         SELECT id, broker, login
-        FROM {INSIDERS_TABLE}
+        FROM {insiders_server_TABLE}
         WHERE broker IS NOT NULL
           AND TRIM(broker) != ''
           AND broker != 'None'
@@ -413,7 +262,7 @@ def update_table_fromupdatedusers():
         if not fields:
             continue
 
-        sql = f"UPDATE {INSIDERS_TABLE} SET " + ", ".join(fields) + f" WHERE id = {db_id}"
+        sql = f"UPDATE {insiders_server_TABLE} SET " + ", ".join(fields) + f" WHERE id = {db_id}"
         res = db.execute_query(sql)
 
         if res.get('status') == 'success':
@@ -426,7 +275,7 @@ def update_table_fromupdatedusers():
     log_and_print("=== Sync Complete ===", "TITLE")
     log_and_print(f"Updated: {updated} | Skipped: {skipped} | Errors: {errors}", "INFO")
 
-def fetch_insiders_rows():
+def fetch_insiders_server_rows():
     """
     Pure DB to JSON export.
     ACCOUNT_VERIFICATION is now treated as persistent/config field.
@@ -434,7 +283,7 @@ def fetch_insiders_rows():
     Only defaults to "waiting" for completely new users (first export).
     Existing values are fully preserved across exports.
     """
-    INSIDERS_TABLE = "insiders"
+    insiders_server_TABLE = "insiders_server"
     
     # These are the ONLY fields that do NOT exist in the database
     CONFIG_ONLY_FIELDS = {
@@ -480,7 +329,7 @@ def fetch_insiders_rows():
                 application_status, broker_balance, profitandloss,
                 broker_balance_history, execution_dates_history, profitandlosshistory,
                 trades, loyalties, contract_days_left
-            FROM {INSIDERS_TABLE}
+            FROM {insiders_server_TABLE}
         """
         result = db.execute_query(query)
         if result.get('status') != 'success' or not result.get('results'):
@@ -488,7 +337,7 @@ def fetch_insiders_rows():
             return
         
         rows = result['results']
-        log_and_print(f"Fetched {len(rows)} rows from {INSIDERS_TABLE}.", "SUCCESS")
+        log_and_print(f"Fetched {len(rows)} rows from {insiders_server_TABLE}.", "SUCCESS")
         
         for row in rows:
             broker_raw = row.get('broker')
@@ -576,150 +425,268 @@ def fetch_insiders_rows():
             log_and_print(f"Skipped {skipped_count} rows (invalid broker).", "INFO")
             
     except Exception as e:
-        log_and_print(f"Critical error in fetch_insiders_rows(): {e}", "ERROR")
+        log_and_print(f"Critical error in fetch_insiders_server_rows(): {e}", "ERROR")
     finally:
         db.shutdown()
         log_and_print("===== Export Complete =====", "TITLE")
 
-def update_application_status():
-    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\usersdictionary.json"
-    INSIDERS_TABLE = "insiders"
+def move_verifiedusers_to_brokersdictionary(): 
 
-    if not os.path.exists(USERS_JSON_PATH):
-        log_and_print(f"{USERS_JSON_PATH} not found! Skipping application status sync.", "WARNING")
-        return
-
-    try:
-        with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
-            users_dict = json.load(f)
-        if not isinstance(users_dict, dict) or not users_dict:
-            log_and_print("usersdictionary.json is empty or invalid.", "ERROR")
-            return
-    except Exception as e:
-        log_and_print(f"Failed to read usersdictionary.json: {e}", "CRITICAL")
-        return
-
-    log_and_print("=== Updating Application Status from usersdictionary.json ===", "TITLE")
-
-    # Build broker + id → db_id map (same logic as original function)
-    query = f"""
-        SELECT id, broker
-        FROM {INSIDERS_TABLE}
-        WHERE broker IS NOT NULL AND TRIM(broker) != '' AND broker != 'None'
-    """
-    result = db.execute_query(query)
-    if result.get('status') != 'success':
-        log_and_print("Failed to fetch broker mapping for application status sync.", "ERROR")
-        return
-
-    broker_to_id = {}
-    for row in result['results']:
-        broker_norm = str(row['broker']).strip().lower().replace(" ", "")
-        key = f"{broker_norm}{row['id']}"
-        broker_to_id[key] = row['id']
-
-    updated = skipped = 0
-
-    for json_key, data in users_dict.items():
-        db_id = broker_to_id.get(json_key.lower())
-
-        if not db_id:
-            log_and_print(f"SKIP (no DB match): {json_key}", "WARNING")
-            skipped += 1
-            continue
-
-        verification = str(data.get("ACCOUNT_VERIFICATION", "")).strip().lower()
-
-        if verification == "verified":
-            new_status = "approved"
-        elif verification == "invalid":
-            new_status = "declined"
-        elif verification == "waiting":
-            new_status = "pending"
-        else:
-            new_status = "pending"  # default/fallback
-
-        sql = f"UPDATE {INSIDERS_TABLE} SET application_status = '{new_status}' WHERE id = {db_id}"
-        res = db.execute_query(sql)
-
-        if res.get('status') == 'success':
-            log_and_print(f"STATUS → {json_key} (ID: {db_id}) | {verification} → {new_status}", "SUCCESS")
-            updated += 1
-        else:
-            log_and_print(f"FAILED → {json_key} (ID: {db_id}): {res.get('message')}", "ERROR")
-
-    log_and_print("=== Application Status Sync Complete ===", "TITLE")
-    log_and_print(f"Updated: {updated} | Skipped: {skipped}", "INFO")
-
-def copy_verified_users_to_brokers_dictionary():
-    """
-    Reads the main user dictionary, filters users where:
-    1. ACCOUNT_VERIFICATION is 'verified'
-    2. LOYALTIES is 'justjoined' OR 'elligible'
-    
-    Copies these records to a NEW, empty brokers dictionary in memory, and then 
-    overwrites the BROKERS_OUTPUT_FILE_PATH completely.
-    """
-    log_and_print("--- Starting Copy Verified Users to Brokers Dictionary (OVERWRITE MODE) ---", "TITLE")
-    
-    # --- 1. Load existing data (Source only) ---
-    users_dictionary = {}
-    brokers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
-    
-    try:
-        # Load the main users dictionary (source)
-        if os.path.exists(OUTPUT_FILE_PATH):
-            with open(OUTPUT_FILE_PATH, 'r') as f:
-                users_dictionary = json.load(f)
-        else:
-            log_and_print("Main users dictionary not found. Nothing to copy.", "WARNING")
-            return
-            
-    except Exception as e:
-        log_and_print(f"ERROR: Failed to load users JSON file: {str(e)}", "ERROR")
-        return
-
-    # --- 2. Filter and copy users into the empty brokers dictionary ---
-    copied_count = 0
-    
-    for key, user_data in users_dictionary.items():
-        account_verified = str(user_data.get("ACCOUNT_VERIFICATION", "")).lower().strip() == "verified"
-        loyalty_status = str(user_data.get("LOYALTIES", "")).lower().strip()
-        loyalty_check = loyalty_status in ("justjoined", "elligible")
+    def validdetails_verified():
+        """
+        Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
+        from usersdictionary.json into both brokersdictionary.json and updatedusersdictionary.json.
         
-        if account_verified and loyalty_check:
-            # 🔔 Action: Copy user data to the brokers dictionary
-            brokers_dictionary[key] = user_data.copy()
-            copied_count += 1
-            log_and_print(f"Copying user {key} (Loyalty: {loyalty_status}) to brokers dictionary.", "INFO")
+        The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
+        the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
+        - 'invalid' -> 'declined'
+        - 'verified' -> 'approved'
+        - 'waiting' -> 'pending'
+        
+        This function ONLY updates the status fields, preserving all other data in the target files.
+        """
+        UPDATED_USERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
+        log_and_print("--- Starting Status Sync: usersdictionary → brokers & updatedusers ---", "TITLE")
+
+        # 1. Load Source Dictionary (usersdictionary.json)
+        if not os.path.exists(OUTPUT_FILE_PATH):
+            log_and_print(f"Source file not found: {OUTPUT_FILE_PATH}. Cannot sync.", "CRITICAL")
+            return
+        try:
+            with open(OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                source_dict = json.load(f)
+        except Exception as e:
+            log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
+            return
+
+        # 2. Load Target Dictionaries (brokersdictionary.json & updatedusersdictionary.json)
+        
+        # Load Brokers Dictionary
+        brokers_dict = {}
+        if os.path.exists(BROKERS_OUTPUT_FILE_PATH):
+            try:
+                with open(BROKERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                    brokers_dict = json.load(f)
+            except Exception as e:
+                log_and_print(f"Brokers dictionary corrupted, starting fresh in memory: {e}", "WARNING")
+                brokers_dict = {}
+
+        # Load Updated Users Dictionary
+        updated_users_dict = {}
+        if os.path.exists(UPDATED_USERS_OUTPUT_FILE_PATH):
+            try:
+                with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                    updated_users_dict = json.load(f)
+            except Exception as e:
+                log_and_print(f"Updated Users dictionary corrupted, starting fresh in memory: {e}", "WARNING")
+                updated_users_dict = {}
+
+        # 3. Synchronize Fields
+        brokers_updated_count = 0
+        updated_users_updated_count = 0
+        source_updated_count = 0 # Counter for usersdictionary updates
+        
+        for key, data in source_dict.items():
+            # Get ACCOUNT_VERIFICATION status from the source
+            verification = str(data.get("ACCOUNT_VERIFICATION", "waiting")).strip().lower()
+
+            # Determine the derived DB_APPLICATION_STATUS
+            if verification == "invalid":
+                app_status = "declined"
+            elif verification == "verified":
+                app_status = "approved"
+            elif verification == "waiting":
+                app_status = "pending"
+            else:
+                app_status = "pending"
+
+            # **NEW LOGIC: Update Source Dictionary (usersdictionary.json) in memory**
+            current_app_status = str(data.get("DB_APPLICATION_STATUS")).strip().lower()
+            if current_app_status != app_status:
+                source_dict[key]["DB_APPLICATION_STATUS"] = app_status
+                source_updated_count += 1
+                log_and_print(f"Source: Updated DB_APPLICATION_STATUS for {key} to '{app_status}'", "INFO")
+
+
+            # Update Brokers Dictionary
+            if key in brokers_dict:
+                brokers_dict[key]["ACCOUNT_VERIFICATION"] = verification
+                brokers_dict[key]["DB_APPLICATION_STATUS"] = app_status
+                brokers_updated_count += 1
+                log_and_print(f"Brokers: Updated status for {key} to Verification='{verification}', Status='{app_status}'", "INFO")
             
-    # --- 3. Write output file (Completely overwrites the file with only the new data) ---
-    
-    if copied_count > 0 or os.path.exists(BROKERS_OUTPUT_FILE_PATH):
+            # Update UpdatedUsers Dictionary
+            if key in updated_users_dict:
+                updated_users_dict[key]["ACCOUNT_VERIFICATION"] = verification
+                updated_users_dict[key]["DB_APPLICATION_STATUS"] = app_status
+                updated_users_updated_count += 1
+                log_and_print(f"Updated Users: Updated status for {key}", "INFO")
+
+
+        # 4. Save Target Files (Including the updated Source Dictionary)
+        
+        # Save Source Dictionary (usersdictionary.json)
+        if source_updated_count > 0:
+            try:
+                os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
+                with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+                    json.dump(source_dict, f, indent=4, ensure_ascii=False)
+                log_and_print(f"Saved usersdictionary.json. Updated {source_updated_count} records.", "SUCCESS")
+            except Exception as e:
+                log_and_print(f"FAILED to save usersdictionary.json: {e}", "CRITICAL")
+                
+        # Save Brokers Dictionary
         try:
             os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
-            with open(BROKERS_OUTPUT_FILE_PATH, 'w') as f:
-                json.dump(brokers_dictionary, f, indent=4) 
-            log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(brokers_dictionary)}.", "SUCCESS")
-        except IOError as file_error:
-            log_and_print(f"ERROR: Failed to write brokers JSON file: {file_error}", "ERROR")
-    else:
-        log_and_print("No qualified users found to copy. Brokers JSON file remains unchanged.", "INFO")
+            with open(BROKERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
+            log_and_print(f"Saved brokersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
+        except Exception as e:
+            log_and_print(f"FAILED to save brokersdictionary.json: {e}", "CRITICAL")
 
-    log_and_print("--- Finished Copy Verified Users to Brokers Dictionary ---", "TITLE")
+        # Save Updated Users Dictionary
+        try:
+            os.makedirs(os.path.dirname(UPDATED_USERS_OUTPUT_FILE_PATH), exist_ok=True)
+            with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(updated_users_dict, f, indent=4, ensure_ascii=False)
+            log_and_print(f"Saved updatedusersdictionary.json. Updated {updated_users_updated_count} records.", "SUCCESS")
+        except Exception as e:
+            log_and_print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
+        
+        log_and_print("--- Status Sync Complete ---", "TITLE")
 
+    def copy_verified_users_to_brokers_dictionary():
+        """
+        Reads the main user dictionary, filters users where:
+        1. ACCOUNT_VERIFICATION is 'verified'
+        2. LOYALTIES is 'justjoined' OR 'elligible'
+        
+        Copies these records to a NEW, empty brokers dictionary in memory, and then 
+        overwrites the BROKERS_OUTPUT_FILE_PATH completely.
+        """
+        log_and_print("--- Starting Copy Verified Users to Brokers Dictionary (OVERWRITE MODE) ---", "TITLE")
+        
+        # --- 1. Load existing data (Source only) ---
+        users_dictionary = {}
+        brokers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
+        
+        try:
+            # Load the main users dictionary (source)
+            if os.path.exists(OUTPUT_FILE_PATH):
+                with open(OUTPUT_FILE_PATH, 'r') as f:
+                    users_dictionary = json.load(f)
+            else:
+                log_and_print("Main users dictionary not found. Nothing to copy.", "WARNING")
+                return
+                
+        except Exception as e:
+            log_and_print(f"ERROR: Failed to load users JSON file: {str(e)}", "ERROR")
+            return
 
+        # --- 2. Filter and copy users into the empty brokers dictionary ---
+        copied_count = 0
+        
+        for key, user_data in users_dictionary.items():
+            account_verified = str(user_data.get("ACCOUNT_VERIFICATION", "")).lower().strip() == "verified"
+            loyalty_status = str(user_data.get("LOYALTIES", "")).lower().strip()
+            loyalty_check = loyalty_status in ("justjoined", "re-enrolled")
+            
+            if account_verified and loyalty_check:
+                # 🔔 Action: Copy user data to the brokers dictionary
+                brokers_dictionary[key] = user_data.copy()
+                copied_count += 1
+                log_and_print(f"Copying user {key} (Loyalty: {loyalty_status}) to brokers dictionary.", "INFO")
+                
+        # --- 3. Write output file (Completely overwrites the file with only the new data) ---
+        
+        if copied_count > 0 or os.path.exists(BROKERS_OUTPUT_FILE_PATH):
+            try:
+                os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
+                with open(BROKERS_OUTPUT_FILE_PATH, 'w') as f:
+                    json.dump(brokers_dictionary, f, indent=4) 
+                log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(brokers_dictionary)}.", "SUCCESS")
+            except IOError as file_error:
+                log_and_print(f"ERROR: Failed to write brokers JSON file: {file_error}", "ERROR")
+        else:
+            log_and_print("No qualified users found to copy. Brokers JSON file remains unchanged.", "INFO")
 
-def main():  
-    fetch_insiders_rows() 
+        log_and_print("--- Finished Copy Verified Users to Brokers Dictionary ---", "TITLE")
+
+    def update_application_status_in_database():
+        USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\usersdictionary.json"
+        insiders_server_TABLE = "insiders_server"
+
+        if not os.path.exists(USERS_JSON_PATH):
+            log_and_print(f"{USERS_JSON_PATH} not found! Skipping application status sync.", "WARNING")
+            return
+
+        try:
+            with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
+                users_dict = json.load(f)
+            if not isinstance(users_dict, dict) or not users_dict:
+                log_and_print("usersdictionary.json is empty or invalid.", "ERROR")
+                return
+        except Exception as e:
+            log_and_print(f"Failed to read usersdictionary.json: {e}", "CRITICAL")
+            return
+
+        log_and_print("=== Updating Application Status from usersdictionary.json ===", "TITLE")
+
+        # Build broker + id → db_id map (same logic as original function)
+        query = f"""
+            SELECT id, broker
+            FROM {insiders_server_TABLE}
+            WHERE broker IS NOT NULL AND TRIM(broker) != '' AND broker != 'None'
+        """
+        result = db.execute_query(query)
+        if result.get('status') != 'success':
+            log_and_print("Failed to fetch broker mapping for application status sync.", "ERROR")
+            return
+
+        broker_to_id = {}
+        for row in result['results']:
+            broker_norm = str(row['broker']).strip().lower().replace(" ", "")
+            key = f"{broker_norm}{row['id']}"
+            broker_to_id[key] = row['id']
+
+        updated = skipped = 0
+
+        for json_key, data in users_dict.items():
+            db_id = broker_to_id.get(json_key.lower())
+
+            if not db_id:
+                log_and_print(f"SKIP (no DB match): {json_key}", "WARNING")
+                skipped += 1
+                continue
+
+            verification = str(data.get("ACCOUNT_VERIFICATION", "")).strip().lower()
+
+            if verification == "verified":
+                new_status = "approved"
+            elif verification == "invalid":
+                new_status = "declined"
+            elif verification == "waiting":
+                new_status = "pending"
+            else:
+                new_status = "pending"  # default/fallback
+
+            sql = f"UPDATE {insiders_server_TABLE} SET application_status = '{new_status}' WHERE id = {db_id}"
+            res = db.execute_query(sql)
+
+            if res.get('status') == 'success':
+                log_and_print(f"STATUS → {json_key} (ID: {db_id}) | {verification} → {new_status}", "SUCCESS")
+                updated += 1
+            else:
+                log_and_print(f"FAILED → {json_key} (ID: {db_id}): {res.get('message')}", "ERROR")
+
+        log_and_print("=== Application Status Sync Complete ===", "TITLE")
+        log_and_print(f"Updated: {updated} | Skipped: {skipped}", "INFO")
+
+    validdetails_verified()
     copy_verified_users_to_brokers_dictionary()
-    mt5brokersupdater()
-    recordsfrom_brokersdictionary() 
-    account_verification()
-    update_table_fromupdatedusers()
-    fetch_insiders_rows()
+    update_application_status_in_database()
 
 if __name__ == "__main__":
-    recordsfrom_brokersdictionary()
-    update_table_fromupdatedusers()
-    fetch_insiders_rows()
+    #fetch_insiders_server_rows()
+    #login the users broker and set account verification to 'verified' if valid
+    move_verifiedusers_to_brokersdictionary()

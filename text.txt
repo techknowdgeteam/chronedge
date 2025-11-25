@@ -285,4 +285,28 @@ if __name__ == "__main__":
 
 
 
-    
+
+if  loyalties is justjoined and contractdays left is >5 days then let it be "You  are welcome to our board" then also display the trading is active line and update the contract days left to 30
+
+if loyalties is paymentconfirmed and contractdays left is >5 days let it be "You have maintained your eligibility and then the trading is active line and update the contract days left to 30
+
+if  loyalties is re-enrolled and contractdays left is >5 days then let it be "we go again for better turnup" then also display the trading is active line and update the contract days left to 30
+
+if  loyalties is justjoined or re-enrolled or paymentconfirmed and contractdays left is <=5 days under it if the profit and loss is > 30 let it follow current logic but if its profit and loss is < 30 let it say "your profit is yet to meet the minimum requirement, you can decide to re-enroll or disconnect your account" with a button of re-enroll if clicked let it set the loyalties to re-enrolled
+
+the contract days left must always be > 5days for trading is active confirmation , if not there must be an issue somewhere, but if all is riht then it will be updated to 30
+
+if loyalties is paid let it say awaiting confirmation  as it currently does
+
+
+provide the full script
+ 
+
+
+
+UPDATE insiders_server
+SET profitandloss = 50.00,
+    loyalties = 'justjoined',
+    contract_days_left = 3,
+    broker_balance = 0;
+
