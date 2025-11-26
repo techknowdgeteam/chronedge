@@ -3130,7 +3130,7 @@ def verifying_brokers():
     BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
     USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
     CONTRACT_DURATION_DAYS = 30
-    BALANCE_REQUIRED = 1.0 
+    BALANCE_REQUIRED = 1.0
 
     if not os.path.exists(BROKERS_JSON):
         print(f"CRITICAL: {BROKERS_JSON} not found!", "CRITICAL")
@@ -3177,7 +3177,7 @@ def verifying_brokers():
                 continue
         return None
 
-    # --- PHASE 1: Validate & fix EXECUTION_START_DATE using EXECUTION_DATES_HISTORY ---
+    # --- PHASE 1: Validate & fix EXECUTION_START_DATE + Compute days left + Loyalty logic ---
     for broker_name, cfg in list(brokers_dict.items()):
         loyalty = str(cfg.get("LOYALTIES", "")).strip().lower()
 
@@ -3231,13 +3231,11 @@ def verifying_brokers():
             print(f"**{broker_name}**: EXPIRED (Time) → Will move ({real_days_left} days left)", "WARNING")
             move_list.append(broker_name)
 
-    # --- PHASE 2: Update live data ---
-    brokers_to_remove = []
-    for broker_name, cfg in brokers_dict.items():
-        if broker_name in move_list:
-            continue
+    # --- PHASE 2: Connect to MT5, Update live data (including low-balance ones) ---
+    brokers_to_remove_due_to_balance = []
 
-        print(f"**{broker_name}**: Updating live data...", "INFO")
+    for broker_name, cfg in list(brokers_dict.items()):
+        print(f"**{broker_name}**: Connecting to MT5 for final data update...", "INFO")
 
         terminal_path = cfg.get("TERMINAL_PATH")
         login_id = cfg.get("LOGIN_ID")
@@ -3246,31 +3244,35 @@ def verifying_brokers():
 
         if not all([terminal_path, login_id, password, server]):
             print(f"**{broker_name}**: Missing credentials", "ERROR")
+            if broker_name not in move_list:
+                move_list.append(broker_name)  # Force move if can't connect
             continue
 
         try:
             if not mt5.initialize(path=terminal_path, timeout=30000):
                 print(f"**{broker_name}**: MT5 init failed", "ERROR")
+                if broker_name not in move_list:
+                    move_list.append(broker_name)
                 continue
 
             if not mt5.login(int(login_id), password=password, server=server):
                 print(f"**{broker_name}**: Login failed", "ERROR")
                 mt5.shutdown()
+                if broker_name not in move_list:
+                    move_list.append(broker_name)
                 continue
 
             account_info = mt5.account_info()
             if not account_info:
                 print(f"**{broker_name}**: No account info", "ERROR")
                 mt5.shutdown()
-                continue
-           
-            current_balance = round(account_info.balance, 2)
-            if current_balance < BALANCE_REQUIRED:
-                print(f"**{broker_name}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Moving", "CRITICAL")
-                brokers_to_remove.append(broker_name)
-                mt5.shutdown()
+                if broker_name not in move_list:
+                    move_list.append(broker_name)
                 continue
 
+            current_balance = round(account_info.balance, 2)
+
+            # Always fetch real P&L and trades from start date
             start_dt = parse_start_date(cfg.get("EXECUTION_START_DATE"))
             from_ts = int(start_dt.timestamp()) if start_dt else now_ts
 
@@ -3307,13 +3309,14 @@ def verifying_brokers():
                 f"symbolsthatwon:({', '.join(wins_list) if wins_list else 'None'})"
             )
 
+            # Handle reset if flagged
             if str(cfg.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "")).strip().lower() == "reset":
                 old_balance = cfg.get("BROKER_BALANCE", 0)
                 old_pnl = realized_pnl
 
                 cfg["BROKER_BALANCE_HISTORY"] = f"{cfg.get('BROKER_BALANCE_HISTORY', '0.00')},{old_balance}".lstrip(',')
                 cfg["PROFITANDLOSS_HISTORY"] = f"{cfg.get('PROFITANDLOSS_HISTORY', '0.00')},{old_pnl}".lstrip(',')
-                cfg["EXECUTION_DATES_HISTORY"] = f"{cfg.get('EXECUTION_DATES_HISTORY', 'None')}, {cfg.get('EXECUTION_START_DATE', 'Unknown')}".strip()
+                cfg["EXECUTION_DATES_HISTORY"] = f"{cfg.get('EXECUTION_DATES_HISTORY', 'None')},{cfg.get('EXECUTION_START_DATE', 'Unknown')}".strip()
 
                 cfg["EXECUTION_START_DATE"] = now_str
                 cfg["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = "none"
@@ -3322,42 +3325,57 @@ def verifying_brokers():
                 trades_summary = "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)"
                 print(f"**{broker_name}**: FULL RESET → New cycle started", "SUCCESS")
 
+            # Always update with real data (even if balance is low)
             cfg["BROKER_BALANCE"] = current_balance
             cfg["PROFITANDLOSS"] = realized_pnl
             cfg["TRADES"] = trades_summary
 
-            print(f"**{broker_name}**: Updated → Bal: {current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
+            print(f"**{broker_name}**: Final → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
+
+            # Only now decide: move due to low balance?
+            if current_balance < BALANCE_REQUIRED:
+                print(f"**{broker_name}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Will move (accurate data saved)", "CRITICAL")
+                brokers_to_remove_due_to_balance.append(broker_name)
 
             mt5.shutdown()
             updated_any = True
+
         except NameError:
             print(f"**{broker_name}**: MT5 not imported!", "ERROR")
+            if broker_name not in move_list:
+                move_list.append(broker_name)
+            continue
+        except Exception as e:
+            print(f"**{broker_name}**: Unexpected error during MT5 ops: {e}", "ERROR")
+            mt5.shutdown()
             continue
 
-    move_list.extend(brokers_to_remove)
+    # Combine all move reasons
+    move_list.extend(brokers_to_remove_due_to_balance)
 
-    # --- PHASE 3: MOVE BROKERS (append to users_dict) ---
+    # --- PHASE 3: MOVE BROKERS (with accurate final balance & P&L) ---
     moved_count = 0
     for broker_name in move_list:
         if broker_name not in brokers_dict:
             continue
         broker_data = brokers_dict.pop(broker_name)
+
+        # Clean sensitive fields
         for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
             broker_data.pop(field, None)
-        
-        reason = "Balance too low" if broker_name in brokers_to_remove else "Contract Expired (Time)"
+
+        reason = "Balance too low" if broker_name in brokers_to_remove_due_to_balance else "Contract Expired (Time)"
         broker_data["MOVED_REASON"] = reason
         broker_data["MOVED_TIMESTAMP"] = now_str
 
-        users_dict[broker_name] = broker_data  # This merges/adds/updates
-        print(f"**{broker_name}**: MOVED → {reason}", "SUCCESS")
+        users_dict[broker_name] = broker_data
+        print(f"**{broker_name}**: MOVED → {reason} | Final Bal: ${broker_data.get('BROKER_BALANCE', 0):.2f}", "SUCCESS")
         moved_count += 1
         updated_any = True
 
-    # --- FINAL SAVE: Always save updatedusersdictionary.json ---
-    # Even if nothing moved → save current state of ALL brokers (active + expired)
+    # --- FINAL SAVE ---
     try:
-        # Merge current active brokers into users_dict if no moves happened
+        # If no moves, still snapshot active brokers
         if moved_count == 0:
             print("No brokers moved this run → Saving full current snapshot to updatedusersdictionary.json", "INFO")
             for name, data in brokers_dict.items():
@@ -3365,23 +3383,23 @@ def verifying_brokers():
                 for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
                     clean_data.pop(field, None)
                 clean_data["LAST_SEEN_ACTIVE"] = now_str
-                users_dict[name] = clean_data  # Update or add
+                users_dict[name] = clean_data
 
-        # Save active brokers (only active remain)
+        # Save active brokers only
         with open(BROKERS_JSON, "w", encoding="utf-8") as f:
             json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
             f.write("\n")
         print("brokersdictionary.json → Saved (active only)", "SUCCESS")
 
-        # Save cumulative users dict (never overwrites history)
+        # Save full history + moved
         with open(USERS_JSON, "w", encoding="utf-8") as f:
             json.dump(users_dict, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print(f"updatedusersdictionary.json → {'Appended moved + ' if moved_count else ''}FULL SNAPSHOT SAVED ({len(users_dict)} total records)", "SUCCESS")
+        print(f"updatedusersdictionary.json → {'Moved & ' if moved_count else ''}Snapshot saved ({len(users_dict)} records)", "SUCCESS")
 
     except Exception as e:
         print(f"CRITICAL: Failed to save files: {e}", "CRITICAL")
-
+        
 def updating_database_record():
     try:
         timeorders.current_time()
