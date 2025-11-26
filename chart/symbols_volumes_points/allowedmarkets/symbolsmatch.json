@@ -1,0 +1,2848 @@
+{
+    "main_symbols": [
+        {
+            "symbol": "AAL",
+            "deriv": ["AAL"],
+            "bybit": ["AALG"],
+            "exness": []
+        },
+        {
+            "symbol": "AGG.US",
+            "deriv": ["AGG.US"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "APTUSD",
+            "deriv": ["APTUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AUDNZD",
+            "deriv": ["AUDNZD"],
+            "bybit": ["AUDNZD+"],
+            "exness": ["AUDNZDm"]
+        },
+        {
+            "symbol": "AVAUSD",
+            "deriv": ["AVAUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "BAC",
+            "deriv": ["BAC"],
+            "bybit": ["BAC"],
+            "exness": ["BACm"]
+        },
+        {
+            "symbol": "BAY",
+            "deriv": ["BAY"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "COMUSD",
+            "deriv": ["COMUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DBK",
+            "deriv": ["DBK"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DOTUSD",
+            "deriv": ["DOTUSD"],
+            "bybit": [],
+            "exness": ["DOTUSDm"]
+        },
+        {
+            "symbol": "DSHUSD",
+            "deriv": ["DSHUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "EEM.US",
+            "deriv": ["EEM.US"],
+            "bybit": ["EEM.US"],
+            "exness": []
+        },
+        {
+            "symbol": "ETCUSD",
+            "deriv": ["ETCUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "FETUSD",
+            "deriv": ["FETUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "FILUSD",
+            "deriv": ["FILUSD"],
+            "bybit": [],
+            "exness": ["FILUSDm"]
+        },
+        {
+            "symbol": "IMXUSD",
+            "deriv": ["IMXUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "NEOUSD",
+            "deriv": ["NEOUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "NERUSD",
+            "deriv": ["NERUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Netherlands 25",
+            "deriv": ["Netherlands 25"],
+            "bybit": ["NETH25"],
+            "exness": []
+        },
+        {
+            "symbol": "SANUSD",
+            "deriv": ["SANUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "TONUSD",
+            "deriv": ["TONUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "TRUUSD",
+            "deriv": ["TRUUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "UNIUSD",
+            "deriv": ["UNIUSD"],
+            "bybit": [],
+            "exness": ["UNIUSDm"]
+        },
+        {
+            "symbol": "USOIL",
+            "deriv": ["US Oil"],
+            "bybit": ["USOUSD"],
+            "exness": ["USOILm"]
+        },
+        {
+            "symbol": "Volatility 150 (1s) Index",
+            "deriv": ["Volatility 150 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 250 (1s) Index",
+            "deriv": ["Volatility 250 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "XMRUSD",
+            "deriv": ["XMRUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "ZECUSD",
+            "deriv": ["ZECUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "ADAUSD",
+            "deriv": ["ADAUSD"],
+            "bybit": [],
+            "exness": ["ADAUSDm"]
+        },
+        {
+            "symbol": "AIG",
+            "deriv": ["AIG"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AIR",
+            "deriv": ["AIR"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AIRF",
+            "deriv": ["AIRF"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "APEUSD",
+            "deriv": ["APEUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AMZN",
+            "deriv": ["AMZN"],
+            "bybit": ["AMAZON"],
+            "exness": ["AMZNm"]
+        },
+        {
+            "symbol": "ARKK.US",
+            "deriv": ["ARKK.US"],
+            "bybit": ["ARKK.US"],
+            "exness": []
+        },
+        {
+            "symbol": "AUD basket",
+            "deriv": ["AUD Basket"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AUDCAD",
+            "deriv": ["AUDCAD"],
+            "bybit": ["AUDCAD+"],
+            "exness": ["AUDCADm"]
+        },
+        {
+            "symbol": "AUDCHF",
+            "deriv": ["AUDCHF"],
+            "bybit": ["AUDCHF+"],
+            "exness": ["AUDCHFm"]
+        },
+        {
+            "symbol": "AUDJPY",
+            "deriv": ["AUDJPY"],
+            "bybit": ["AUDJPY+"],
+            "exness": ["AUDJPYm"]
+        },
+        {
+            "symbol": "AUDUSD",
+            "deriv": ["AUDUSD"],
+            "bybit": ["AUDUSD","AUDUSD+"],
+            "exness": ["AUDUSDm"]
+        },
+        {
+            "symbol": "Australia 200",
+            "deriv": ["Australia 200"],
+            "bybit": ["SPI200"],
+            "exness": ["AUS200m"]
+        },
+        {
+            "symbol": "BATUSD",
+            "deriv": ["BATUSD"],
+            "bybit": [],
+            "exness": ["BATUSDm"]
+        },
+        {
+            "symbol": "BIIB",
+            "deriv": ["BIIB"],
+            "bybit": [],
+            "exness": ["BIIBm"]
+        },
+        {
+            "symbol": "BMW",
+            "deriv": ["BMW"],
+            "bybit": [],
+            "exness": ["BMYm"]
+        },
+        {
+            "symbol": "BNBUSD",
+            "deriv": ["BNBUSD"],
+            "bybit": [],
+            "exness": ["BNBUSDm"]
+        },
+        {
+            "symbol": "C",
+            "deriv": ["C"],
+            "bybit": ["CITI"],
+            "exness": ["Cm"]
+        },
+        {
+            "symbol": "CADCHF",
+            "deriv": ["CADCHF"],
+            "bybit": ["CADCHF+"],
+            "exness": ["CADCHFm"]
+        },
+        {
+            "symbol": "CADJPY",
+            "deriv": ["CADJPY"],
+            "bybit": ["CADJPY+"],
+            "exness": ["CADJPYm"]
+        },
+        {
+            "symbol": "CHFJPY",
+            "deriv": ["CHFJPY"],
+            "bybit": ["CHFJPY+"],
+            "exness": ["CHFJPYm"]
+        },
+        {
+            "symbol": "CHINA H SHARES",
+            "deriv": ["China H Shares"],
+            "bybit": ["CHINAH"],
+            "exness": []
+        },
+        {
+            "symbol": "CONG",
+            "deriv": ["CONG"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "CSCO",
+            "deriv": ["CSCO"],
+            "bybit": ["CISCO"],
+            "exness": ["CSCOm"]
+        },
+        {
+            "symbol": "DAL",
+            "deriv": ["DAL"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DEX 1500 DOWN INDEX",
+            "deriv": ["DEX 1500 DOWN Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DIS",
+            "deriv": ["DIS"],
+            "bybit": ["DISNEY"],
+            "exness": []
+        },
+        {
+            "symbol": "EBAY",
+            "deriv": ["EBAY"],
+            "bybit": [],
+            "exness": ["EBAYm"]
+        },
+        {
+            "symbol": "ERX.US",
+            "deriv": ["ERX.US"],
+            "bybit": ["ERX.US"],
+            "exness": []
+        },
+        {
+            "symbol": "EURBASKET",
+            "deriv": ["EUR Basket"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "EURAUD",
+            "deriv": ["EURAUD"],
+            "bybit": ["EURAUD+"],
+            "exness": ["EURAUDm"]
+        },
+        {
+            "symbol": "EURCAD",
+            "deriv": ["EURCAD"],
+            "bybit": ["EURCAD+"],
+            "exness": ["EURCADm"]
+        },
+        {
+            "symbol": "EURCHF",
+            "deriv": ["EURCHF"],
+            "bybit": ["EURCHF+"],
+            "exness": ["EURCHFm"]
+        },
+        {
+            "symbol": "EURGBP",
+            "deriv": ["EURGBP"],
+            "bybit": ["EURGBP+"],
+            "exness": ["EURGBPm"]
+        },
+        {
+            "symbol": "EURJPY",
+            "deriv": ["EURJPY"],
+            "bybit": ["EURJPY+"],
+            "exness": ["EURJPYm"]
+        },
+        {
+            "symbol": "EURNZD",
+            "deriv": ["EURNZD"],
+            "bybit": ["EURNZD+"],
+            "exness": ["EURNZDm"]
+        },
+        {
+            "symbol": "EUROPE 50",
+            "deriv": ["Europe 50"],
+            "bybit": ["EU50"],
+            "exness": ["STOXX50m"]
+        },
+        {
+            "symbol": "EURUSD",
+            "deriv": ["EURUSD"],
+            "bybit": ["EURUSD","EURUSD+"],
+            "exness": ["EURUSDm"]
+        },
+        {
+            "symbol": "FOX",
+            "deriv": ["FOX"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "GBPCAD",
+            "deriv": ["GBPCAD"],
+            "bybit": ["GBPCAD+"],
+            "exness": ["GBPCADm"]
+        },
+        {
+            "symbol": "GBPCHF",
+            "deriv": ["GBPCHF"],
+            "bybit": ["GBPCHF+"],
+            "exness": ["GBPCHFm"]
+        },
+        {
+            "symbol": "GBPJPY",
+            "deriv": ["GBPJPY"],
+            "bybit": ["GBPJPY+"],
+            "exness": ["GBPJPYm"]
+        },
+        {
+            "symbol": "GBPNZD",
+            "deriv": ["GBPNZD"],
+            "bybit": ["GBPNZD+"],
+            "exness": ["GBPNZDm"]
+        },
+        {
+            "symbol": "GBPUSD",
+            "deriv": ["GBPUSD"],
+            "bybit": ["GBPUSD","GBPUSD+"],
+            "exness": ["GBPUSDm"]
+        },
+        {
+            "symbol": "IOTUSD",
+            "deriv": ["IOTUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "LTCUSD",
+            "deriv": ["LTCUSD"],
+            "bybit": [],
+            "exness": ["LTCUSDm"]
+        },
+        {
+            "symbol": "MLNUSD",
+            "deriv": ["MLNUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "NZDCAD",
+            "deriv": ["NZDCAD"],
+            "bybit": ["NZDCAD+"],
+            "exness": ["NZDCADm"]
+        },
+        {
+            "symbol": "NZDJPY",
+            "deriv": ["NZDJPY"],
+            "bybit": ["NZDJPY+"],
+            "exness": ["NZDJPYm"]
+        },
+        {
+            "symbol": "NZDUSD",
+            "deriv": ["NZDUSD"],
+            "bybit": ["NZDUSD","NZDUSD+"],
+            "exness": ["NZDUSDm"]
+        },
+        {
+            "symbol": "SOLUSD",
+            "deriv": ["SOLUSD"],
+            "bybit": [],
+            "exness": ["SOLUSDm"]
+        },
+        {
+            "symbol": "US MID CAP 400",
+            "deriv": ["US Mid Cap 400"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "US SMALL CAP 2000",
+            "deriv": ["US Small Cap 2000"],
+            "bybit": ["US2000"],
+            "exness": []
+        },
+        {
+            "symbol": "US SP 500",
+            "deriv": ["US SP 500"],
+            "bybit": ["SP500"],
+            "exness": ["US500m","US500_x100m"]
+        },
+        {
+            "symbol": "USD Basket",
+            "deriv": ["USD Basket"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "USDCAD",
+            "deriv": ["USDCAD"],
+            "bybit": ["USDCAD","USDCAD+"],
+            "exness": ["USDCADm"]
+        },
+        {
+            "symbol": "USDCHF",
+            "deriv": ["USDCHF"],
+            "bybit": ["USDCHF","USDCHF+"],
+            "exness": ["USDCHFm"]
+        },
+        {
+            "symbol": "USDJPY",
+            "deriv": ["USDJPY"],
+            "bybit": ["USDJPY","USDJPY+"],
+            "exness": ["USDJPYm"]
+        },
+        {
+            "symbol": "Volatility 75 (1s) Index",
+            "deriv": ["Volatility 75 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 75 Index",
+            "deriv": ["Volatility 75 Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "XTZUSD",
+            "deriv": ["XTZUSD"],
+            "bybit": [],
+            "exness": ["XTZUSDm"]
+        },
+        {
+            "symbol": "ABNB",
+            "deriv": ["ABNB"],
+            "bybit": ["ABNB"],
+            "exness": []
+        },
+        {
+            "symbol": "ADS",
+            "deriv": ["ADS"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "AMD",
+            "deriv": ["AMD"],
+            "bybit": ["AMAT"],
+            "exness": ["AMDm"]
+        },
+        {
+            "symbol": "ALGUSD",
+            "deriv": ["ALGUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "BA",
+            "deriv": ["BA"],
+            "bybit": ["BOEING"],
+            "exness": []
+        },
+        {
+            "symbol": "BABA",
+            "deriv": ["BABA"],
+            "bybit": ["ALIBABA"],
+            "exness": ["BABAm"]
+        },
+        {
+            "symbol": "DIA.US",
+            "deriv": ["DIA.US"],
+            "bybit": ["DIA.US"],
+            "exness": []
+        },
+        {
+            "symbol": "DRIFT SWITCH INDEX 20",
+            "deriv": ["Drift Switch Index 20"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DRIFT SWITCH INDEX 30",
+            "deriv": ["Drift Switch Index 30"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "ETHUSD",
+            "deriv": ["ETHUSD"],
+            "bybit": [],
+            "exness": ["ETHUSDm"]
+        },
+        {
+            "symbol": "FDX",
+            "deriv": ["FDX"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "FRANCE 40",
+            "deriv": ["France 40"],
+            "bybit": ["FRA40"],
+            "exness": ["FR40m"]
+        },
+        {
+            "symbol": "GBP BASKET",
+            "deriv": ["GBP Basket"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "GBPAUD",
+            "deriv": ["GBPAUD"],
+            "bybit": ["GBPAUD+"],
+            "exness": ["GBPAUDm"]
+        },
+        {
+            "symbol": "GOLD RSI PULLBACK INDEX",
+            "deriv": ["Gold RSI Pullback Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "LNKUSD",
+            "deriv": ["LNKUSD"],
+            "bybit": [],
+            "exness": ["LINKUSDm"]
+        },
+        {
+            "symbol": "TREK DOWN INDEX",
+            "deriv": ["Trek Down Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 100 (1s) Index",
+            "deriv": ["Volatility 100 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 50 Index",
+            "deriv": ["Volatility 50 Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "XRPUSD",
+            "deriv": ["XRPUSD"],
+            "bybit": [],
+            "exness": ["XRPUSDm"]
+        },
+        {
+            "symbol": "AAVUSD",
+            "deriv": ["AAVUSD"],
+            "bybit": [],
+            "exness": ["AAVEUSDm"]
+        },
+        {
+            "symbol": "BCHUSD",
+            "deriv": ["BCHUSD"],
+            "bybit": [],
+            "exness": ["BCHUSDm"]
+        },
+        {
+            "symbol": "BTCUSD",
+            "deriv": ["BTCUSD"],
+            "bybit": [],
+            "exness": ["BTCUSDm"]
+        },
+        {
+            "symbol": "CRM",
+            "deriv": ["CRM"],
+            "bybit": ["CRM"],
+            "exness": []
+        },
+        {
+            "symbol": "DEX 1500 UP INDEX",
+            "deriv": ["DEX 1500 UP Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DEX 600 DOWN INDEX",
+            "deriv": ["DEX 600 DOWN Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DEX 600 UP INDEX",
+            "deriv": ["DEX 600 UP Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "DOGUSD",
+            "deriv": ["DOGUSD"],
+            "bybit": [],
+            "exness": ["DOGEUSDm"]
+        },
+        {
+            "symbol": "DRIFT SWITCH INDEX 10",
+            "deriv": ["Drift Switch Index 10"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "GERMANY 40",
+            "deriv": ["Germany 40"],
+            "bybit": ["GER40"],
+            "exness": ["DE30m"]
+        },
+        {
+            "symbol": "GOLD RSI REBOUND INDEX",
+            "deriv": ["Gold RSI Rebound Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "META",
+            "deriv": ["META"],
+            "bybit": ["META"],
+            "exness": ["METAm"]
+        },
+        {
+            "symbol": "SWISS 20",
+            "deriv": ["Swiss 20"],
+            "bybit": ["SWI20"],
+            "exness": []
+        },
+        {
+            "symbol": "TREK UP INDEX",
+            "deriv": ["Trek Up Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "TSLA",
+            "deriv": ["TSLA"],
+            "bybit": ["TSLA"],
+            "exness": ["TSLAm"]
+        },
+        {
+            "symbol": "US TECH 100",
+            "deriv": ["US Tech 100"],
+            "bybit": ["NAS100"],
+            "exness": ["USTECm","USTEC_x100m"]
+        },
+        {
+            "symbol": "Volatility 10 (1s) Index",
+            "deriv": ["Volatility 10 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 10 Index",
+            "deriv": ["Volatility 10 Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 15 (1s) Index",
+            "deriv": ["Volatility 15 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 25 Index",
+            "deriv": ["Volatility 25 Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Volatility 30 (1s) Index",
+            "deriv": ["Volatility 30 (1s) Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "VolSwitch High Vol Index",
+            "deriv": ["VolSwitch High Vol Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "VolSwitch Low Vol Index",
+            "deriv": ["VolSwitch Low Vol Index"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "Wall Street 30",
+            "deriv": ["Wall Street 30"],
+            "bybit": ["DJ30"],
+            "exness": ["US30m","US30_x10m"]
+        },
+        {
+            "symbol": "XAUUSD",
+            "deriv": ["XAUUSD"],
+            "bybit": ["XAUUSD+"],
+            "exness": ["XAUUSDm"]
+        },
+        {
+            "symbol": "XLMUSD",
+            "deriv": ["XLMUSD"],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "1INCHUSD",
+            "deriv": ["1INCHUSD"],
+            "bybit": [],
+            "exness": ["1INCHUSDm"]
+        },
+        {
+            "symbol": "CAKEUSD",
+            "deriv": ["CAKEUSD"],
+            "bybit": [],
+            "exness": ["CAKEUSDm"]
+        },
+        {
+            "symbol": "COMPUSD",
+            "deriv": ["COMPUSD"],
+            "bybit": [],
+            "exness": ["COMPUSDm"]
+        },
+        {
+            "symbol": "ENJUSD",
+            "deriv": ["ENJUSD"],
+            "bybit": [],
+            "exness": ["ENJUSDm"]
+        },
+        {
+            "symbol": "HBARUSD",
+            "deriv": ["HBARUSD"],
+            "bybit": [],
+            "exness": ["HBARUSDm"]
+        },
+        {
+            "symbol": "HTUSD",
+            "deriv": ["HTUSD"],
+            "bybit": [],
+            "exness": ["HTUSDm"]
+        },
+        {
+            "symbol": "IOSTUSD",
+            "deriv": ["IOSTUSD"],
+            "bybit": [],
+            "exness": ["IOSTUSDm"]
+        },
+        {
+            "symbol": "MANAUSD",
+            "deriv": ["MANAUSD"],
+            "bybit": [],
+            "exness": ["MANAUSDm"]
+        },
+        {
+            "symbol": "MATICUSD",
+            "deriv": ["MATICUSD"],
+            "bybit": [],
+            "exness": ["MATICUSDm"]
+        },
+        {
+            "symbol": "SNXUSD",
+            "deriv": ["SNXUSD"],
+            "bybit": [],
+            "exness": ["SNXUSDm"]
+        },
+        {
+            "symbol": "THETAUSD",
+            "deriv": ["THETAUSD"],
+            "bybit": [],
+            "exness": ["THETAUSDm"]
+        },
+        {
+            "symbol": "XAGUSD",
+            "deriv": ["XAGUSD"],
+            "bybit": ["XAGUSD"],
+            "exness": ["XAGUSDm"]
+        },
+        {
+            "symbol": "XALUSD",
+            "deriv": ["XALUSD"],
+            "bybit": [],
+            "exness": ["XALUSDm"]
+        },
+        {
+            "symbol": "XCUUSD",
+            "deriv": ["XCUUSD"],
+            "bybit": ["COPPER-C"],
+            "exness": ["XCUUSDm"]
+        },
+        {
+            "symbol": "XNIUSD",
+            "deriv": ["XNIUSD"],
+            "bybit": [],
+            "exness": ["XNIUSDm"]
+        },
+        {
+            "symbol": "XPBUSD",
+            "deriv": ["XPBUSD"],
+            "bybit": [],
+            "exness": ["XPBUSDm"]
+        },
+        {
+            "symbol": "XZNUSD",
+            "deriv": ["XZNUSD"],
+            "bybit": [],
+            "exness": ["XZNUSDm"]
+        },
+        {
+            "symbol": "ZARJPY",
+            "deriv": ["ZARJPY"],
+            "bybit": [],
+            "exness": ["ZARJPYm"]
+        },
+        {
+            "symbol": "AAPL",
+            "deriv": [],
+            "bybit": ["AAPL"],
+            "exness": ["AAPLm"]
+        },
+        {
+            "symbol": "ABBV",
+            "deriv": [],
+            "bybit": ["ABBVIE"],
+            "exness": ["ABBVm"]
+        },
+        {
+            "symbol": "ABT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ABTm"]
+        },
+        {
+            "symbol": "ADBE",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ADBEm"]
+        },
+        {
+            "symbol": "ADP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ADPm"]
+        },
+        {
+            "symbol": "AMGN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AMGNm"]
+        },
+        {
+            "symbol": "AMT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AMTm"]
+        },
+        {
+            "symbol": "ATVI",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ATVIm"]
+        },
+        {
+            "symbol": "AVGO",
+            "deriv": [],
+            "bybit": ["AVGO"],
+            "exness": ["AVGOm"]
+        },
+        {
+            "symbol": "AXP",
+            "deriv": [],
+            "bybit": ["AXP"],
+            "exness": []
+        },
+        {
+            "symbol": "BAIDU",
+            "deriv": [],
+            "bybit": ["BAIDU"],
+            "exness": ["BIDUm"]
+        },
+        {
+            "symbol": "BILIBILI",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BILIm"]
+        },
+        {
+            "symbol": "BNTX",
+            "deriv": [],
+            "bybit": ["BNTX"],
+            "exness": []
+        },
+        {
+            "symbol": "BUD",
+            "deriv": [],
+            "bybit": ["BUD"],
+            "exness": []
+        },
+        {
+            "symbol": "CAT",
+            "deriv": [],
+            "bybit": ["CAT"],
+            "exness": []
+        },
+        {
+            "symbol": "CHTR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHTRm"]
+        },
+        {
+            "symbol": "CMCSA",
+            "deriv": [],
+            "bybit": ["CMCSA"],
+            "exness": ["CMCSAm"]
+        },
+        {
+            "symbol": "CME",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CMEm"]
+        },
+        {
+            "symbol": "COIN",
+            "deriv": [],
+            "bybit": ["COIN"],
+            "exness": []
+        },
+        {
+            "symbol": "COST",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["COSTm"]
+        },
+        {
+            "symbol": "CSX",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CSXm"]
+        },
+        {
+            "symbol": "CVS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CVSm"]
+        },
+        {
+            "symbol": "CVX",
+            "deriv": [],
+            "bybit": ["CVX"],
+            "exness": []
+        },
+        {
+            "symbol": "EA",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["EAm"]
+        },
+        {
+            "symbol": "EQIX",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["EQIXm"]
+        },
+        {
+            "symbol": "EXXON",
+            "deriv": [],
+            "bybit": ["EXXON"],
+            "exness": ["XOMm"]
+        },
+        {
+            "symbol": "F",
+            "deriv": [],
+            "bybit": ["F"],
+            "exness": ["Fm"]
+        },
+        {
+            "symbol": "FB",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["FBm"]
+        },
+        {
+            "symbol": "GILD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GILDm"]
+        },
+        {
+            "symbol": "GOOGL",
+            "deriv": [],
+            "bybit": ["GOOG"],
+            "exness": ["GOOGLm"]
+        },
+        {
+            "symbol": "GS",
+            "deriv": [],
+            "bybit": ["GS"],
+            "exness": []
+        },
+        {
+            "symbol": "HD",
+            "deriv": [],
+            "bybit": ["HD"],
+            "exness": ["HDm"]
+        },
+        {
+            "symbol": "HON",
+            "deriv": [],
+            "bybit": ["HON"],
+            "exness": []
+        },
+        {
+            "symbol": "HOOD",
+            "deriv": [],
+            "bybit": ["HOOD"],
+            "exness": []
+        },
+        {
+            "symbol": "HSBC",
+            "deriv": [],
+            "bybit": ["HSBCn"],
+            "exness": []
+        },
+        {
+            "symbol": "IBM",
+            "deriv": [],
+            "bybit": ["IBM"],
+            "exness": ["IBMm"]
+        },
+        {
+            "symbol": "INTC",
+            "deriv": [],
+            "bybit": ["INTEL"],
+            "exness": ["INTCm"]
+        },
+        {
+            "symbol": "INTU",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["INTUm"]
+        },
+        {
+            "symbol": "ISRG",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ISRGm"]
+        },
+        {
+            "symbol": "JD",
+            "deriv": [],
+            "bybit": ["JD"],
+            "exness": ["JDm"]
+        },
+        {
+            "symbol": "JNJ",
+            "deriv": [],
+            "bybit": ["JNJ"],
+            "exness": ["JNJm"]
+        },
+        {
+            "symbol": "JPM",
+            "deriv": [],
+            "bybit": ["JPM"],
+            "exness": ["JPMm"]
+        },
+        {
+            "symbol": "KO",
+            "deriv": [],
+            "bybit": ["KO"],
+            "exness": ["KOm"]
+        },
+        {
+            "symbol": "LI",
+            "deriv": [],
+            "bybit": ["LI"],
+            "exness": ["LIm"]
+        },
+        {
+            "symbol": "LIN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["LINm"]
+        },
+        {
+            "symbol": "LLY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["LLYm"]
+        },
+        {
+            "symbol": "LMT",
+            "deriv": [],
+            "bybit": ["LMT"],
+            "exness": ["LMTm"]
+        },
+        {
+            "symbol": "LULU",
+            "deriv": [],
+            "bybit": ["LULU"],
+            "exness": []
+        },
+        {
+            "symbol": "MA",
+            "deriv": [],
+            "bybit": ["MA"],
+            "exness": ["MAm"]
+        },
+        {
+            "symbol": "MCD",
+            "deriv": [],
+            "bybit": ["MCD"],
+            "exness": ["MCDm"]
+        },
+        {
+            "symbol": "MDLZ",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MDLZm"]
+        },
+        {
+            "symbol": "MMM",
+            "deriv": [],
+            "bybit": ["MMM"],
+            "exness": ["MMMm"]
+        },
+        {
+            "symbol": "MO",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MOm"]
+        },
+        {
+            "symbol": "MRK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MRKm"]
+        },
+        {
+            "symbol": "MS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MSm"]
+        },
+        {
+            "symbol": "MSFT",
+            "deriv": [],
+            "bybit": ["MSFT"],
+            "exness": ["MSFTm"]
+        },
+        {
+            "symbol": "NFLX",
+            "deriv": [],
+            "bybit": ["NFLX"],
+            "exness": ["NFLXm"]
+        },
+        {
+            "symbol": "NIO",
+            "deriv": [],
+            "bybit": ["NIO"],
+            "exness": ["NIOm"]
+        },
+        {
+            "symbol": "NKE",
+            "deriv": [],
+            "bybit": ["NKE"],
+            "exness": ["NKEm"]
+        },
+        {
+            "symbol": "NTES",
+            "deriv": [],
+            "bybit": ["NTES"],
+            "exness": ["NTESm"]
+        },
+        {
+            "symbol": "NVDA",
+            "deriv": [],
+            "bybit": ["NVIDIA"],
+            "exness": ["NVDAm"]
+        },
+        {
+            "symbol": "NVS",
+            "deriv": [],
+            "bybit": ["NVS"],
+            "exness": []
+        },
+        {
+            "symbol": "ORCL",
+            "deriv": [],
+            "bybit": ["ORCL"],
+            "exness": ["ORCLm"]
+        },
+        {
+            "symbol": "PEP",
+            "deriv": [],
+            "bybit": ["PEP"],
+            "exness": ["PEPm"]
+        },
+        {
+            "symbol": "PFE",
+            "deriv": [],
+            "bybit": ["PFIZER"],
+            "exness": ["PFEm"]
+        },
+        {
+            "symbol": "PG",
+            "deriv": [],
+            "bybit": ["PG"],
+            "exness": ["PGm"]
+        },
+        {
+            "symbol": "PM",
+            "deriv": [],
+            "bybit": ["PM"],
+            "exness": ["PMm"]
+        },
+        {
+            "symbol": "PYPL",
+            "deriv": [],
+            "bybit": ["PYPL"],
+            "exness": ["PYPLm"]
+        },
+        {
+            "symbol": "REGN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["REGNm"]
+        },
+        {
+            "symbol": "SBUX",
+            "deriv": [],
+            "bybit": ["SBUX"],
+            "exness": ["SBUXm"]
+        },
+        {
+            "symbol": "SE",
+            "deriv": [],
+            "bybit": ["SE"],
+            "exness": []
+        },
+        {
+            "symbol": "SHOP",
+            "deriv": [],
+            "bybit": ["SHOP"],
+            "exness": []
+        },
+        {
+            "symbol": "SNOW",
+            "deriv": [],
+            "bybit": ["SNOW"],
+            "exness": []
+        },
+        {
+            "symbol": "SPOT",
+            "deriv": [],
+            "bybit": ["SPOT"],
+            "exness": []
+        },
+        {
+            "symbol": "T",
+            "deriv": [],
+            "bybit": ["AT&T"],
+            "exness": []
+        },
+        {
+            "symbol": "TCOM",
+            "deriv": [],
+            "bybit": ["TCOM"],
+            "exness": []
+        },
+        {
+            "symbol": "TM",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["Tm"]
+        },
+        {
+            "symbol": "TMO",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TMOm"]
+        },
+        {
+            "symbol": "TMUS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TMUSm"]
+        },
+        {
+            "symbol": "TOYOTA",
+            "deriv": [],
+            "bybit": ["TOYOTA"],
+            "exness": []
+        },
+        {
+            "symbol": "TRMB",
+            "deriv": [],
+            "bybit": ["TRMB"],
+            "exness": []
+        },
+        {
+            "symbol": "TSM",
+            "deriv": [],
+            "bybit": ["TSM"],
+            "exness": ["TSMm"]
+        },
+        {
+            "symbol": "U",
+            "deriv": [],
+            "bybit": ["U"],
+            "exness": []
+        },
+        {
+            "symbol": "UBER",
+            "deriv": [],
+            "bybit": ["UBER"],
+            "exness": []
+        },
+        {
+            "symbol": "UL",
+            "deriv": [],
+            "bybit": ["UL"],
+            "exness": []
+        },
+        {
+            "symbol": "UNH",
+            "deriv": [],
+            "bybit": ["UNH"],
+            "exness": ["UNHm"]
+        },
+        {
+            "symbol": "UPS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["UPSm"]
+        },
+        {
+            "symbol": "V",
+            "deriv": [],
+            "bybit": ["VISA"],
+            "exness": ["Vm"]
+        },
+        {
+            "symbol": "VRTX",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["VRTXm"]
+        },
+        {
+            "symbol": "VZ",
+            "deriv": [],
+            "bybit": ["VZ"],
+            "exness": ["VZm"]
+        },
+        {
+            "symbol": "WFC",
+            "deriv": [],
+            "bybit": ["WFC"],
+            "exness": ["WFCm"]
+        },
+        {
+            "symbol": "WMT",
+            "deriv": [],
+            "bybit": ["WMT"],
+            "exness": ["WMTm"]
+        },
+        {
+            "symbol": "XPEV",
+            "deriv": [],
+            "bybit": ["XPEV"],
+            "exness": ["XPEVm"]
+        },
+        {
+            "symbol": "ZM",
+            "deriv": [],
+            "bybit": ["ZM"],
+            "exness": []
+        },
+        {
+            "symbol": "AMC",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AMCm"]
+        },
+        {
+            "symbol": "BB",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BBm"]
+        },
+        {
+            "symbol": "BBBY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BBBYm"]
+        },
+        {
+            "symbol": "BEKE",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BEKEm"]
+        },
+        {
+            "symbol": "BRQS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BRQSm"]
+        },
+        {
+            "symbol": "BYND",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BYNDm"]
+        },
+        {
+            "symbol": "CAN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CANm"]
+        },
+        {
+            "symbol": "EDU",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["EDUm"]
+        },
+        {
+            "symbol": "FTNT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["FTNTm"]
+        },
+        {
+            "symbol": "FUTU",
+            "deriv": [],
+            "bybit": ["FUTU"],
+            "exness": ["FUTUm"]
+        },
+        {
+            "symbol": "IQ",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["IQm"]
+        },
+        {
+            "symbol": "PDD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["PDDm"]
+        },
+        {
+            "symbol": "RLX",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["RLXm"]
+        },
+        {
+            "symbol": "TAL",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TALm"]
+        },
+        {
+            "symbol": "TIGR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TIGRm"]
+        },
+        {
+            "symbol": "TME",
+            "deriv": [],
+            "bybit": ["TME"],
+            "exness": ["TMEm"]
+        },
+        {
+            "symbol": "VIPS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["VIPSm"]
+        },
+        {
+            "symbol": "YUMC",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["YUMCm"]
+        },
+        {
+            "symbol": "ZTO",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["ZTOm"]
+        },
+        {
+            "symbol": "MBTUSD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MBTUSD","MBTUSDm"]
+        },
+        {
+            "symbol": "HRTBT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["HRTBT"]
+        },
+        {
+            "symbol": "BTCJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCJPYm"]
+        },
+        {
+            "symbol": "BTCKRW",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCKRWm"]
+        },
+        {
+            "symbol": "BTCAUD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCAUDm"]
+        },
+        {
+            "symbol": "BTCCNH",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCCNHm"]
+        },
+        {
+            "symbol": "BTCTHB",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCTHBm"]
+        },
+        {
+            "symbol": "BTCXAG",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCXAGm"]
+        },
+        {
+            "symbol": "BTCXAU",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCXAUm"]
+        },
+        {
+            "symbol": "BTCZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["BTCZARm"]
+        },
+        {
+            "symbol": "XNGUSD",
+            "deriv": [],
+            "bybit": ["NG-C"],
+            "exness": ["XNGUSDm"]
+        },
+        {
+            "symbol": "AUDCZK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDCZKm"]
+        },
+        {
+            "symbol": "AUDDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDDKKm"]
+        },
+        {
+            "symbol": "AUDHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDHUFm"]
+        },
+        {
+            "symbol": "AUDMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDMXNm"]
+        },
+        {
+            "symbol": "AUDNOK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDNOKm"]
+        },
+        {
+            "symbol": "AUDPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDPLNm"]
+        },
+        {
+            "symbol": "AUDSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDSEKm"]
+        },
+        {
+            "symbol": "AUDSGD",
+            "deriv": [],
+            "bybit": ["AUDSGD+"],
+            "exness": ["AUDSGDm"]
+        },
+        {
+            "symbol": "AUDTRY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDTRYm"]
+        },
+        {
+            "symbol": "AUDZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["AUDZARm"]
+        },
+        {
+            "symbol": "CADCZK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CADCZKm"]
+        },
+        {
+            "symbol": "CADMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CADMXNm"]
+        },
+        {
+            "symbol": "CADNOK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CADNOKm"]
+        },
+        {
+            "symbol": "CADPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CADPLNm"]
+        },
+        {
+            "symbol": "CADTRY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CADTRYm"]
+        },
+        {
+            "symbol": "CHFDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFDKKm"]
+        },
+        {
+            "symbol": "CHFHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFHUFm"]
+        },
+        {
+            "symbol": "CHFMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFMXNm"]
+        },
+        {
+            "symbol": "CHFNOK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFNOKm"]
+        },
+        {
+            "symbol": "CHFPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFPLNm"]
+        },
+        {
+            "symbol": "CHFSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFSEKm"]
+        },
+        {
+            "symbol": "CHFSGD",
+            "deriv": [],
+            "bybit": ["CHFSGD+"],
+            "exness": ["CHFSGDm"]
+        },
+        {
+            "symbol": "CHFTRY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFTRYm"]
+        },
+        {
+            "symbol": "CHFZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CHFZARm"]
+        },
+        {
+            "symbol": "CZKPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["CZKPLNm"]
+        },
+        {
+            "symbol": "DKKCZK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKCZKm"]
+        },
+        {
+            "symbol": "DKKHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKHUFm"]
+        },
+        {
+            "symbol": "DKKJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKJPYm"]
+        },
+        {
+            "symbol": "DKKPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKPLNm"]
+        },
+        {
+            "symbol": "DKKSGD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKSGDm"]
+        },
+        {
+            "symbol": "DKKZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DKKZARm"]
+        },
+        {
+            "symbol": "DXY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["DXYm"]
+        },
+        {
+            "symbol": "EURCZK",
+            "deriv": [],
+            "bybit": ["EURCZK+"],
+            "exness": ["EURCZKm"]
+        },
+        {
+            "symbol": "EURDKK",
+            "deriv": [],
+            "bybit": ["EURDKK+"],
+            "exness": ["EURDKKm"]
+        },
+        {
+            "symbol": "EURHUF",
+            "deriv": [],
+            "bybit": ["EURHUF+"],
+            "exness": ["EURHUFm"]
+        },
+        {
+            "symbol": "EURMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["EURMXNm"]
+        },
+        {
+            "symbol": "EURNOK",
+            "deriv": [],
+            "bybit": ["EURNOK+"],
+            "exness": ["EURNOKm"]
+        },
+        {
+            "symbol": "EURPLN",
+            "deriv": [],
+            "bybit": ["EURPLN+"],
+            "exness": ["EURPLNm"]
+        },
+        {
+            "symbol": "EURSEK",
+            "deriv": [],
+            "bybit": ["EURSEK+"],
+            "exness": ["EURSEKm"]
+        },
+        {
+            "symbol": "EURSGD",
+            "deriv": [],
+            "bybit": ["EURSGD+"],
+            "exness": ["EURSGDm"]
+        },
+        {
+            "symbol": "EURTRY",
+            "deriv": [],
+            "bybit": ["EURTRY+"],
+            "exness": ["EURTRYm"]
+        },
+        {
+            "symbol": "EURZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["EURZARm"]
+        },
+        {
+            "symbol": "GBPCZK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPCZKm"]
+        },
+        {
+            "symbol": "GBPDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPDKKm"]
+        },
+        {
+            "symbol": "GBPHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPHUFm"]
+        },
+        {
+            "symbol": "GBPILS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPILSm"]
+        },
+        {
+            "symbol": "GBPMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPMXNm"]
+        },
+        {
+            "symbol": "GBPNOK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPNOKm"]
+        },
+        {
+            "symbol": "GBPPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPPLNm"]
+        },
+        {
+            "symbol": "GBPSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPSEKm"]
+        },
+        {
+            "symbol": "GBPSGD",
+            "deriv": [],
+            "bybit": ["GBPSGD+"],
+            "exness": ["GBPSGDm"]
+        },
+        {
+            "symbol": "GBPTRY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPTRYm"]
+        },
+        {
+            "symbol": "GBPZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["GBPZARm"]
+        },
+        {
+            "symbol": "HKDJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["HKDJPYm"]
+        },
+        {
+            "symbol": "HUFJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["HUFJPYm"]
+        },
+        {
+            "symbol": "MXNJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["MXNJPYm"]
+        },
+        {
+            "symbol": "NOKDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NOKDKKm"]
+        },
+        {
+            "symbol": "NOKJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NOKJPYm"]
+        },
+        {
+            "symbol": "NOKSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NOKSEKm"]
+        },
+        {
+            "symbol": "NZDCZK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDCZKm"]
+        },
+        {
+            "symbol": "NZDDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDDKKm"]
+        },
+        {
+            "symbol": "NZDHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDHUFm"]
+        },
+        {
+            "symbol": "NZDMXN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDMXNm"]
+        },
+        {
+            "symbol": "NZDNOK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDNOKm"]
+        },
+        {
+            "symbol": "NZDPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDPLNm"]
+        },
+        {
+            "symbol": "NZDSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDSEKm"]
+        },
+        {
+            "symbol": "NZDSGD",
+            "deriv": [],
+            "bybit": ["NZDSGD+"],
+            "exness": ["NZDSGDm"]
+        },
+        {
+            "symbol": "NZDTRY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDTRYm"]
+        },
+        {
+            "symbol": "NZDZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["NZDZARm"]
+        },
+        {
+            "symbol": "PLNDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["PLNDKKm"]
+        },
+        {
+            "symbol": "PLNHUF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["PLNHUFm"]
+        },
+        {
+            "symbol": "PLNJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["PLNJPYm"]
+        },
+        {
+            "symbol": "PLNSEK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["PLNSEKm"]
+        },
+        {
+            "symbol": "SEKDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["SEKDKKm"]
+        },
+        {
+            "symbol": "SEKJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["SEKJPYm"]
+        },
+        {
+            "symbol": "SEKPLN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["SEKPLNm"]
+        },
+        {
+            "symbol": "SGDHKD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["SGDHKDm"]
+        },
+        {
+            "symbol": "SGDJPY",
+            "deriv": [],
+            "bybit": ["SGDJPY+"],
+            "exness": ["SGDJPYm"]
+        },
+        {
+            "symbol": "TRYDKK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TRYDKKm"]
+        },
+        {
+            "symbol": "TRYJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TRYJPYm"]
+        },
+        {
+            "symbol": "TRYZAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["TRYZARm"]
+        },
+        {
+            "symbol": "USDCNH",
+            "deriv": [],
+            "bybit": ["USDCNH+"],
+            "exness": ["USDCNHm"]
+        },
+        {
+            "symbol": "USDILS",
+            "deriv": [],
+            "bybit": ["USDILS","USDILS+"],
+            "exness": ["USDILSm"]
+        },
+        {
+            "symbol": "USDMXN",
+            "deriv": [],
+            "bybit": ["USDMXN+"],
+            "exness": ["USDMXNm"]
+        },
+        {
+            "symbol": "USDNOK",
+            "deriv": [],
+            "bybit": ["USDNOK+"],
+            "exness": ["USDNOKm"]
+        },
+        {
+            "symbol": "USDPLN",
+            "deriv": [],
+            "bybit": ["USDPLN+"],
+            "exness": ["USDPLNm"]
+        },
+        {
+            "symbol": "USDSEK",
+            "deriv": [],
+            "bybit": ["USDSEK+"],
+            "exness": ["USDSEKm"]
+        },
+        {
+            "symbol": "USDSGD",
+            "deriv": [],
+            "bybit": ["USDSGD+"],
+            "exness": ["USDSGDm"]
+        },
+        {
+            "symbol": "USDTHB",
+            "deriv": [],
+            "bybit": ["USDTHB+"],
+            "exness": ["USDTHBm"]
+        },
+        {
+            "symbol": "USDTRY",
+            "deriv": [],
+            "bybit": ["USDTRY+"],
+            "exness": ["USDTRYm"]
+        },
+        {
+            "symbol": "USDZAR",
+            "deriv": [],
+            "bybit": ["USDZAR","USDZAR+"],
+            "exness": ["USDZARm"]
+        },
+        {
+            "symbol": "USDBRL",
+            "deriv": [],
+            "bybit": ["USDBRL","USDBRL+"],
+            "exness": ["USDBRLm"]
+        },
+        {
+            "symbol": "USDCZK",
+            "deriv": [],
+            "bybit": ["USDCZK","USDCZK+"],
+            "exness": ["USDCZKm"]
+        },
+        {
+            "symbol": "USDINR",
+            "deriv": [],
+            "bybit": ["USDINR","USDINR+"],
+            "exness": ["USDINRm"]
+        },
+        {
+            "symbol": "USDCLP",
+            "deriv": [],
+            "bybit": ["USDCLP","USDCLP+"],
+            "exness": ["USDCLPm"]
+        },
+        {
+            "symbol": "USDCOP",
+            "deriv": [],
+            "bybit": ["USDCOP","USDCOP+"],
+            "exness": ["USDCOPm"]
+        },
+        {
+            "symbol": "USDIDR",
+            "deriv": [],
+            "bybit": ["USDIDR","USDIDR+"],
+            "exness": ["USDIDRm"]
+        },
+        {
+            "symbol": "USDKRW",
+            "deriv": [],
+            "bybit": ["USDKRW","USDKRW+"],
+            "exness": ["USDKRWm"]
+        },
+        {
+            "symbol": "USDTWD",
+            "deriv": [],
+            "bybit": ["USDTWD","USDTWD+"],
+            "exness": ["USDTWDm"]
+        },
+        {
+            "symbol": "USDHKD",
+            "deriv": [],
+            "bybit": ["USDHKD"],
+            "exness": ["USDHKDm"]
+        },
+        {
+            "symbol": "USTUSD",
+            "deriv": [],
+            "bybit": ["USTUSD"],
+            "exness": []
+        },
+        {
+            "symbol": "XAGAUD",
+            "deriv": [],
+            "bybit": ["XAGAUD"],
+            "exness": ["XAGAUDm"]
+        },
+        {
+            "symbol": "XAGEUR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["XAGEURm"]
+        },
+        {
+            "symbol": "XAGGBP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["XAGGBPm"]
+        },
+        {
+            "symbol": "XAGJPY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["XAGJPYm"]
+        },
+        {
+            "symbol": "XAUAUD",
+            "deriv": [],
+            "bybit": ["XAUAUD+"],
+            "exness": ["XAUAUDm"]
+        },
+        {
+            "symbol": "XAUEUR",
+            "deriv": [],
+            "bybit": ["XAUEUR+"],
+            "exness": ["XAUEURm"]
+        },
+        {
+            "symbol": "XAUGBP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["XAUGBPm"]
+        },
+        {
+            "symbol": "XAUJPY",
+            "deriv": [],
+            "bybit": ["XAUJPY+"],
+            "exness": []
+        },
+        {
+            "symbol": "XPDUSD",
+            "deriv": [],
+            "bybit": ["XPDUSD"],
+            "exness": ["XPDUSDm"]
+        },
+        {
+            "symbol": "XPTUSD",
+            "deriv": [],
+            "bybit": ["XPTUSD"],
+            "exness": ["XPTUSDm"]
+        },
+        {
+            "symbol": "Cocoa",
+            "deriv": [],
+            "bybit": ["Cocoa-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Coffee",
+            "deriv": [],
+            "bybit": ["Coffee-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Cotton",
+            "deriv": [],
+            "bybit": ["Cotton-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Gas",
+            "deriv": [],
+            "bybit": ["GAS-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Gasoil",
+            "deriv": [],
+            "bybit": ["GASOIL-C"],
+            "exness": []
+        },
+        {
+            "symbol": "OJ",
+            "deriv": [],
+            "bybit": ["OJ-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Soybean",
+            "deriv": [],
+            "bybit": ["Soybean-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Sugar",
+            "deriv": [],
+            "bybit": ["Sugar-C"],
+            "exness": []
+        },
+        {
+            "symbol": "Wheat",
+            "deriv": [],
+            "bybit": ["Wheat-C"],
+            "exness": []
+        },
+        {
+            "symbol": "UKOIL",
+            "deriv": [],
+            "bybit": ["UKOUSD"],
+            "exness": ["UKOILm"]
+        },
+        {
+            "symbol": "Hong Kong 50",
+            "deriv": [],
+            "bybit": ["HK50"],
+            "exness": ["HK50m"]
+        },
+        {
+            "symbol": "India 50",
+            "deriv": [],
+            "bybit": ["IND50"],
+            "exness": ["IN50m"]
+        },
+        {
+            "symbol": "Japan 225",
+            "deriv": [],
+            "bybit": ["Nikkei225"],
+            "exness": ["JP225m"]
+        },
+        {
+            "symbol": "UK 100",
+            "deriv": [],
+            "bybit": ["UK100"],
+            "exness": ["UK100m"]
+        },
+        {
+            "symbol": "Brazil Bovespa",
+            "deriv": [],
+            "bybit": ["BVSPX"],
+            "exness": []
+        },
+        {
+            "symbol": "Spain 35",
+            "deriv": [],
+            "bybit": ["ES35"],
+            "exness": []
+        },
+        {
+            "symbol": "South Africa 40",
+            "deriv": [],
+            "bybit": ["SA40"],
+            "exness": []
+        },
+        {
+            "symbol": "Singapore 20",
+            "deriv": [],
+            "bybit": ["SGP20"],
+            "exness": []
+        },
+        {
+            "symbol": "Taiwan Index",
+            "deriv": [],
+            "bybit": ["TWINDEX"],
+            "exness": []
+        },
+        {
+            "symbol": "Hong Kong Tech",
+            "deriv": [],
+            "bybit": ["HKTECH"],
+            "exness": []
+        },
+        {
+            "symbol": "MSTR",
+            "deriv": [],
+            "bybit": ["MSTR"],
+            "exness": []
+        },
+        {
+            "symbol": "CRCL",
+            "deriv": [],
+            "bybit": ["CRCL"],
+            "exness": []
+        },
+        {
+            "symbol": "CLSK",
+            "deriv": [],
+            "bybit": ["CLSK"],
+            "exness": []
+        },
+        {
+            "symbol": "RIOT",
+            "deriv": [],
+            "bybit": ["RIOT"],
+            "exness": []
+        },
+        {
+            "symbol": "MARA",
+            "deriv": [],
+            "bybit": ["MARA"],
+            "exness": []
+        },
+        {
+            "symbol": "HUT",
+            "deriv": [],
+            "bybit": ["HUT"],
+            "exness": []
+        },
+        {
+            "symbol": "BITF",
+            "deriv": [],
+            "bybit": [],
+            "exness": []
+        },
+        {
+            "symbol": "PLTR",
+            "deriv": [],
+            "bybit": ["PLTR"],
+            "exness": []
+        },
+        {
+            "symbol": "SBET",
+            "deriv": [],
+            "bybit": ["SBET"],
+            "exness": []
+        },
+        {
+            "symbol": "BMNR",
+            "deriv": [],
+            "bybit": ["BMNR"],
+            "exness": []
+        },
+        {
+            "symbol": "PSIX",
+            "deriv": [],
+            "bybit": ["PSIX"],
+            "exness": []
+        },
+        {
+            "symbol": "CLS",
+            "deriv": [],
+            "bybit": ["CLS"],
+            "exness": []
+        },
+        {
+            "symbol": "DAVE",
+            "deriv": [],
+            "bybit": ["DAVE"],
+            "exness": []
+        },
+        {
+            "symbol": "STRL",
+            "deriv": [],
+            "bybit": ["STRL"],
+            "exness": []
+        },
+        {
+            "symbol": "CRDO",
+            "deriv": [],
+            "bybit": ["CRDO"],
+            "exness": []
+        },
+        {
+            "symbol": "VRT",
+            "deriv": [],
+            "bybit": ["VRT"],
+            "exness": []
+        },
+        {
+            "symbol": "FIG",
+            "deriv": [],
+            "bybit": ["FIG"],
+            "exness": []
+        },
+        {
+            "symbol": "INSM",
+            "deriv": [],
+            "bybit": ["INSM"],
+            "exness": []
+        },
+        {
+            "symbol": "BLSH",
+            "deriv": [],
+            "bybit": ["BLSH"],
+            "exness": []
+        },
+        {
+            "symbol": "GLXY",
+            "deriv": [],
+            "bybit": ["GLXY"],
+            "exness": []
+        },
+        {
+            "symbol": "USDRUB",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDRUB","USDRUBm"]
+        },
+        {
+            "symbol": "USDAED",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDAED","USDAEDm"]
+        },
+        {
+            "symbol": "USDAMD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDAMD","USDAMDm"]
+        },
+        {
+            "symbol": "USDARS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDARS","USDARSm"]
+        },
+        {
+            "symbol": "USDAZN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDAZN","USDAZNm"]
+        },
+        {
+            "symbol": "USDBDT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDBDT","USDBDTm"]
+        },
+        {
+            "symbol": "USDBGN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDBGN","USDBGNm"]
+        },
+        {
+            "symbol": "USDBHD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDBHD","USDBHDm"]
+        },
+        {
+            "symbol": "USDBND",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDBND","USDBNDm"]
+        },
+        {
+            "symbol": "USDDZD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDDZD","USDDZDm"]
+        },
+        {
+            "symbol": "USDEGP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDEGP","USDEGPm"]
+        },
+        {
+            "symbol": "USDGEL",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDGEL","USDGELm"]
+        },
+        {
+            "symbol": "USDGHS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDGHS","USDGHSm"]
+        },
+        {
+            "symbol": "USDJOD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDJOD","USDJODm"]
+        },
+        {
+            "symbol": "USDKES",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDKES","USDKESm"]
+        },
+        {
+            "symbol": "USDKGS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDKGS","USDKGSm"]
+        },
+        {
+            "symbol": "USDKWD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDKWD","USDKWDm"]
+        },
+        {
+            "symbol": "USDKZT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDKZT","USDKZTm"]
+        },
+        {
+            "symbol": "USDLBP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDLBP","USDLBPm"]
+        },
+        {
+            "symbol": "USDLKR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDLKR","USDLKRm"]
+        },
+        {
+            "symbol": "USDMAD",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDMAD","USDMADm"]
+        },
+        {
+            "symbol": "USDMYR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDMYR","USDMYRm"]
+        },
+        {
+            "symbol": "USDNGN",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDNGN","USDNGNm"]
+        },
+        {
+            "symbol": "USDNPR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDNPR","USDNPRm"]
+        },
+        {
+            "symbol": "USDOMR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDOMR","USDOMRm"]
+        },
+        {
+            "symbol": "USDPHP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDPHP","USDPHPm"]
+        },
+        {
+            "symbol": "USDPKR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDPKR","USDPKRm"]
+        },
+        {
+            "symbol": "USDQAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDQAR","USDQARm"]
+        },
+        {
+            "symbol": "USDRON",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDRON","USDRONm"]
+        },
+        {
+            "symbol": "USDRUR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDRUR","USDRURm"]
+        },
+        {
+            "symbol": "USDSAR",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDSAR","USDSARm"]
+        },
+        {
+            "symbol": "USDSYP",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDSYP","USDSYPm"]
+        },
+        {
+            "symbol": "USDTJS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDTJS","USDTJSm"]
+        },
+        {
+            "symbol": "USDTMT",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDTMT","USDTMTm"]
+        },
+        {
+            "symbol": "USDTND",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDTND","USDTNDm"]
+        },
+        {
+            "symbol": "USDUAH",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDUAH","USDUAHm"]
+        },
+        {
+            "symbol": "USDUGX",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDUGX","USDUGXm"]
+        },
+        {
+            "symbol": "USDUZS",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDUZS","USDUZSm"]
+        },
+        {
+            "symbol": "USDVND",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDVND","USDVNDm"]
+        },
+        {
+            "symbol": "USDVUV",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDVUV","USDVUVm"]
+        },
+        {
+            "symbol": "USDXOF",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDXOF","USDXOFm"]
+        },
+        {
+            "symbol": "USDHRK",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDHRK","USDHRKm"]
+        },
+        {
+            "symbol": "USDHUF",
+            "deriv": [],
+            "bybit": ["USDHUF","USDHUF+"],
+            "exness": ["USDHUF","USDHUFm"]
+        },
+        {
+            "symbol": "USDCNY",
+            "deriv": [],
+            "bybit": [],
+            "exness": ["USDCNY","USDCNYm"]
+        },
+        {
+            "symbol": "AUDCNH",
+            "deriv": [],
+            "bybit": ["AUDCNH+"],
+            "exness": []
+        },
+        {
+            "symbol": "NZDCHF",
+            "deriv": [],
+            "bybit": ["NZDCHF+"],
+            "exness": ["NZDCHFm"]
+        }
+    ]
+}

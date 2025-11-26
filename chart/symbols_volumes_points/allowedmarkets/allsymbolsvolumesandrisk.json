@@ -1,0 +1,295 @@
+{
+  "riskusd_amount: 0.5": {
+    "stocks": [
+      {"symbol": "AAL", "volume": 1},
+      {"symbol": "BAC", "volume": 1},
+      {"symbol": "BAY", "volume": 1}
+    ],
+    "indices": [],
+    "commodities": [],
+    "synthetics": [
+      {"symbol": "Volatility 150 (1s) Index", "volume": 0.1}
+    ],
+    "crypto": [
+      {"symbol": "APTUSD", "volume": 4},
+      {"symbol": "DOTUSD", "volume": 3},
+      {"symbol": "ETCUSD", "volume": 1},
+      {"symbol": "FILUSD", "volume": 6},
+      {"symbol": "IMXUSD", "volume": 20},
+      {"symbol": "NEOUSD", "volume": 4},
+      {"symbol": "NERUSD", "volume": 5},
+      {"symbol": "TONUSD", "volume": 10},
+      {"symbol": "TRUUSD", "volume": 2},
+      {"symbol": "UNIUSD", "volume": 2},
+      {"symbol": "ZECUSD", "volume": 0.2}
+    ],
+    "forex": [],
+    "equities": [
+      {"symbol": "AALG", "volume": 1},
+      {"symbol": "AALm", "volume": 1}
+    ],
+    "energies": [
+      {"symbol": "USOIL", "volume": 1},{"symbol": "US Oil", "volume": 1}],
+      
+    "etfs": [
+      {"symbol": "AGG.US", "volume": 2}
+    ],
+    "basket_indices": [],
+    "metals": []
+  },
+
+  "riskusd_amount: 1": {
+    "stocks": [],
+    "indices": [
+      {"symbol": "NETH25", "volume": 0.1}
+    ],
+    "commodities": [],
+    "synthetics": [
+      {"symbol": "Volatility 250 (1s) Index", "volume": 0.5}
+    ],
+    "crypto": [
+      {"symbol": "FETUSD", "volume": 50},
+      {"symbol": "SANUSD", "volume": 100},
+      {"symbol": "XMRUSD", "volume": 0.1}
+    ],
+    "forex": [
+      {"symbol": "AUDNZD", "volume": 0.01}
+    ],
+    "equities": [
+      {"symbol": "BAC.", "volume": 1},
+      {"symbol": "BACm", "volume": 1}
+    ],
+    "energies": [
+      
+    ],
+    "etfs": [
+      {"symbol": "EEM.US", "volume": 1}
+    ],
+    "basket_indices": [],
+    "metals": []
+  },
+
+  "riskusd_amount: 2": {
+    "stocks": [],
+    "indices": [],
+    "commodities": [
+      {"symbol": "COMUSD", "volume": 2}
+    ],
+    "synthetics": [],
+    "crypto": [],
+    "forex": [],
+    "equities": [],
+    "energies": [
+      {"symbol": "USOUSD", "volume": 2}
+    ],
+    "etfs": [],
+    "basket_indices": [],
+    "metals": []
+  },
+
+  "riskusd_amount: 3": {
+    "stocks": [],
+    "indices": [],
+    "commodities": [],
+    "synthetics": [],
+    "crypto": [
+      {"symbol": "DSHUSD", "volume": 0.2}],
+    "forex": [],
+    "equities": [],
+    "energies": [],
+    "etfs": [],
+    "basket_indices": [],
+    "metals": []
+  },
+
+  "riskusd_amount: 4": {
+    "stocks": [
+      {"symbol": "AIG", "volume": 2},
+      {"symbol": "AIR", "volume": 1},
+      {"symbol": "AIRF", "volume": 6},
+      {"symbol": "AMAZON", "volume": 1},
+      {"symbol": "BIIB", "volume": 1},
+      {"symbol": "BMW", "volume": 1},
+      {"symbol": "C", "volume": 1},
+      {"symbol": "CISCO", "volume": 1},
+      {"symbol": "CITI", "volume": 1},
+      {"symbol": "CONG", "volume": 1},
+      {"symbol": "DAL", "volume": 1},
+      {"symbol": "DBK", "volume": 6},
+      {"symbol": "DIS", "volume": 1},
+      {"symbol": "DISNEY", "volume": 1},
+      {"symbol": "FOX", "volume": 2},
+      {"symbol": "ZM", "volume": 2}
+    ],
+    "indices": [
+      {"symbol": "AUS200", "volume": 0.1},
+      {"symbol": "CHINA H SHARES", "volume": 0.2},
+      {"symbol": "EU50", "volume": 0.1},
+      {"symbol": "SP500", "volume": 0.1},
+      {"symbol": "SPI200", "volume": 0.1},
+      {"symbol": "US SMALL CAP 2000", "volume": 0.2},
+      {"symbol": "US SP 500", "volume": 0.1}
+    ],
+    "commodities": [],
+    "synthetics": [
+      {"symbol": "DEX 1500 DOWN INDEX", "volume": 0.01},
+      {"symbol": "Volatility 75 (1s) Index", "volume": 0.05},
+      {"symbol": "Volatility 75 Index", "volume": 0.002}
+    ],
+    "crypto": [
+      {"symbol": "ADAUSD", "volume": 100},
+      {"symbol": "BATUSD", "volume": 500},
+      {"symbol": "BNBUSD", "volume": 0.2},
+      {"symbol": "IOTUSD", "volume": 60},
+      {"symbol": "LTCUSD", "volume": 2},
+      {"symbol": "MLNUSD", "volume": 1000},
+      {"symbol": "SOLUSD", "volume": 0.5},
+      {"symbol": "XTZUSD", "volume": 200}
+    ],
+    "forex": [
+      {"symbol": "AUDCAD", "volume": 0.02},
+      {"symbol": "AUDCHF", "volume": 0.02},
+      {"symbol": "AUDJPY", "volume": 0.01},
+      {"symbol": "AUDUSD", "volume": 0.01},
+      {"symbol": "CADCHF", "volume": 0.02},
+      {"symbol": "CADJPY", "volume": 0.02},
+      {"symbol": "CHFJPY", "volume": 0.01},
+      {"symbol": "EURAUD", "volume": 0.01},
+      {"symbol": "EURCAD", "volume": 0.01},
+      {"symbol": "EURCHF", "volume": 0.02},
+      {"symbol": "EURGBP", "volume": 0.01},
+      {"symbol": "EURJPY", "volume": 0.01},
+      {"symbol": "EURNZD", "volume": 0.01},
+      {"symbol": "EURUSD", "volume": 0.01},
+      {"symbol": "GBPCAD", "volume": 0.01},
+      {"symbol": "GBPCHF", "volume": 0.01},
+      {"symbol": "GBPJPY", "volume": 0.01},
+      {"symbol": "GBPNZD", "volume": 0.01},
+      {"symbol": "GBPUSD", "volume": 0.01},
+      {"symbol": "NZDCAD", "volume": 0.01},
+      {"symbol": "NZDJPY", "volume": 0.01},
+      {"symbol": "NZDUSD", "volume": 0.01},
+      {"symbol": "USDCAD", "volume": 0.02},
+      {"symbol": "USDCHF", "volume": 0.01},
+      {"symbol": "USDJPY", "volume": 0.01}
+    ],
+    "equities": [
+      {"symbol": "AMZNm", "volume": 1},
+      {"symbol": "BIIBm", "volume": 1},
+      {"symbol": "BMYm", "volume": 1},
+      {"symbol": "CSCO", "volume": 1},
+      {"symbol": "CSCOm", "volume": 1},
+      {"symbol": "Cm", "volume": 1}
+    ],
+    "energies": [],
+    "etfs": [
+      {"symbol": "ARKK.US", "volume": 1},
+      {"symbol": "ERX.US", "volume": 1},
+      {"symbol": "DIA.US", "volume": 1}
+    ],
+    "basket_indices": [
+      {"symbol": "AUD Basket", "volume": 0.01},
+      {"symbol": "EUR Basket", "volume": 0.01}
+    ],
+    "metals": []
+  },
+
+  "riskusd_amount: 8": {
+    "stocks": [
+      {"symbol": "ALIBABA", "volume": 1},
+      {"symbol": "AMAT", "volume": 1},
+      {"symbol": "AMD", "volume": 1},
+      {"symbol": "BA", "volume": 1},
+      {"symbol": "BABA", "volume": 1},
+      {"symbol": "BOEING", "volume": 1},
+      {"symbol": "FDX", "volume": 1}
+    ],
+    "indices": [
+      {"symbol": "FRA40", "volume": 0.1}
+    ],
+    "commodities": [],
+    "synthetics": [
+      {"symbol": "DRIFT SWITCH INDEX 20", "volume": 0.1},
+      {"symbol": "DRIFT SWITCH INDEX 30", "volume": 0.1},
+      {"symbol": "Volatility 100 (1s) Index", "volume": 0.2},
+      {"symbol": "Volatility 50 Index", "volume": 4}
+    ],
+    "crypto": [
+      {"symbol": "ALGUSD", "volume": 700},
+      {"symbol": "APEUSD", "volume": 220},
+      {"symbol": "ETHUSD", "volume": 0.1},
+      {"symbol": "LNKUSD", "volume": 10},
+      {"symbol": "XRPUSD", "volume": 100}
+    ],
+    "forex": [
+      {"symbol": "GBPAUD", "volume": 0.01}
+    ],
+    "equities": [
+      {"symbol": "ABNBm", "volume": 1},
+      {"symbol": "AMDm", "volume": 1},
+      {"symbol": "BABA.", "volume": 1},
+      {"symbol": "BABAm", "volume": 1},
+      {"symbol": "FDXm", "volume": 1}
+    ],
+    "energies": [],
+    "etfs": [],
+    "basket_indices": [
+      {"symbol": "GBP Basket", "volume": 0.02}
+    ],
+    "metals": []
+  },
+
+  "riskusd_amount: 16": {
+    "stocks": [
+      {"symbol": "CRM", "volume": 1},
+      {"symbol": "META", "volume": 1},
+      {"symbol": "TSLA", "volume": 1}
+    ],
+    "indices": [
+      {"symbol": "DE30", "volume": 0.1},
+      {"symbol": "DJ30", "volume": 0.1},
+      {"symbol": "GER40", "volume": 0.1},
+      {"symbol": "NAS100", "volume": 0.1},
+      {"symbol": "SWI20", "volume": 0.1},
+      {"symbol": "US TECH 100", "volume": 0.1},
+      {"symbol": "Wall Street 30", "volume": 0.1}
+    ],
+    "commodities": [],
+    "synthetics": [
+      {"symbol": "DEX 1500 UP INDEX", "volume": 0.1},
+      {"symbol": "DEX 600 DOWN INDEX", "volume": 0.1},
+      {"symbol": "DEX 600 UP INDEX", "volume": 0.1},
+      {"symbol": "DRIFT SWITCH INDEX 10", "volume": 0.1},
+      {"symbol": "GOLD RSI PULLBACK INDEX", "volume": 0.2},
+      {"symbol": "GOLD RSI REBOUND INDEX", "volume": 0.1},
+      {"symbol": "TREK DOWN INDEX", "volume": 0.2},
+      {"symbol": "TREK UP INDEX", "volume": 0.1},
+      {"symbol": "VolSwitch High Vol Index", "volume": 0.1},
+      {"symbol": "VolSwitch Low Vol Index", "volume": 0.1},
+      {"symbol": "Volatility 10 (1s) Index", "volume": 0.5},
+      {"symbol": "Volatility 10 Index", "volume": 0.5},
+      {"symbol": "Volatility 15 (1s) Index", "volume": 0.2},
+      {"symbol": "Volatility 25 Index", "volume": 0.5},
+      {"symbol": "Volatility 30 (1s) Index", "volume": 0.2}
+    ],
+    "crypto": [
+      {"symbol": "AAVUSD", "volume": 1},
+      {"symbol": "BCHUSD", "volume": 1},
+      {"symbol": "BTCUSD", "volume": 0.01},
+      {"symbol": "DOGUSD", "volume": 1500},
+      {"symbol": "XLMUSD", "volume": 1000}
+    ],
+    "forex": [],
+    "equities": [
+      {"symbol": "CRMm", "volume": 1},
+      {"symbol": "METAm", "volume": 1},
+      {"symbol": "TSLAm", "volume": 1}
+    ],
+    "energies": [],
+    "etfs": [],
+    "basket_indices": [],
+    "metals": [
+      {"symbol": "XAUUSD", "volume": 0.01}
+    ]
+  }
+}

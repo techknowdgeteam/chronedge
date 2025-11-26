@@ -1,0 +1,47 @@
+{
+  "forex": {
+    "limited": true,
+    "allowed": ["USDJPY","USDCAD", "USDCHF","GBPUSD","EURGBP","GBPAUD","AUDNZD","wall street 30","us tech 100","DJ30","US30m","NAS100","USTECm"
+    ]
+  },
+  "synthetics": {
+    "limited": false,
+    "allowed": []
+  },
+  "crypto": {
+    "limited": true,
+    "allowed": ["dshusd","aptusd","comusd"]
+  },
+  "basketindices": {
+    "limited": true,
+    "allowed": ["AUD Basket","GPB Basket","USD Basket","Gold Basket"]
+  },
+  "indices": {
+    "limited": false,
+    "allowed": []
+  },
+  "metals": {
+    "limited": true,
+    "allowed": []
+  },
+  "stocks": {
+    "limited": true,
+    "allowed": []
+  },
+  "etfs": {
+    "limited": false,
+    "allowed": []
+  },
+  "equities": {
+    "limited": false,
+    "allowed": []
+  },
+  "energies": {
+    "limited": false,
+    "allowed": []
+  },
+  "commodities": {
+    "limited": false,
+    "allowed": []
+  }
+}
