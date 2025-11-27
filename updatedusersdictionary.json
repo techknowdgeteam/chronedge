@@ -3,9 +3,9 @@
         "LOGIN_ID": "140357853",
         "PASSWORD": "@Ayomide12#",
         "SERVER": "DerivSVG-Server-03",
-        "EXECUTION_START_DATE": "2025-11-23 17:29:42",
-        "BROKER_BALANCE": 11.43,
-        "PROFITANDLOSS": 0.0,
+        "EXECUTION_START_DATE": "2025-11-26 21:35:41",
+        "BROKER_BALANCE": 9.41,
+        "PROFITANDLOSS": -2.02,
         "ACCOUNT": "real",
         "STRATEGY": "hightolow",
         "SCALE": "consistency",
@@ -17,9 +17,10 @@
         "LOYALTIES": "re-enrolled",
         "PROFITANDLOSS_HISTORY": "0.00,0.00",
         "BROKER_BALANCE_HISTORY": "0.00,11.43",
-        "EXECUTION_DATES_HISTORY": "2025-11-23 17:29:42, 2025-11-23 17:48:01",
-        "CONTRACT_DAYS_LEFT": 28,
-        "TRADES": "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)"
+        "EXECUTION_DATES_HISTORY": "none",
+        "CONTRACT_DAYS_LEFT": 29,
+        "TRADES": "1:Trades, 0:Won, 1:Lost, symbolsthatlost:(US Oil:-2.02), symbolsthatwon:(None)",
+        "LAST_SEEN_ACTIVE": "2025-11-27 13:41:22"
     },
     "deriv3": {
         "LOGIN_ID": "140357859",
@@ -49,8 +50,8 @@
         "PASSWORD": "@Techknowdge12#",
         "SERVER": "Bybit-Live",
         "EXECUTION_START_DATE": "2025-11-24 20:10:48",
-        "BROKER_BALANCE": 2.91,
-        "PROFITANDLOSS": 0.0,
+        "BROKER_BALANCE": 0.0,
+        "PROFITANDLOSS": -3.19,
         "ACCOUNT": "real",
         "STRATEGY": "hightolow",
         "SCALE": "consistency",
@@ -63,8 +64,10 @@
         "PROFITANDLOSS_HISTORY": "None,0.0",
         "BROKER_BALANCE_HISTORY": "None,0.0",
         "EXECUTION_DATES_HISTORY": "None, 2025-11-24 20:10:48",
-        "CONTRACT_DAYS_LEFT": 30,
-        "TRADES": "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)"
+        "CONTRACT_DAYS_LEFT": 29,
+        "TRADES": "1:Trades, 0:Won, 1:Lost, symbolsthatlost:(EURCHF+:-3.19), symbolsthatwon:(None)",
+        "MOVED_REASON": "Balance too low",
+        "MOVED_TIMESTAMP": "2025-11-26 09:06:23"
     },
     "deriv6": {
         "LOGIN_ID": "101347351",

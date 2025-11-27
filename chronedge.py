@@ -2874,6 +2874,196 @@ def placeallorders():
     except Exception as e:
         print(f"Error placing all orders: {e}")
 
+def delete_news_sensitive_orders_during_news():
+    """
+    Deletes all open positions + pending orders on news-sensitive markets:
+    - forex
+    - basket_indices
+    - energies (e.g. US Oil, UK Oil)
+    - metals (XAUUSD, XAGUSD, etc.)
+    from 20 minutes BEFORE until 1 minute AFTER the news time.
+    Fully compatible with MT5 TradeOrder/TradePosition objects.
+    """
+    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\requirements.json"
+    
+    # === NEWS-SENSITIVE CATEGORIES (updated) ===
+    NEWS_SENSITIVE_CATEGORIES = {"forex", "basket_indices", "energies", "metals"}
+
+    WINDOW_BEFORE_MINUTES = 20
+    WINDOW_AFTER_MINUTES  = 1
+
+    lagos_tz = pytz.timezone("Africa/Lagos")
+    now_dt = datetime.now(lagos_tz)
+
+    # === Load and parse news time ===
+    try:
+        with open(REQUIREMENTS_JSON, "r", encoding="utf-8") as f:
+            req = json.load(f)
+        news_raw = req.get("news", "").strip()
+        if not news_raw:
+            log_and_print("No news time set → skip protection", "INFO")
+            return
+    except Exception as e:
+        log_and_print(f"Failed to read requirements.json: {e}", "WARNING")
+        return
+
+    try:
+        news_dt = datetime.strptime(news_raw, "%Y-%m-%d %I:%M %p")
+        news_dt = lagos_tz.localize(news_dt)
+    except ValueError:
+        try:
+            # Fallback format if user uses 24-hour
+            news_dt = datetime.strptime(news_raw, "%Y-%m-%d %H:%M")
+            news_dt = lagos_tz.localize(news_dt)
+        except:
+            log_and_print(f"Invalid news format '{news_raw}' → use 'YYYY-MM-DD h:mm AM/PM' or 'YYYY-MM-DD HH:MM'", "ERROR")
+            return
+
+    time_to_news = (news_dt - now_dt).total_seconds()
+    time_since_news = (now_dt - news_dt).total_seconds()
+
+    if time_to_news > (WINDOW_BEFORE_MINUTES * 60):
+        log_and_print(f"Too early → {time_to_news/60:.1f} min to news", "INFO")
+        return
+    if time_since_news > (WINDOW_AFTER_MINUTES * 60):
+        log_and_print(f"News passed → protection off", "INFO")
+        return
+
+    log_and_print(f"NEWS PROTECTION ACTIVE | News: {news_raw} | "
+                  f"Delta: {'-' if time_to_news < 0 else ''}{abs(time_to_news)/60:.1f} min", "CRITICAL")
+
+    # === Load symbol → category mapping ===
+    allsymbols_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
+    symbol_to_category = {}
+
+    if os.path.exists(allsymbols_path):
+        try:
+            with open(allsymbols_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            for risk_key, markets in data.items():
+                if not isinstance(markets, dict):
+                    continue
+                for category, items in markets.items():
+                    if not isinstance(items, list):
+                        continue
+                    for item in items:
+                        symbol = item.get("symbol") or item.get("Symbol")
+                        if symbol:
+                            symbol_to_category[symbol.strip()] = category.lower()
+        except Exception as e:
+            log_and_print(f"Failed to load symbol categories: {e}", "ERROR")
+    else:
+        log_and_print(f"Symbol mapping file not found: {allsymbols_path}", "ERROR")
+
+    # Add common Deriv-specific symbol aliases (very important!)
+    extra_mappings = {
+        "US Oil": "energies",
+        "UK Oil": "energies",
+        "Oil/USD": "energies",
+        "XAUUSD": "metals",
+        "XAGUSD": "metals",
+        "Gold": "metals",
+        "Silver": "metals",
+    }
+    symbol_to_category.update(extra_mappings)
+
+    total_deleted = 0
+
+    for broker_name, cfg in brokersdictionary.items():
+        log_and_print(f"Connecting to {broker_name.upper()} for news protection...", "INFO")
+
+        if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
+                              password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
+            log_and_print(f"{broker_name}: init failed", "ERROR")
+            continue
+        if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
+            log_and_print(f"{broker_name}: login failed", "ERROR")
+            mt5.shutdown()
+            continue
+
+        positions = mt5.positions_get() or []
+        pending = mt5.orders_get() or []
+
+        # Log positions
+        if positions:
+            log_and_print(f"{broker_name} — OPEN POSITIONS:", "INFO")
+            for p in positions:
+                cat = symbol_to_category.get(p.symbol, "unknown")
+                sensitive = "NEWS-SENSITIVE" if cat in NEWS_SENSITIVE_CATEGORIES else "safe"
+                log_and_print(f"  → {p.symbol} | Vol:{p.volume:.2f} | {'BUY' if p.type==0 else 'SELL'} | "
+                              f"Entry:{p.price_open:.5f} | Ticket:{p.ticket} | Cat:{cat} [{sensitive}]", "INFO")
+
+        # Log pending orders
+        if pending:
+            log_and_print(f"{broker_name} — PENDING ORDERS:", "INFO")
+            order_types = ["BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP","BUY_STOP_LIMIT","SELL_STOP_LIMIT"]
+            for o in pending:
+                if o.type > 5: continue
+                cat = symbol_to_category.get(o.symbol, "unknown")
+                sensitive = "NEWS-SENSITIVE" if cat in NEWS_SENSITIVE_CATEGORIES else "safe"
+                log_and_print(f"  → {o.symbol} | Vol:{o.volume_current:.2f} | {order_types[o.type]} | "
+                              f"Price:{o.price_open:.5f} | Ticket:{o.ticket} | Cat:{cat} [{sensitive}]", "INFO")
+
+        deleted = 0
+
+        # === Close sensitive positions ===
+        for p in positions:
+            cat = symbol_to_category.get(p.symbol, "").lower()
+            if cat not in NEWS_SENSITIVE_CATEGORIES:
+                continue
+
+            tick = mt5.symbol_info_tick(p.symbol)
+            if not tick:
+                log_and_print(f"Cannot get tick for {p.symbol}, skipping close", "WARNING")
+                continue
+
+            close_price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": p.symbol,
+                "volume": p.volume,
+                "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+                "position": p.ticket,
+                "price": close_price,
+                "deviation": 100,
+                "magic": 999999,
+                "comment": "NEWS_PROTECTION_CLOSE",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            result = mt5.order_send(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                log_and_print(f"{broker_name}: CLOSED {p.symbol} ({cat}) - News Protection", "WARNING")
+                deleted += 1
+            else:
+                log_and_print(f"{broker_name}: FAILED to close {p.symbol} | Retcode: {result.retcode if result else 'None'}", "ERROR")
+
+        # === Cancel sensitive pending orders ===
+        for o in pending:
+            if o.type > 5:
+                continue
+            cat = symbol_to_category.get(o.symbol, "").lower()
+            if cat not in NEWS_SENSITIVE_CATEGORIES:
+                continue
+
+            request = {
+                "action": mt5.TRADE_ACTION_REMOVE,
+                "order": o.ticket
+            }
+            result = mt5.order_send(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                log_and_print(f"{broker_name}: CANCELED pending {o.symbol} ({cat}) #{o.ticket}", "WARNING")
+                deleted += 1
+            else:
+                log_and_print(f"{broker_name}: FAILED to cancel order {o.ticket} | Retcode: {result.retcode if result else 'None'}", "ERROR")
+
+        total_deleted += deleted
+        log_and_print(f"{broker_name}: {deleted} sensitive trades removed", "SUCCESS" if deleted > 0 else "INFO")
+        mt5.shutdown()
+
+    log_and_print(f"NEWS PROTECTION COMPLETE → {total_deleted} sensitive trades deleted", "CRITICAL")
+
 def BreakevenRunningPositions():
     r"""
     Staged Breakeven:
@@ -3130,30 +3320,33 @@ def verifying_brokers():
     BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
     USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
     REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\requirements.json"
-    CONTRACT_DURATION_DAYS = 30
 
-    # Load minimum deposit requirement from JSON (MANDATORY - no fallback)
+    # Load requirements
     if not os.path.exists(REQUIREMENTS_JSON):
-        print(f"CRITICAL: {REQUIREMENTS_JSON} not found! Cannot determine minimum deposit.", "CRITICAL")
+        print(f"CRITICAL: {REQUIREMENTS_JSON} not found!", "CRITICAL")
         return
 
     try:
         with open(REQUIREMENTS_JSON, "r", encoding="utf-8") as f:
             req_data = json.load(f)
+        
         BALANCE_REQUIRED = float(req_data.get("minimum_deposit", 0))
-        if BALANCE_REQUIRED <= 0:
-            print(f"CRITICAL: Invalid or zero minimum_deposit in {REQUIREMENTS_JSON}", "CRITICAL")
+        CONTRACT_DURATION_DAYS = int(req_data.get("contract_duration", 30))
+        
+        if BALANCE_REQUIRED <= 0 or CONTRACT_DURATION_DAYS <= 0:
+            print(f"CRITICAL: Invalid values in {REQUIREMENTS_JSON}", "CRITICAL")
             return
-        print(f"Minimum deposit loaded: ${BALANCE_REQUIRED:.2f}", "INFO")
+            
+        print(f"Requirements loaded → Min Deposit: ${BALANCE_REQUIRED:.2f} | Duration: {CONTRACT_DURATION_DAYS} days", "INFO")
     except Exception as e:
-        print(f"CRITICAL: Failed to load/parse {REQUIREMENTS_JSON}: {e}", "CRITICAL")
+        print(f"CRITICAL: Failed to load {REQUIREMENTS_JSON}: {e}", "CRITICAL")
         return
 
     if not os.path.exists(BROKERS_JSON):
         print(f"CRITICAL: {BROKERS_JSON} not found!", "CRITICAL")
         return
 
-    # Load brokers
+    # Load active brokers
     try:
         with open(BROKERS_JSON, "r", encoding="utf-8") as f:
             brokers_dict = json.load(f)
@@ -3161,7 +3354,7 @@ def verifying_brokers():
         print(f"Failed to load brokers JSON: {e}", "CRITICAL")
         return
 
-    # Load existing users dict (expired + historical)
+    # Load historical/expired users
     users_dict = {}
     if os.path.exists(USERS_JSON):
         try:
@@ -3170,89 +3363,74 @@ def verifying_brokers():
                 if isinstance(loaded, dict):
                     users_dict = loaded
         except Exception as e:
-            print(f"Warning: Could not load existing users JSON: {e}. Starting fresh.", "WARNING")
+            print(f"Warning: Could not load users JSON: {e}. Starting fresh.", "WARNING")
 
+    move_list = []  # Brokers to move (expired or low balance)
     updated_any = False
-    move_list = []
     lagos_tz = pytz.timezone("Africa/Lagos")
     now_dt = datetime.now(lagos_tz)
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
     now_ts = int(now_dt.timestamp())
 
-    # Helper: safely parse EXECUTION_START_DATE
     def parse_start_date(date_val):
-        if date_val is None or str(date_val).strip().lower() in ("", "none", "null"):
+        if not date_val or str(date_val).strip().lower() in ("", "none", "null", "unknown"):
             return None
         date_str = str(date_val).strip()
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
             try:
                 dt = datetime.strptime(date_str, fmt)
-                if dt.tzinfo is None:
-                    dt = lagos_tz.localize(dt)
-                return dt
+                return lagos_tz.localize(dt) if dt.tzinfo is None else dt
             except ValueError:
                 continue
         return None
 
-    # --- PHASE 1: Validate & fix EXECUTION_START_DATE + Compute days left + Loyalty logic ---
+    # --- PHASE 1: Check contract time & mark for move if ≤5 days left ---
     for broker_name, cfg in list(brokers_dict.items()):
-        loyalty = str(cfg.get("LOYALTIES", "")).strip().lower()
-
         current_start_str = cfg.get("EXECUTION_START_DATE")
-        history_str = cfg.get("EXECUTION_DATES_HISTORY", "")
-
-        valid_starts = []
-        if history_str:
-            parts = [p.strip() for p in history_str.split(",")]
-            for p in parts:
-                if p and p.lower() not in ("none", "unknown", ""):
-                    dt = parse_start_date(p)
-                    if dt:
-                        valid_starts.append(dt)
-
         current_start_dt = parse_start_date(current_start_str)
 
-        if current_start_dt and valid_starts and current_start_dt not in valid_starts:
-            first_legit = valid_starts[0]
-            new_start_str = first_legit.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"**{broker_name}**: MANUAL START DATE DETECTED → REVERTED to {new_start_str}", "WARNING")
-            cfg["EXECUTION_START_DATE"] = new_start_str
-            current_start_dt = first_legit
-            updated_any = True
-        elif not current_start_dt and valid_starts:
-            first_legit = valid_starts[0]
-            new_start_str = first_legit.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"**{broker_name}**: MISSING START DATE → RESTORED {new_start_str}", "WARNING")
-            cfg["EXECUTION_START_DATE"] = new_start_str
-            current_start_dt = first_legit
-            updated_any = True
+        # Fix missing start date from history
+        history_str = cfg.get("EXECUTION_DATES_HISTORY", "")
+        if not current_start_dt and history_str:
+            parts = [p.strip() for p in history_str.split(",") if p.strip() and p.lower() not in ("none", "unknown")]
+            if parts:
+                restored = parse_start_date(parts[0])
+                if restored:
+                    current_start_dt = restored
+                    cfg["EXECUTION_START_DATE"] = restored.strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"**{broker_name}**: Start date restored from history", "INFO")
+                    updated_any = True
 
+        # Calculate days left with precision
         if current_start_dt is None:
-            real_days_left = CONTRACT_DURATION_DAYS
-            start_dt = now_dt
+            days_left = CONTRACT_DURATION_DAYS
             cfg["EXECUTION_START_DATE"] = now_str
+            current_start_dt = now_dt
+            updated_any = True
         else:
-            real_days_left = max(0, CONTRACT_DURATION_DAYS - (now_dt - current_start_dt).days)
-            start_dt = current_start_dt
+            delta = now_dt - current_start_dt
+            days_passed = delta.days + (delta.seconds / 86400.0)
+            days_left = max(0, CONTRACT_DURATION_DAYS - days_passed)
 
-        cfg["CONTRACT_DAYS_LEFT"] = real_days_left
+        days_left_int = int(days_left)
+        cfg["CONTRACT_DAYS_LEFT"] = days_left_int
         updated_any = True
 
-        if loyalty in ("justjoined", "member") and real_days_left >= 25:
-            print(f"**{broker_name}**: Loyalty '{loyalty}' → 're-enrolled' + AUTO RESET", "INFO")
-            cfg["LOYALTIES"] = "re-enrolled"
-            cfg["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = "reset"
-            updated_any = True
+        # If 5 or fewer days remain → EXPIRE & MOVE
+        if days_left_int <= 5:
+            reason = "Contract Expired (≤5 days left)"
+            print(f"**{broker_name}**: {reason} → {days_left_int} days remaining → Will MOVE", "WARNING")
+            move_list.append((broker_name, reason))
 
-        elif loyalty == "re-enrolled" and real_days_left < 5:
-            print(f"**{broker_name}**: EXPIRED (Time) → Will move ({real_days_left} days left)", "WARNING")
-            move_list.append(broker_name)
-
-    # --- PHASE 2: Connect to MT5, Update live data ---
+    # --- PHASE 2: MT5 Live Update (only for brokers NOT being moved yet) ---
     brokers_to_remove_due_to_balance = []
 
     for broker_name, cfg in list(brokers_dict.items()):
-        print(f"**{broker_name}**: Connecting to MT5 for final data update...", "INFO")
+        # Skip if already marked for move due to time
+        if any(broker_name == b[0] for b in move_list):
+            continue
+
+        print(f"**{broker_name}**: Connecting to MT5 for live update...", "INFO")
 
         terminal_path = cfg.get("TERMINAL_PATH")
         login_id = cfg.get("LOGIN_ID")
@@ -3260,39 +3438,34 @@ def verifying_brokers():
         server = cfg.get("SERVER")
 
         if not all([terminal_path, login_id, password, server]):
-            print(f"**{broker_name}**: Missing credentials", "ERROR")
-            if broker_name not in move_list:
-                move_list.append(broker_name)
+            print(f"**{broker_name}**: Missing credentials → Will move", "ERROR")
+            move_list.append((broker_name, "Missing credentials"))
             continue
 
         try:
             if not mt5.initialize(path=terminal_path, timeout=30000):
-                print(f"**{broker_name}**: MT5 init failed", "ERROR")
-                if broker_name not in move_list:
-                    move_list.append(broker_name)
+                print(f"**{broker_name}**: MT5 init failed → Will move", "ERROR")
+                move_list.append((broker_name, "MT5 init failed"))
                 continue
 
             if not mt5.login(int(login_id), password=password, server=server):
-                print(f"**{broker_name}**: Login failed", "ERROR")
+                print(f"**{broker_name}**: Login failed → Will move", "ERROR")
                 mt5.shutdown()
-                if broker_name not in move_list:
-                    move_list.append(broker_name)
+                move_list.append((broker_name, "Login failed"))
                 continue
 
             account_info = mt5.account_info()
             if not account_info:
-                print(f"**{broker_name}**: No account info", "ERROR")
+                print(f"**{broker_name}**: No account info → Will move", "ERROR")
                 mt5.shutdown()
-                if broker_name not in move_list:
-                    move_list.append(broker_name)
+                move_list.append((broker_name, "No account info"))
                 continue
 
             current_balance = round(account_info.balance, 2)
-
-            # Always fetch real P&L and trades from start date
             start_dt = parse_start_date(cfg.get("EXECUTION_START_DATE"))
             from_ts = int(start_dt.timestamp()) if start_dt else now_ts
 
+            # Fetch realized P&L since start date
             deals = mt5.history_deals_get(from_ts, now_ts + 120)
             realized_pnl = 0.0
             total_trades = won_trades = lost_trades = 0
@@ -3326,61 +3499,44 @@ def verifying_brokers():
                 f"symbolsthatwon:({', '.join(wins_list) if wins_list else 'None'})"
             )
 
-            # Handle reset if flagged
-            if str(cfg.get("RESET_EXECUTION_DATE_AND_BROKER_BALANCE", "")).strip().lower() == "reset":
-                old_balance = cfg.get("BROKER_BALANCE", 0)
-                old_pnl = realized_pnl
-
-                cfg["BROKER_BALANCE_HISTORY"] = f"{cfg.get('BROKER_BALANCE_HISTORY', '0.00')},{old_balance}".lstrip(',')
-                cfg["PROFITANDLOSS_HISTORY"] = f"{cfg.get('PROFITANDLOSS_HISTORY', '0.00')},{old_pnl}".lstrip(',')
-                cfg["EXECUTION_DATES_HISTORY"] = f"{cfg.get('EXECUTION_DATES_HISTORY', 'None')},{cfg.get('EXECUTION_START_DATE', 'Unknown')}".strip()
-
-                cfg["EXECUTION_START_DATE"] = now_str
-                cfg["RESET_EXECUTION_DATE_AND_BROKER_BALANCE"] = "none"
-                cfg["CONTRACT_DAYS_LEFT"] = CONTRACT_DURATION_DAYS
-                realized_pnl = 0.0
-                trades_summary = "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)"
-                print(f"**{broker_name}**: FULL RESET → New cycle started", "SUCCESS")
-
-            # ALWAYS UPDATE live data
+            # Update live stats
             cfg["BROKER_BALANCE"] = current_balance
             cfg["PROFITANDLOSS"] = realized_pnl
             cfg["TRADES"] = trades_summary
 
-            print(f"**{broker_name}**: Final → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
+            print(f"**{broker_name}**: Live → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
 
-            # Check balance against dynamically loaded requirement
+            # Check minimum balance
             if current_balance < BALANCE_REQUIRED:
-                print(f"**{broker_name}**: Balance ${current_balance:.2f} < REQUIRED ${BALANCE_REQUIRED:.2f} → Will move", "CRITICAL")
+                print(f"**{broker_name}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Will move", "CRITICAL")
                 brokers_to_remove_due_to_balance.append(broker_name)
 
             mt5.shutdown()
             updated_any = True
 
-        except NameError:
-            print(f"**{broker_name}**: MT5 not imported!", "ERROR")
-            if broker_name not in move_list:
-                move_list.append(broker_name)
-            continue
         except Exception as e:
-            print(f"**{broker_name}**: Unexpected error during MT5 ops: {e}", "ERROR")
-            mt5.shutdown()
+            print(f"**{broker_name}**: MT5 error: {e} → Will move", "ERROR")
+            move_list.append((broker_name, "MT5 error"))
+            if 'mt5' in locals():
+                mt5.shutdown()
             continue
 
-    # Combine all move reasons
-    move_list.extend(brokers_to_remove_due_to_balance)
+    # Add low-balance brokers to move list
+    for b in brokers_to_remove_due_to_balance:
+        if not any(b == x[0] for x in move_list):
+            move_list.append((b, "Balance too low"))
 
-    # --- PHASE 3: MOVE BROKERS ---
+    # --- PHASE 3: MOVE all flagged brokers ---
     moved_count = 0
-    for broker_name in move_list:
+    for broker_name, reason in move_list:
         if broker_name not in brokers_dict:
             continue
         broker_data = brokers_dict.pop(broker_name)
 
+        # Clean sensitive data
         for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
             broker_data.pop(field, None)
 
-        reason = "Balance too low" if broker_name in brokers_to_remove_due_to_balance else "Contract Expired (Time)"
         broker_data["MOVED_REASON"] = reason
         broker_data["MOVED_TIMESTAMP"] = now_str
 
@@ -3389,29 +3545,29 @@ def verifying_brokers():
         moved_count += 1
         updated_any = True
 
-    # --- FINAL SAVE ---
+    # --- SAVE ---
     try:
         if moved_count == 0:
-            print("No brokers moved this run → Saving full current snapshot to updatedusersdictionary.json", "INFO")
+            print("No brokers moved → Saving active snapshot", "INFO")
             for name, data in brokers_dict.items():
-                clean_data = data.copy()
-                for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
-                    clean_data.pop(field, None)
-                clean_data["LAST_SEEN_ACTIVE"] = now_str
-                users_dict[name] = clean_data
+                clean = data.copy()
+                for f in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
+                    clean.pop(f, None)
+                clean["LAST_SEEN_ACTIVE"] = now_str
+                users_dict[name] = clean
 
         with open(BROKERS_JSON, "w", encoding="utf-8") as f:
             json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print("brokersdictionary.json → Saved (active only)", "SUCCESS")
+        print("brokersdictionary.json → Saved (only active)", "SUCCESS")
 
         with open(USERS_JSON, "w", encoding="utf-8") as f:
             json.dump(users_dict, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print(f"updatedusersdictionary.json → {'Moved & ' if moved_count else ''}Snapshot saved ({len(users_dict)} records)", "SUCCESS")
+        print(f"updatedusersdictionary.json → Saved ({len(users_dict)} total records)", "SUCCESS")
 
     except Exception as e:
-        print(f"CRITICAL: Failed to save files: {e}", "CRITICAL")
+        print(f"CRITICAL: Failed to save files: {e}", "CRITICAL")       
         
 def updating_database_record():
     try:
@@ -3424,6 +3580,7 @@ def calc_and_placeorders():
     verifying_brokers()
     updating_database_record()
     calculate_symbols_sl_tp_prices() 
+    delete_news_sensitive_orders_during_news()
     placeallorders()
 
 def clear_chart_folder(base_folder: str):

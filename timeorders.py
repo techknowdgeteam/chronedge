@@ -495,6 +495,7 @@ def current_time():
 def updating_insiderservers():
     """Run the updateorders script for M5 timeframe."""
     try:
+        insiders_server.requirements()
         insiders_server.update_table_fromupdatedusers()
         print("updated table")
     except Exception as e:

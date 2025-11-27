@@ -430,45 +430,66 @@ def fetch_insiders_server_rows():
         db.shutdown()
         log_and_print("===== Export Complete =====", "TITLE")
 
-def minimum_deposit():
+def requirements():
     REQUIREMENTS_FILE = r"C:\xampp\htdocs\chronedge\requirements.json"
     
     try:
-        log_and_print("\n===== Fetching Minimum Deposit =====", "TITLE")
+        log_and_print("\n===== Fetching Requirements, Contract Duration & News =====", "TITLE")
         
-        query = "SELECT minimum_deposit FROM server_account LIMIT 1;"
+        query = """
+            SELECT minimum_deposit, contract_duration, news 
+            FROM server_account 
+            LIMIT 1;
+        """
         result = db.execute_query(query)
         
         if result.get('status') != 'success' or not result.get('results'):
-            log_and_print("No data returned for minimum_deposit.", "WARNING")
+            log_and_print("No data returned for requirements.", "WARNING")
             return
         
         row = result['results'][0]
-        raw_value = row.get('minimum_deposit')
+        raw_deposit = row.get('minimum_deposit')
+        raw_duration = row.get('contract_duration')
+        raw_news = row.get('news')  # This can be NULL or a string/text
         
-        # Convert to float/int, handle NULL/None safely
+        # Handle minimum_deposit
         try:
-            minimum_deposit = float(raw_value) if raw_value is not None else 0.0
+            minimum_deposit = float(raw_deposit) if raw_deposit is not None else 0.0
             minimum_deposit = round(minimum_deposit, 2)
         except (ValueError, TypeError):
-            log_and_print(f"Invalid minimum_deposit value: {raw_value}", "WARNING")
+            log_and_print(f"Invalid minimum_deposit value: {raw_deposit}", "WARNING")
             minimum_deposit = 0.0
+        
+        # Handle contract_duration (can be NULL → treat as None)
+        contract_duration = int(raw_duration) if raw_duration is not None else None
+        
+        # Handle news – ensure it's a string (or empty string if NULL)
+        news = str(raw_news).strip() if raw_news is not None else ""
         
         # Ensure directory exists
         os.makedirs(os.path.dirname(REQUIREMENTS_FILE), exist_ok=True)
         
-        # Write to JSON
-        requirements_data = {"minimum_deposit": minimum_deposit}
-        with open(REQUIREMENTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(requirements_data, f, indent=4)
+        # Prepare data for JSON
+        requirements_data = {
+            "minimum_deposit": minimum_deposit,
+            "contract_duration": contract_duration,
+            "news": news
+        }
         
-        log_and_print(f"Minimum deposit ({minimum_deposit}) saved to {REQUIREMENTS_FILE}", "SUCCESS")
+        # Write to JSON
+        with open(REQUIREMENTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(requirements_data, f, indent=4, ensure_ascii=False)
+        
+        log_and_print(
+            f"Minimum deposit ({minimum_deposit}), contract duration ({contract_duration}), "
+            f"and news updated → saved to {REQUIREMENTS_FILE}", "SUCCESS"
+        )
         
     except Exception as e:
-        log_and_print(f"Error in fetch_and_save_minimum_deposit(): {e}", "ERROR")
+        log_and_print(f"Error in requirements(): {e}", "ERROR")
     finally:
-        log_and_print("===== Minimum Deposit Fetch Complete =====", "TITLE")
-
+        log_and_print("===== Requirements Fetch Complete =====", "TITLE")    
+        
 def move_verifiedusers_to_brokersdictionary(): 
 
     def validdetails_verified():
@@ -728,4 +749,4 @@ def move_verifiedusers_to_brokersdictionary():
 if __name__ == "__main__":
     #fetch_insiders_server_rows()
     #login the users broker and set account verification to 'verified' if valid
-    minimum_deposit()
+    move_verifiedusers_to_brokersdictionary()
