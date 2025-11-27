@@ -3065,12 +3065,7 @@ def delete_news_sensitive_orders_during_news():
     log_and_print(f"NEWS PROTECTION COMPLETE → {total_deleted} sensitive trades deleted", "CRITICAL")
 
 def BreakevenRunningPositions():
-    r"""
-    Staged Breakeven:
-      • Ratio 1 → SL to 0.25 (actual price shown)
-      • Ratio 2 → SL to 0.50 (actual price shown)
-    Clean logs, full precision, MT5-safe.
-    """
+    delete_news_sensitive_orders_during_news()
     BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
     BREAKEVEN_REPORT = "breakeven_report.json"
     ISSUES_FILE = "ordersissues.json"
@@ -3580,8 +3575,8 @@ def calc_and_placeorders():
     verifying_brokers()
     updating_database_record()
     calculate_symbols_sl_tp_prices() 
-    delete_news_sensitive_orders_during_news()
     placeallorders()
+    
 
 def clear_chart_folder(base_folder: str):
     """Delete ONLY symbols that have NO valid OB-none-OI record on 15m-4h."""
