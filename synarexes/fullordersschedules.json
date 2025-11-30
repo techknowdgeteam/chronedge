@@ -1,0 +1,9 @@
+{
+    "last_schedule": null,
+    "next_schedule": {
+        "id": "30_1600",
+        "date": "30/11/2025",
+        "time_12hour": "04:00 PM",
+        "time_24hour": "16:00"
+    }
+}

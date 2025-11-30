@@ -1,0 +1,312 @@
+import connectwithinfinitydb as db
+from datetime import datetime
+from colorama import Fore, Style, init
+
+# Initialize colorama for colored console output
+init()
+
+# --- Utility Functions (Kept as is) ---
+
+# Logging Function
+def log_and_print(message, level="INFO"):
+    """Helper function to print formatted messages with color coding and spacing."""
+    indent = "    "
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    level_colors = {
+        "INFO": Fore.CYAN,
+        "SUCCESS": Fore.GREEN,
+        "ERROR": Fore.RED,
+        "TITLE": Fore.MAGENTA,
+        "WARNING": Fore.YELLOW, # Added WARNING for completeness
+    }
+    color = level_colors.get(level, Fore.WHITE)
+    formatted_message = f"[ {timestamp} ] │ {level:7} │ {indent}{message}"
+    print(f"{color}{formatted_message}{Style.RESET_ALL}")
+
+# --- Original Function Modified to Fetch ALL ROWS from 'insiders' ---
+
+def fetch_insider_rows():
+    """Connects to the database and fetches all rows (data) for the 'insiders' table."""
+    # Configuration Section
+    INSIDERS_TABLE = "insiders"
+    
+    try:
+        print("\n")
+        log_and_print(f"===== Fetching ALL ROWS for Table: {INSIDERS_TABLE} =====", "TITLE")
+        
+        # 1. Define the SQL query to fetch all data
+        # CHANGE: Replaced DESCRIBE with SELECT * to get all rows and columns
+        select_all_query = f"SELECT * FROM {INSIDERS_TABLE}"
+        log_and_print(f"Sending query: {select_all_query}", "INFO")
+        
+        # 2. Execute the query using the existing database connection module
+        result = db.execute_query(select_all_query)
+        
+        print("\n")
+        log_and_print("--- Database Query Results ---", "TITLE")
+
+        # 3. Process and display the results
+        if result['status'] == 'success' and isinstance(result['results'], list):
+            rows = result['results']
+            
+            if rows:
+                log_and_print(f"Successfully fetched {len(rows)} rows from '{INSIDERS_TABLE}':", "SUCCESS")
+                print("---")
+                
+                # Extract and print headers from the first row (assuming uniform structure)
+                headers = list(rows[0].keys())
+                log_and_print(f"Columns: {', '.join(headers)}", "INFO")
+                
+                # Display the first few rows for demonstration (or all rows if the table is small)
+                display_rows = rows[:5] # Displaying up to the first 5 rows
+                
+                log_and_print(f"--- Displaying the first {len(display_rows)} row(s) ---", "INFO")
+                
+                for i, row in enumerate(display_rows, 1):
+                    # Convert the row dictionary to a neat string representation
+                    row_str = ", ".join([f"{k}: {repr(v)}" for k, v in row.items()])
+                    print(f"{Fore.GREEN}Row {i}: {row_str}{Style.RESET_ALL}")
+
+                if len(rows) > 5:
+                    log_and_print(f"... and {len(rows) - 5} more row(s) fetched.", "INFO")
+                
+                print("---")
+                log_and_print("All data fetching and processing complete.", "SUCCESS")
+            else:
+                # The query was successful, but the table is empty
+                log_and_print(f"The query was successful but returned 0 rows for '{INSIDERS_TABLE}'. The table is empty.", "WARNING")
+        
+        else:
+            # Query failed or returned unexpected data format (e.g., connection error)
+            log_and_print("Query failed or returned unexpected data format.", "ERROR")
+            log_and_print(f"Message: {result.get('message', 'No message')}", "ERROR")
+
+    except Exception as e:
+        log_and_print(f"An unexpected error occurred: {str(e)}", "ERROR")
+        
+    finally:
+        log_and_print("--- Cleanup Operations ---", "TITLE")
+        # Ensure the connection is shut down regardless of success/failure
+        db.shutdown()
+        log_and_print("Database connection closed.", "SUCCESS")
+        print("\n")
+        log_and_print("===== Row Fetch Completed =====", "TITLE")
+
+
+
+def fetch_insider_columns():
+    # Configuration Section
+    INSIDERS_TABLE = "insiders"
+    """Connects to the database and fetches all column names for the 'insiders' table."""
+    try:
+        print("\n")
+        log_and_print(f"===== Fetching Columns for Table: {INSIDERS_TABLE} =====", "TITLE")
+        
+        # 1. Define the SQL query to inspect the table structure
+        describe_query = f"DESCRIBE {INSIDERS_TABLE}"
+        log_and_print(f"Sending query: {describe_query}", "INFO")
+        
+        # 2. Execute the query using the existing database connection module
+        result = db.execute_query(describe_query)
+        
+        print("\n")
+        log_and_print("--- Database Query Results ---", "TITLE")
+
+        # 3. Process and display the results
+        if result['status'] == 'success' and isinstance(result['results'], list):
+            columns = [row['Field'] for row in result['results']]
+            
+            if columns:
+                log_and_print(f"Found {len(columns)} columns in '{INSIDERS_TABLE}':", "SUCCESS")
+                print("---")
+                # Format the column list neatly
+                for i, col in enumerate(columns, 1):
+                    print(f"{Fore.GREEN}{i}. {col}{Style.RESET_ALL}")
+                print("---")
+                
+                # Check for the problematic columns from the previous run
+                missing_check = []
+                if 'broker_status' not in columns:
+                    missing_check.append('broker_status')
+                if 'broker_loginstatus' not in columns:
+                    missing_check.append('broker_loginstatus')
+                    
+                if missing_check:
+                    log_and_print(f"Action needed: The original query failed because the following columns are MISSING: {', '.join(missing_check)}", "WARNING")
+                    log_and_print("You must add these columns to the 'insiders' table before running the main script.", "WARNING")
+                else:
+                    log_and_print("The table structure appears correct for the original SELECT query.", "SUCCESS")
+            else:
+                log_and_print(f"The DESCRIBE query was successful but returned no columns for '{INSIDERS_TABLE}'. The table might be empty or non-existent.", "ERROR")
+        
+        else:
+            log_and_print("Query failed or returned unexpected data format.", "ERROR")
+            log_and_print(f"Message: {result.get('message', 'No message')}", "ERROR")
+
+    except Exception as e:
+        log_and_print(f"An unexpected error occurred: {str(e)}", "ERROR")
+        
+    finally:
+        log_and_print("--- Cleanup Operations ---", "TITLE")
+        db.shutdown()
+        log_and_print("Database connection closed.", "SUCCESS")
+        print("\n")
+        log_and_print("===== Column Fetch Completed =====", "TITLE")
+        
+def fetch_insiders_server_columns():
+    # Configuration Section
+    INSIDERS_SERVER_TABLE = "insiders_server"
+    """Connects to the database and fetches all column names for the 'insiders' table."""
+    try:
+        print("\n")
+        log_and_print(f"===== Fetching Columns for Table: {INSIDERS_SERVER_TABLE} =====", "TITLE")
+        
+        # 1. Define the SQL query to inspect the table structure
+        describe_query = f"DESCRIBE {INSIDERS_SERVER_TABLE}"
+        log_and_print(f"Sending query: {describe_query}", "INFO")
+        
+        # 2. Execute the query using the existing database connection module
+        result = db.execute_query(describe_query)
+        
+        print("\n")
+        log_and_print("--- Database Query Results ---", "TITLE")
+
+        # 3. Process and display the results
+        if result['status'] == 'success' and isinstance(result['results'], list):
+            columns = [row['Field'] for row in result['results']]
+            
+            if columns:
+                log_and_print(f"Found {len(columns)} columns in '{INSIDERS_SERVER_TABLE}':", "SUCCESS")
+                print("---")
+                # Format the column list neatly
+                for i, col in enumerate(columns, 1):
+                    print(f"{Fore.GREEN}{i}. {col}{Style.RESET_ALL}")
+                print("---")
+                
+                # Check for the problematic columns from the previous run
+                missing_check = []
+                if 'broker_status' not in columns:
+                    missing_check.append('broker_status')
+                if 'broker_loginstatus' not in columns:
+                    missing_check.append('broker_loginstatus')
+                    
+                if missing_check:
+                    log_and_print(f"Action needed: The original query failed because the following columns are MISSING: {', '.join(missing_check)}", "WARNING")
+                    log_and_print("You must add these columns to the 'insiders' table before running the main script.", "WARNING")
+                else:
+                    log_and_print("The table structure appears correct for the original SELECT query.", "SUCCESS")
+            else:
+                log_and_print(f"The DESCRIBE query was successful but returned no columns for '{INSIDERS_SERVER_TABLE}'. The table might be empty or non-existent.", "ERROR")
+        
+        else:
+            log_and_print("Query failed or returned unexpected data format.", "ERROR")
+            log_and_print(f"Message: {result.get('message', 'No message')}", "ERROR")
+
+    except Exception as e:
+        log_and_print(f"An unexpected error occurred: {str(e)}", "ERROR")
+        
+    finally:
+        log_and_print("--- Cleanup Operations ---", "TITLE")
+        db.shutdown()
+        log_and_print("Database connection closed.", "SUCCESS")
+        print("\n")
+        log_and_print("===== Column Fetch Completed =====", "TITLE")
+
+def fetch_insiders_server_rows():
+    """Connects to the database and fetches all rows (data) for the 'insiders' table."""
+    # Configuration Section
+    INSIDERS_TABLE = "insiders_server"
+    
+    try:
+        print("\n")
+        log_and_print(f"===== Fetching ALL ROWS for Table: {INSIDERS_TABLE} =====", "TITLE")
+        
+        # 1. Define the SQL query to fetch all data
+        # CHANGE: Replaced DESCRIBE with SELECT * to get all rows and columns
+        select_all_query = f"SELECT * FROM {INSIDERS_TABLE}"
+        log_and_print(f"Sending query: {select_all_query}", "INFO")
+        
+        # 2. Execute the query using the existing database connection module
+        result = db.execute_query(select_all_query)
+        
+        print("\n")
+        log_and_print("--- Database Query Results ---", "TITLE")
+
+        # 3. Process and display the results
+        if result['status'] == 'success' and isinstance(result['results'], list):
+            rows = result['results']
+            
+            if rows:
+                log_and_print(f"Successfully fetched {len(rows)} rows from '{INSIDERS_TABLE}':", "SUCCESS")
+                print("---")
+                
+                # Extract and print headers from the first row (assuming uniform structure)
+                headers = list(rows[0].keys())
+                log_and_print(f"Columns: {', '.join(headers)}", "INFO")
+                
+                # Display the first few rows for demonstration (or all rows if the table is small)
+                display_rows = rows[:5] # Displaying up to the first 5 rows
+                
+                log_and_print(f"--- Displaying the first {len(display_rows)} row(s) ---", "INFO")
+                
+                for i, row in enumerate(display_rows, 1):
+                    # Convert the row dictionary to a neat string representation
+                    row_str = ", ".join([f"{k}: {repr(v)}" for k, v in row.items()])
+                    print(f"{Fore.GREEN}Row {i}: {row_str}{Style.RESET_ALL}")
+
+                if len(rows) > 5:
+                    log_and_print(f"... and {len(rows) - 5} more row(s) fetched.", "INFO")
+                
+                print("---")
+                log_and_print("All data fetching and processing complete.", "SUCCESS")
+            else:
+                # The query was successful, but the table is empty
+                log_and_print(f"The query was successful but returned 0 rows for '{INSIDERS_TABLE}'. The table is empty.", "WARNING")
+        
+        else:
+            # Query failed or returned unexpected data format (e.g., connection error)
+            log_and_print("Query failed or returned unexpected data format.", "ERROR")
+            log_and_print(f"Message: {result.get('message', 'No message')}", "ERROR")
+
+    except Exception as e:
+        log_and_print(f"An unexpected error occurred: {str(e)}", "ERROR")
+        
+    finally:
+        log_and_print("--- Cleanup Operations ---", "TITLE")
+        # Ensure the connection is shut down regardless of success/failure
+        db.shutdown()
+        log_and_print("Database connection closed.", "SUCCESS")
+        print("\n")
+        log_and_print("===== Row Fetch Completed =====", "TITLE")
+
+if __name__ == "__main__":
+    fetch_insiders_server_rows()
+    fetch_insider_rows()
+
+
+
+
+if  loyalties is justjoined and contractdays left is >5 days then let it be "You  are welcome to our board" then also display the trading is active line and update the contract days left to 30
+
+if loyalties is paymentconfirmed and contractdays left is >5 days let it be "You have maintained your eligibility and then the trading is active line and update the contract days left to 30
+
+if  loyalties is re-enrolled and contractdays left is >5 days then let it be "we go again for better turnup" then also display the trading is active line and update the contract days left to 30
+
+if  loyalties is justjoined or re-enrolled or paymentconfirmed and contractdays left is <=5 days under it if the profit and loss is > 30 let it follow current logic but if its profit and loss is < 30 let it say "your profit is yet to meet the minimum requirement, you can decide to re-enroll or disconnect your account" with a button of re-enroll if clicked let it set the loyalties to re-enrolled
+
+the contract days left must always be > 5days for trading is active confirmation , if not there must be an issue somewhere, but if all is riht then it will be updated to 30
+
+if loyalties is paid let it say awaiting confirmation  as it currently does
+
+
+provide the full script
+ 
+
+
+
+UPDATE insiders_server
+SET profitandloss = 50.00,
+    loyalties = 'justjoined',
+    contract_days_left = 3,
+    broker_balance = 0;
+
