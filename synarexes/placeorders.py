@@ -6774,11 +6774,11 @@ def collect_all_brokers_limit_orders():
     OUTPUT_PATH = Path(BASE_DIR) / REPORT_NAME
 
     MAX_AGE_SECONDS = 2 * 24 * 60 * 60  # 2 days (for stale pending)
-    MAX_HISTORY_SECONDS = 5 * 60 * 60   # 5 hours (for recent filled/canceled)
+    MAX_HISTORY_SECONDS = 5 * 60 * 60   # 5 hours (for recent filled only)
 
     all_pending_orders = []
     all_open_positions = []
-    all_history_orders = []  # ← NEW
+    all_history_orders = []  # Only filled or closed with P/L
     total_pending = 0
     total_positions = 0
     total_history = 0
@@ -6801,10 +6801,9 @@ def collect_all_brokers_limit_orders():
         return f"{days}d {hours}h" if hours else f"{days}d"
 
     log_and_print(f"\n{'='*100}", "INFO")
-    log_and_print(f"COLLECTING PENDING LIMITS + OPEN POSITIONS + RECENT HISTORY (<5h)", "INFO")
+    log_and_print(f"COLLECTING PENDING LIMITS + OPEN POSITIONS + RECENT FILLED HISTORY (<5h)", "INFO")
     log_and_print(f"{'='*100}", "INFO")
 
-    # Per-broker tracking
     broker_symbol_data = {}
 
     for broker_name, cfg in brokersdictionary.items():
@@ -6815,7 +6814,6 @@ def collect_all_brokers_limit_orders():
 
         log_and_print(f"\n→ Broker: {broker_name.upper()}", "INFO")
 
-        # ---------- MT5 Init ----------
         if not os.path.exists(TERMINAL_PATH):
             log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
             failed_brokers.append(broker_name)
@@ -6843,11 +6841,10 @@ def collect_all_brokers_limit_orders():
         currency = account.currency
         log_and_print(f"Connected: Account {account.login} | Balance: ${balance:.2f} {currency}", "INFO")
 
-        # Initialize broker data
         broker_symbol_data[broker_name] = {}
         current_time = datetime.now(TZ)
 
-        # ---------- 1. PENDING LIMIT ORDERS ----------
+        # ========== 1. PENDING LIMIT ORDERS ==========
         pending_orders_raw = mt5.orders_get() or []
         pending_orders = [
             o for o in pending_orders_raw
@@ -6857,14 +6854,12 @@ def collect_all_brokers_limit_orders():
         pending_count = len(pending_orders)
         total_pending += pending_count
 
-        to_delete = []  # Per-broker stale pending
+        to_delete = []
 
         if pending_count:
             log_and_print(f"Found {pending_count} pending limit order(s).", "INFO")
-
             for order in pending_orders:
                 symbol = order.symbol
-
                 if symbol not in broker_symbol_data[broker_name]:
                     broker_symbol_data[broker_name][symbol] = {
                         "has_open": False,
@@ -6893,12 +6888,10 @@ def collect_all_brokers_limit_orders():
                 if age_seconds > MAX_AGE_SECONDS:
                     to_delete.append((order.ticket, symbol, order_type_str, format_age(age_seconds)))
 
-            if to_delete:
-                log_and_print(f"Found {len(to_delete)} order(s) older than 2 days. Will delete after open position check.", "WARNING")
         else:
             log_and_print("No pending limit orders.", "INFO")
 
-        # ---------- 2. OPEN POSITIONS ----------
+        # ========== 2. OPEN POSITIONS ==========
         positions = mt5.positions_get()
         position_count = len(positions) if positions else 0
         total_positions += position_count
@@ -6942,33 +6935,39 @@ def collect_all_brokers_limit_orders():
         else:
             log_and_print("No open positions.", "INFO")
 
-        # ---------- 3. HISTORY: RECENT FILLED/CANCELED LIMIT ORDERS (<5h) ----------
+        # ========== 3. HISTORY: ONLY FILLED OR CLOSED WITH P/L (<5h) ==========
         from_datetime = datetime.now(TZ) - timedelta(seconds=MAX_HISTORY_SECONDS)
-        to_datetime = datetime.now(TZ)
-
-        # Convert to UTC timestamps
         from_ts = int(from_datetime.timestamp())
-        to_ts = int(to_datetime.timestamp())
+        to_ts = int(datetime.now(TZ).timestamp())
 
-        history = mt5.history_orders_get(from_ts, to_ts) or []
-        recent_limit_history = [
-            h for h in history
-            if h.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
-        ]
+        history_orders = mt5.history_orders_get(from_ts, to_ts) or []
 
-        history_count = len(recent_limit_history)
+        # Filter: only limit orders that were executed (filled or partially filled and closed)
+        relevant_history = []
+        for h in history_orders:
+            if h.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
+                continue
+            # Conditions to include:
+            # 1. Was filled (state filled)
+            # 2. OR volume_current == 0 and has profit (means fully executed or closed)
+            # 3. Exclude pure cancellations (never filled, volume_current > 0, profit = 0)
+            if (h.state == mt5.ORDER_STATE_FILLED or 
+                (h.volume_current == 0 and getattr(h, 'profit', 0) != 0)):
+                relevant_history.append(h)
+
+        history_count = len(relevant_history)
         total_history += history_count
 
         if history_count:
-            log_and_print(f"Found {history_count} recent limit order(s) in history (<5h).", "INFO")
-            for h in recent_limit_history:
+            log_and_print(f"Found {history_count} filled/closed limit order(s) in history (<5h).", "INFO")
+            for h in relevant_history:
                 symbol = h.symbol
                 order_type_str = "BUY LIMIT" if h.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL LIMIT"
-                fill_time = datetime.fromtimestamp(h.time_done, TZ).strftime("%Y-%m-%d %H:%M:%S")
-                age_seconds = (current_time - datetime.fromtimestamp(h.time_done, TZ)).total_seconds()
+                fill_time = datetime.fromtimestamp(h.time_done, TZ).strftime("%Y-%m-%d %H:%M:%S") if h.time_done else None
+                age_seconds = (current_time - datetime.fromtimestamp(h.time_done, TZ)).total_seconds() if h.time_done else 0
                 age_str = format_age(age_seconds)
 
-                status = "FILLED" if h.state == mt5.ORDER_STATE_FILLED else "CANCELED"
+                profit = round(getattr(h, 'profit', 0), 2) if hasattr(h, 'profit') else 0
 
                 entry = {
                     "broker": broker_name,
@@ -6977,32 +6976,29 @@ def collect_all_brokers_limit_orders():
                     "ticket": h.ticket,
                     "symbol": symbol,
                     "type": order_type_str,
-                    "status": status,
-                    "volume": h.volume_current,
+                    "status": "FILLED" if h.state == mt5.ORDER_STATE_FILLED else "CLOSED",
+                    "volume": h.volume_initial,
+                    "filled_volume": h.volume_current if h.volume_current > 0 else h.volume_initial,
                     "entry_price": round(h.price_open, 6),
                     "fill_price": round(h.price_current, 6) if h.price_current != 0 else None,
                     "fill_time": fill_time,
                     "setup_time": datetime.fromtimestamp(h.time_setup, TZ).strftime("%Y-%m-%d %H:%M:%S"),
                     "comment": h.comment.strip() if h.comment else None,
                     "magic": h.magic,
-                    "profit": round(h.profit, 2) if hasattr(h, 'profit') else None,
+                    "profit": profit if profit != 0 else None,
                     "age": age_str
                 }
                 all_history_orders.append(entry)
         else:
-            log_and_print("No recent limit orders in history (<5h).", "INFO")
+            log_and_print("No filled or closed limit orders in history (<5h).", "INFO")
 
         mt5.shutdown()
 
-        # ---------- 4. DELETE STALE PENDING ORDERS (>2 days) ----------
+        # ========== 4. DELETE STALE PENDING ORDERS (>2 days) ==========
         if to_delete:
             log_and_print(f"Attempting to delete {len(to_delete)} stale limit order(s) on {broker_name.upper()}...", "INFO")
-
-            if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
-                log_and_print(f"Re-init failed: {mt5.last_error()}", "ERROR")
-            elif not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
-                log_and_print(f"Re-login failed: {mt5.last_error()}", "ERROR")
-            else:
+            if mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
+                mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER)
                 for ticket, symbol, order_type, age_str in to_delete:
                     sym_data = broker_symbol_data[broker_name].get(symbol, {})
                     if sym_data.get("has_open", False):
@@ -7013,98 +7009,65 @@ def collect_all_brokers_limit_orders():
                     if not current_orders:
                         log_and_print(f"SKIP: Order {ticket} no longer exists", "INFO")
                         side = "BUY" if "BUY" in order_type else "SELL"
-                        if broker_symbol_data[broker_name][symbol]["pending"][side]:
+                        if broker_symbol_data[broker_name].get(symbol, {}).get("pending", {}).get(side):
                             broker_symbol_data[broker_name][symbol]["pending"][side] = None
                         continue
 
                     request = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
                     result = mt5.order_send(request)
-
                     if result.retcode == mt5.TRADE_RETCODE_DONE:
                         log_and_print(f"DELETED: {symbol} [{order_type}] | Ticket: {ticket} | Age: {age_str}", "SUCCESS")
                         deleted_count += 1
                         side = "BUY" if "BUY" in order_type else "SELL"
                         broker_symbol_data[broker_name][symbol]["pending"][side] = None
                     else:
-                        log_and_print(f"FAILED: {symbol} [{order_type}] | Ticket: {ticket} | Error: {result.comment}", "ERROR")
-
+                        log_and_print(f"FAILED: {symbol} [{order_type}] | Ticket: {ticket} | {result.comment}", "ERROR")
                 mt5.shutdown()
 
     # ========== POST-PROCESS: Build final pending list ==========
-    log_and_print(f"\nProcessing age for remaining pending-only symbols...", "INFO")
-
     for broker_name, symbols_data in broker_symbol_data.items():
         for symbol, data in symbols_data.items():
             has_open = data["has_open"]
             pending = data["pending"]
-            buy_data = pending["BUY"]
-            sell_data = pending["SELL"]
+            for side, order in [("BUY", pending["BUY"]), ("SELL", pending["SELL"])]:
+                if not order:
+                    continue
+                base_entry = {
+                    "broker": broker_name,
+                    "account_login": data["account_login"],
+                    "account_currency": data["account_currency"],
+                    "ticket": order["ticket"],
+                    "symbol": symbol,
+                    "type": f"{side} LIMIT",
+                    "status": "PENDING",
+                    "volume": order["volume"],
+                    "entry_price": order["entry_price"],
+                    "sl": order["sl"],
+                    "tp": order["tp"],
+                    "setup_time": order["setup_time"],
+                    "comment": order["comment"],
+                    "magic": order["magic"]
+                }
+                if not has_open:
+                    base_entry["age"] = format_age(order["age_seconds"])
+                all_pending_orders.append(base_entry)
 
-            if not buy_data and not sell_data:
-                continue
-
-            if has_open:
-                for side, order in [("BUY", buy_data), ("SELL", sell_data)]:
-                    if order:
-                        all_pending_orders.append({
-                            "broker": broker_name,
-                            "account_login": data["account_login"],
-                            "account_currency": data["account_currency"],
-                            "ticket": order["ticket"],
-                            "symbol": symbol,
-                            "type": f"{side} LIMIT",
-                            "status": "PENDING",
-                            "volume": order["volume"],
-                            "entry_price": order["entry_price"],
-                            "sl": order["sl"],
-                            "tp": order["tp"],
-                            "setup_time": order["setup_time"],
-                            "comment": order["comment"],
-                            "magic": order["magic"]
-                        })
-            else:
-                for side, order in [("BUY", buy_data), ("SELL", sell_data)]:
-                    if order:
-                        age_str = format_age(order["age_seconds"])
-                        all_pending_orders.append({
-                            "broker": broker_name,
-                            "account_login": data["account_login"],
-                            "account_currency": data["account_currency"],
-                            "ticket": order["ticket"],
-                            "symbol": symbol,
-                            "type": f"{side} LIMIT",
-                            "status": "PENDING",
-                            "volume": order["volume"],
-                            "entry_price": order["entry_price"],
-                            "sl": order["sl"],
-                            "tp": order["tp"],
-                            "setup_time": order["setup_time"],
-                            "comment": order["comment"],
-                            "magic": order["magic"],
-                            "age": age_str
-                        })
-
-    # ========== FINAL SUMMARY ==========
+    # ========== FINAL SUMMARY & SAVE ==========
     log_and_print(f"\n{'='*100}", "SUCCESS")
     log_and_print(f"COLLECTION COMPLETE", "SUCCESS")
     log_and_print(f"Total Brokers: {len(brokersdictionary)} | Failed: {len(failed_brokers)}", "INFO")
     if failed_brokers:
-        log_and_print(f"Failed Brokers: {', '.join(failed_brokers)}", "WARNING")
-    log_and_print(f"Pending Limit Orders (after cleanup): {len(all_pending_orders)}", "INFO")
+        log_and_print(f"Failed: {', '.join(failed_brokers)}", "WARNING")
+    log_and_print(f"Pending Limit Orders: {len(all_pending_orders)}", "INFO")
     log_and_print(f"Open Positions: {total_positions}", "INFO")
-    log_and_print(f"Recent History Orders (<5h): {total_history}", "INFO")
-    log_and_print(f"Stale Orders Deleted (>2 days): {deleted_count}", "WARNING" if deleted_count else "INFO")
-    log_and_print(f"Total Entries: {len(all_pending_orders) + total_positions + total_history}", "SUCCESS")
+    log_and_print(f"Filled/Closed History (<5h): {total_history}", "INFO")
+    log_and_print(f"Stale Orders Deleted: {deleted_count}", "WARNING" if deleted_count else "INFO")
 
-    # ========== SAVE TO JSON ==========
     report = {
         "generated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
         "total_brokers": len(brokersdictionary),
         "failed_brokers": failed_brokers,
-        "cleanup": {
-            "stale_orders_deleted": deleted_count,
-            "max_age_allowed_seconds": MAX_AGE_SECONDS
-        },
+        "cleanup": {"stale_orders_deleted": deleted_count},
         "history_window_seconds": MAX_HISTORY_SECONDS,
         "summary": {
             "pending_orders": len(all_pending_orders),
@@ -7114,7 +7077,7 @@ def collect_all_brokers_limit_orders():
         },
         "pending_orders": all_pending_orders,
         "open_positions": all_open_positions,
-        "history_orders": all_history_orders  # ← NEW
+        "history_orders": all_history_orders
     }
 
     try:
@@ -7898,3 +7861,5 @@ def main():
     deduplicate_pending_orders()
     collect_all_brokers_limit_orders()
     martingale_enforcement()
+
+_8_12_orders()
