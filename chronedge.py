@@ -26,7 +26,7 @@ import timeorders
 
 
 def load_brokers_dictionary():
-    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
     """Load brokers config from JSON file with error handling and fallback."""
     if not os.path.exists(BROKERS_JSON_PATH):
         print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND! Using empty config.", "CRITICAL")
@@ -55,7 +55,7 @@ def load_brokers_dictionary():
 brokersdictionary = load_brokers_dictionary()
 
 
-BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\chart\debugs"
+BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\synarex\chart\debugs"
 TIMEFRAME_MAP = {
     "5m": mt5.TIMEFRAME_M5,
     "15m": mt5.TIMEFRAME_M15,
@@ -1649,22 +1649,22 @@ def collect_ob_none_oi_data(symbol, symbol_folder, broker_name, base_folder, all
     allnoordermarkets_json_path = os.path.join(base_folder, "allnoordermarkets.json")
 
     # === CORRECTED PATHS ===
-    allsymbols_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    symbols_match_json_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"  # Fixed name + path
+    allsymbols_json_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
+    symbols_match_json_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"  # Fixed name + path
 
     # Paths for market-type-specific JSONs (unchanged - these are in root)
     market_type_paths = {
-        "forex": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json",
-        "stocks": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json",
-        "indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json",
-        "synthetics": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
-        "commodities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
-        "crypto": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json",
-        "equities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
-        "energies": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json",
-        "etfs": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json",
-        "basket_indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
-        "metals": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+        "forex": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\forexvolumesandrisk.json",
+        "stocks": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\stocksvolumesandrisk.json",
+        "indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\indicesvolumesandrisk.json",
+        "synthetics": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
+        "commodities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
+        "crypto": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\cryptovolumesandrisk.json",
+        "equities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
+        "energies": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\energiesvolumesandrisk.json",
+        "etfs": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\etfsvolumesandrisk.json",
+        "basket_indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
+        "metals": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\metalsvolumesandrisk.json"
     }
 
     # Initialize or load existing allmarkets_limitorders.json
@@ -2054,7 +2054,7 @@ def collect_all_calculated_prices_to_json():
     → Call once at the end
     """
     global brokersdictionary
-    CALCULATED_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    CALCULATED_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
         3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
@@ -2674,17 +2674,17 @@ def delete_all_category_jsons():
     # 1. Exact same paths you already use in collect_ob_none_oi_data
     # ------------------------------------------------------------------ #
     market_type_paths = {
-        "forex": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json",
-        "stocks": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json",
-        "indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json",
-        "synthetics": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
-        "commodities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
-        "crypto": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json",
-        "equities": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
-        "energies": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json",
-        "etfs": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json",
-        "basket_indices": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
-        "metals": r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+        "forex": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\forexvolumesandrisk.json",
+        "stocks": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\stocksvolumesandrisk.json",
+        "indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\indicesvolumesandrisk.json",
+        "synthetics": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
+        "commodities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
+        "crypto": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\cryptovolumesandrisk.json",
+        "equities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
+        "energies": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\energiesvolumesandrisk.json",
+        "etfs": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\etfsvolumesandrisk.json",
+        "basket_indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
+        "metals": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\metalsvolumesandrisk.json"
     }
 
     # ------------------------------------------------------------------ #
@@ -2802,7 +2802,7 @@ def delete_issue_jsons():
         dict: Summary of deleted files per broker (and global schedule)
     """
     
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     REPORT_SUFFIX = "forex_order_report.json"
     ISSUES_FILE   = "ordersissues.json"
 
@@ -2849,7 +2849,7 @@ def delete_issue_jsons():
     # --------------------------------------------------------------
     # 2. Delete the global schedule file (if it exists)
     # --------------------------------------------------------------
-    global_schedule = r"C:\xampp\htdocs\chronedge\fullordersschedules.json"
+    global_schedule = r"C:\xampp\htdocs\chronedge\synarex\fullordersschedules.json"
     if Path(global_schedule).exists():
         try:
             Path(global_schedule).unlink()
@@ -2867,8 +2867,8 @@ def delete_issue_jsons():
     return deleted_summary
 
 def backup_brokers_dictionary():
-    main_path = Path(r"C:\xampp\htdocs\chronedge\brokersdictionary.json")
-    backup_path = Path(r"C:\xampp\htdocs\chronedge\brokersdictionarybackup.json")
+    main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json")
+    backup_path = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionarybackup.json")
     
     main_path.parent.mkdir(parents=True, exist_ok=True)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2939,7 +2939,7 @@ def delete_news_sensitive_orders_during_news():
     from 20 minutes BEFORE until 1 minute AFTER the news time.
     Fully compatible with MT5 TradeOrder/TradePosition objects.
     """
-    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\requirements.json"
+    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\synarex\requirements.json"
     
     # === NEWS-SENSITIVE CATEGORIES (updated) ===
     NEWS_SENSITIVE_CATEGORIES = {"forex", "basket_indices", "energies", "metals"}
@@ -2988,7 +2988,7 @@ def delete_news_sensitive_orders_during_news():
                   f"Delta: {'-' if time_to_news < 0 else ''}{abs(time_to_news)/60:.1f} min", "CRITICAL")
 
     # === Load symbol → category mapping ===
-    allsymbols_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
+    allsymbols_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
     symbol_to_category = {}
 
     if os.path.exists(allsymbols_path):
@@ -3122,7 +3122,7 @@ def delete_news_sensitive_orders_during_news():
 def BreakevenRunningPositions():
     backup_brokers_dictionary()
     delete_news_sensitive_orders_during_news()
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     BREAKEVEN_REPORT = "breakeven_report.json"
     ISSUES_FILE = "ordersissues.json"
 
@@ -3368,9 +3368,9 @@ def BreakevenRunningPositions():
     
 def verifying_brokers():
     # --- CONFIGURATION ---
-    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\brokersdictionary.json"
-    USERS_JSON   = r"C:\xampp\htdocs\chronedge\updatedusersdictionary.json"
-    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\requirements.json"
+    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+    USERS_JSON   = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
+    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\synarex\requirements.json"
 
     # Load requirements
     if not os.path.exists(REQUIREMENTS_JSON):
@@ -3704,16 +3704,25 @@ def fetch_charts_all_brokers(
     delete_all_category_jsons()
     delete_all_calculated_risk_jsons()
     delete_issue_jsons()
-    required_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
-    fallback_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
-    allsymbols_path       = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    match_path            = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
-    brokers_report_path   = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\brokerslimitorders.json"
+    required_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
+    fallback_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
+    allsymbols_path       = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
+    match_path            = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
+    brokers_report_path   = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\brokerslimitorders.json"
 
     # ------------------------------------------------------------------
     # HELPERS
     # ------------------------------------------------------------------
     IMPORTANT_TFS = {"15m", "30m", "1h", "4h"}
+
+    def normalize_broker_key(name: str) -> str:
+        """Normalize broker name: remove digits, spaces, case-insensitive"""
+        return re.sub(r'\d+', '', re.sub(r'[\/\s\-_]+', '', name.strip())).lower()
+
+    def clean_folder_name(name: str) -> str:
+        """Convert 'Deriv 2', 'deriv6', 'Bybit 10' → 'Deriv', 'Bybit' (Title case)"""
+        cleaned = re.sub(r'\d+', '', re.sub(r'[\/\s\-_]+', ' ', name.strip()))
+        return cleaned.strip().title()
 
     def normalize_symbol(s: str) -> str:
         return re.sub(r'[\/\s\-_]+', '', s.strip()).upper() if s else ""
@@ -3752,6 +3761,28 @@ def fetch_charts_all_brokers(
                 log_and_print(f"FAILED to delete {item_path}: {e}", "ERROR")
         log_and_print(f"CLEANED {deleted} non-blocked symbol folders in {base_folder}", "SUCCESS")
 
+    def mark_chosen_broker(original_broker_key: str, broker_name: str, balance: float):
+        """Create chosenbroker.json in symbols_calculated_prices\<original_key>\chosenbroker.json"""
+        target_dir = fr"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices\{original_broker_key}"
+        os.makedirs(target_dir, exist_ok=True)
+        chosen_path = os.path.join(target_dir, "chosenbroker.json")
+        
+        chosen_data = {
+            "chosen": True,
+            "broker_display_name": broker_name,
+            "original_key": original_broker_key,
+            "balance": round(balance, 2),
+            "selected_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "reason": "Highest balance among same broker type"
+        }
+        
+        try:
+            with open(chosen_path, "w", encoding="utf-8") as f:
+                json.dump(chosen_data, f, indent=4)
+            log_and_print(f"MARKED AS CHOSEN → {chosen_path} (Balance: {balance})", "SUCCESS")
+        except Exception as e:
+            log_and_print(f"FAILED to write chosenbroker.json for {original_broker_key}: {e}", "ERROR")
+
     def breakeven_worker():
         while True:
             try:
@@ -3772,37 +3803,83 @@ def fetch_charts_all_brokers(
 
         try:
             # ------------------------------------------------------------------
-            # 0. RE-LOAD BLOCKED SYMBOLS
+            # 0. LOAD AND AGGREGATE BLOCKED SYMBOLS BY NORMALIZED BROKER KEY
             # ------------------------------------------------------------------
-            blocked_symbols_per_broker = {bn: set() for bn in brokersdictionary.keys()}
+            normalized_blocked_symbols = {}  # normalized_broker -> set of blocked symbols
+
             if os.path.exists(brokers_report_path):
                 try:
                     with open(brokers_report_path, "r", encoding="utf-8") as f:
                         report = json.load(f)
-                    for order in report.get("pending_orders", []):
-                        sym, broker = order.get("symbol"), order.get("broker")
-                        if broker in blocked_symbols_per_broker:
-                            blocked_symbols_per_broker[broker].add(sym)
-                    for pos in report.get("open_positions", []):
-                        sym, broker = pos.get("symbol"), pos.get("broker")
-                        if broker in blocked_symbols_per_broker:
-                            blocked_symbols_per_broker[broker].add(sym)
-                    for hist in report.get("history_orders", []):
-                        sym, broker = hist.get("symbol"), hist.get("broker")
-                        age_str = hist.get("age", "")
-                        if "h" in age_str or "m" in age_str or "s" in age_str:
-                            if any(p in age_str for p in ["m", "s"]) or ("h" in age_str and int(age_str.split("h")[0]) < 5):
-                                if broker in blocked_symbols_per_broker:
-                                    blocked_symbols_per_broker[broker].add(sym)
-                    log_and_print(f"Loaded blocked symbols from {brokers_report_path}", "INFO")
+
+                    for section in ["pending_orders", "open_positions", "history_orders"]:
+                        items = report.get(section, [])
+                        for item in items:
+                            broker_raw = item.get("broker", "")
+                            symbol = item.get("symbol", "")
+                            if not broker_raw or not symbol:
+                                continue
+
+                            norm_broker = normalize_broker_key(broker_raw)
+                            normalized_blocked_symbols.setdefault(norm_broker, set())
+
+                            if section == "history_orders":
+                                age_str = item.get("age", "")
+                                if "d" in age_str:
+                                    days = int(age_str.split("d")[0])
+                                    if days >= 5:
+                                        continue
+                                elif not any(t in age_str for t in ["h", "m", "s"]):
+                                    continue
+
+                            normalized_blocked_symbols[norm_broker].add(symbol)
+
+                    log_and_print(f"Loaded & merged blocked symbols from {len(normalized_blocked_symbols)} unique brokers", "INFO")
                 except Exception as e:
                     log_and_print(f"FAILED to load brokerslimitorders.json: {e}", "ERROR")
 
             # ------------------------------------------------------------------
-            # 0.5 DELETE NON-BLOCKED FOLDERS
+            # 1. SELECT ONLY ONE BROKER PER UNIQUE TYPE (HIGHEST BALANCE) + MARK CHOSEN
             # ------------------------------------------------------------------
-            for bn, cfg in brokersdictionary.items():
-                blocked = blocked_symbols_per_broker.get(bn, set())
+            selected_brokers = {}  # normalized_key -> (original_name, config, balance, original_dict_key)
+
+            for original_key, cfg in brokersdictionary.items():  # original_key = "deriv2", "bybit10", etc.
+                broker_name = cfg.get("original_name", original_key)  # fallback if not set
+                norm_key = normalize_broker_key(broker_name)
+
+                balance = 0.0
+                ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
+                error_log.extend(errs)
+                if ok:
+                    try:
+                        account_info = mt5.account_info()
+                        if account_info:
+                            balance = account_info.balance
+                    except:
+                        pass
+                    mt5.shutdown()
+
+                current = selected_brokers.get(norm_key)
+                if current is None or balance > current[2]:
+                    cfg_copy = cfg.copy()
+                    cfg_copy["balance"] = balance
+                    cfg_copy["original_name"] = broker_name
+                    selected_brokers[norm_key] = (broker_name, cfg_copy, balance, original_key)
+
+            # Now mark all selected brokers as "chosen" with their original dictionary key
+            unique_brokers = {}
+            for norm_key, (broker_name, cfg, balance, original_key) in selected_brokers.items():
+                unique_brokers[broker_name] = cfg
+                mark_chosen_broker(original_key, broker_name, balance)  # <-- THIS IS THE NEW FEATURE
+
+            log_and_print(f"Selected & MARKED {len(unique_brokers)} unique brokers (highest balance): {list(unique_brokers.keys())}", "SUCCESS")
+
+            # ------------------------------------------------------------------
+            # 0.5 DELETE NON-BLOCKED FOLDERS FOR SELECTED BROKERS
+            # ------------------------------------------------------------------
+            for bn, cfg in unique_brokers.items():
+                norm_key = normalize_broker_key(bn)
+                blocked = normalized_blocked_symbols.get(norm_key, set())
                 delete_all_non_blocked_symbol_folders(cfg, blocked)
 
             # ------------------------------------------------------------------
@@ -3826,7 +3903,7 @@ def fetch_charts_all_brokers(
             }
 
             # ------------------------------------------------------------------
-            # 2. Symbol → category map (CASE-INSENSITIVE)
+            # 2. Symbol → category map
             # ------------------------------------------------------------------
             if not os.path.exists(allsymbols_path):
                 log_and_print(f"Missing {allsymbols_path}", "CRITICAL")
@@ -3841,7 +3918,7 @@ def fetch_charts_all_brokers(
                         if sym := item.get("symbol"):
                             norm = normalize_symbol(sym)
                             symbol_to_category[norm] = cat
-                            symbol_to_category[sym] = cat  # also keep original for safety
+                            symbol_to_category[sym] = cat
 
             # ------------------------------------------------------------------
             # 3. Load symbolsmatch
@@ -3853,27 +3930,17 @@ def fetch_charts_all_brokers(
                 symbolsmatch_data = json.load(f)
 
             # ------------------------------------------------------------------
-            # 5. Build candidate list — FULLY CASE & BROKER-KEY INSENSITIVE
+            # 5. Build candidate list — ONLY UNIQUE BROKERS
             # ------------------------------------------------------------------
             all_cats = ["stocks","forex","crypto","synthetics","indices","commodities","equities","energies","etfs","basket_indices","metals"]
             candidates = {}
             total_to_do = 0
 
-            for broker_name, cfg in brokersdictionary.items():
+            for broker_name, cfg in unique_brokers.items():
+                norm_key = normalize_broker_key(broker_name)
+                blocked = normalized_blocked_symbols.get(norm_key, set())
                 candidates[broker_name] = {c: [] for c in all_cats}
-                blocked = blocked_symbols_per_broker.get(broker_name, set())
 
-                # === BROKER NAME MAPPING (fully insensitive) ===
-                base_name = re.sub(r'\d+$', '', broker_name).strip().lower()  # DERIV2 → deriv
-                possible_keys = [
-                    base_name,                    # deriv
-                    base_name.title(),            # Deriv
-                    base_name.upper(),            # DERIV
-                    base_name + "2",              # deriv2
-                    base_name.title() + "2",      # Deriv2
-                ]
-
-                # Parse broker's SYMBOLS
                 broker_symbols_raw = cfg.get("SYMBOLS", "").strip()
                 broker_allowed_symbols = None
                 if broker_symbols_raw and broker_symbols_raw.lower() != "all":
@@ -3887,42 +3954,35 @@ def fetch_charts_all_brokers(
                 mt5.shutdown()
 
                 for entry in symbolsmatch_data.get("main_symbols", []):
-                    # Find any matching broker key (case-insensitive)
+                    canonical = entry.get("symbol")
+                    if not canonical:
+                        continue
+                    norm_canonical = normalize_symbol(canonical)
+
+                    found = False
                     broker_symbols_list = []
-                    for key in possible_keys:
-                        if key in entry:
-                            broker_symbols_list = entry[key]
+                    for possible_key in [norm_key, norm_key.title(), norm_key.upper()]:
+                        if possible_key in entry:
+                            broker_symbols_list = entry.get(possible_key, [])
+                            found = True
                             break
-                    if not broker_symbols_list:
+                    if not found:
                         continue
 
-                    # Try every symbol listed for this broker
                     for sym_mt5 in broker_symbols_list:
-                        if sym_mt5 not in avail:
-                            continue
-                        if sym_mt5 in blocked:
+                        if sym_mt5 not in avail or sym_mt5 in blocked:
                             continue
 
-                        # Find canonical symbol (the "symbol" field) — case-insensitive
-                        canonical = entry.get("symbol", sym_mt5)
-                        norm_canonical = normalize_symbol(canonical)
-
-                        # Category lookup (case-insensitive)
-                        cat = symbol_to_category.get(norm_canonical)
-                        if not cat:
-                            cat = symbol_to_category.get(canonical)
+                        cat = symbol_to_category.get(norm_canonical) or symbol_to_category.get(canonical)
                         if not cat or cat not in all_cats:
                             continue
 
-                        # Limited category check
                         if allowed_config.get(cat, {}).get("limited", False):
                             if norm_canonical not in normalized_allowed.get(cat, set()):
                                 continue
 
-                        # Broker-specific SYMBOLS filter
-                        if broker_allowed_symbols is not None:
-                            if norm_canonical not in broker_allowed_symbols:
-                                continue
+                        if broker_allowed_symbols is not None and norm_canonical not in broker_allowed_symbols:
+                            continue
 
                         if symbol_needs_processing(sym_mt5, cfg["BASE_FOLDER"]):
                             delete_symbol_folder(sym_mt5, cfg["BASE_FOLDER"], "(pre-process cleanup)")
@@ -3942,17 +4002,17 @@ def fetch_charts_all_brokers(
             log_and_print(f"TOTAL TO PROCESS: {total_to_do}", "SUCCESS")
 
             # ------------------------------------------------------------------
-            # 6. ROUND-ROBIN PROCESSING (unchanged)
+            # 6. ROUND-ROBIN PROCESSING ACROSS UNIQUE BROKERS ONLY
             # ------------------------------------------------------------------
-            remaining = {b: {c: candidates[b][c][:] for c in all_cats} for b in brokersdictionary}
-            indices   = {b: {c: 0 for c in all_cats} for b in brokersdictionary}
+            remaining = {b: {c: candidates[b][c][:] for c in all_cats} for b in unique_brokers}
+            indices   = {b: {c: 0 for c in all_cats} for b in unique_brokers}
 
             round_no = 1
-            while any(any(remaining[b][c]) for b in brokersdictionary for c in all_cats):
+            while any(any(remaining[b][c]) for b in unique_brokers for c in all_cats):
                 log_and_print(f"\n--- ROUND {round_no} ---", "INFO")
 
                 for cat in all_cats:
-                    for bn, cfg in brokersdictionary.items():
+                    for bn, cfg in unique_brokers.items():
                         if not remaining[bn][cat]:
                             continue
 
@@ -3962,8 +4022,8 @@ def fetch_charts_all_brokers(
                             continue
 
                         symbol = remaining[bn][cat][idx]
-
-                        if symbol in blocked_symbols_per_broker.get(bn, set()):
+                        norm_key = normalize_broker_key(bn)
+                        if symbol in normalized_blocked_symbols.get(norm_key, set()):
                             indices[bn][cat] += 1
                             continue
 
@@ -4030,209 +4090,45 @@ def fetch_charts_all_brokers(
 
             save_errors(error_log)
             calc_and_placeorders()
-            log_and_print("CYCLE 100% COMPLETED", "SUCCESS")
-            log_and_print("Sleeping 30 minutes...", "INFO")
+            log_and_print("CYCLE 100% COMPLETED (UNIQUE BROKERS ONLY)", "SUCCESS")
+
+            # ------------------------------------------------------------------
+            # FINAL STEP: RENAME BASE_FOLDERS TO REMOVE NUMBERS (AFTER CYCLE)
+            # ------------------------------------------------------------------
+            log_and_print("Starting post-cycle BASE_FOLDER renaming (removing numbers)...", "INFO")
+            renamed = 0
+            for original_name, cfg in unique_brokers.items():
+                old_path = cfg["BASE_FOLDER"]
+                if not os.path.exists(old_path):
+                    continue
+
+                parent_dir = os.path.dirname(old_path)
+                new_name = clean_folder_name(original_name)
+                new_path = os.path.join(parent_dir, new_name)
+
+                if old_path == new_path:
+                    continue
+
+                if os.path.exists(new_path):
+                    log_and_print(f"Target already exists: {new_path} — skipping rename from {old_path}", "WARNING")
+                    continue
+
+                try:
+                    os.rename(old_path, new_path)
+                    cfg["BASE_FOLDER"] = new_path
+                    log_and_print(f"RENAMED FOLDER: {old_path} → {new_path}", "SUCCESS")
+                    renamed += 1
+                except Exception as e:
+                    log_and_print(f"FAILED RENAME {old_path} → {new_path}: {e}", "ERROR")
+
+            log_and_print(f"Folder renaming complete. {renamed} folder(s) cleaned.", "SUCCESS" if renamed > 0 else "INFO")
+
+            log_and_print("Sleeping 30 minutes before next cycle...", "INFO")
             time.sleep(1800)
 
         except Exception as e:
             log_and_print(f"MAIN LOOP CRASH: {e}\n{traceback.format_exc()}", "CRITICAL")
             time.sleep(600)
-
-def debug_symbol_matching_breakdown():
-    """
-    Run this function ONCE manually.
-    It will print EXACTLY why symbols like Drift Switch, Volatility, etc.
-    are or are NOT being selected — broker by broker.
-    """
-    import json, os, re
-
-    required_allowed_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
-    allsymbols_path       = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    match_path            = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
-
-    def load_json(path, name):
-        if not os.path.exists(path):
-            print(f"MISSING: {name} → {path}")
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    allowed_config = load_json(required_allowed_path, "allowedmarkets.json")
-    allsymbols_data = load_json(allsymbols_path, "allsymbolsvolumesandrisk.json")
-    symbolsmatch_data = load_json(match_path, "symbolsmatch.json")
-
-    if not all([allowed_config, allsymbols_data, symbolsmatch_data]):
-        print("Cannot proceed — missing critical files")
-        return
-
-    # Build symbol → category map
-    symbol_to_category = {}
-    for broker, categories in allsymbols_data.items():
-        for cat, items in categories.items():
-            for item in items:
-                sym = item.get("symbol")
-                if sym:
-                    symbol_to_category[sym.strip().upper()] = cat
-
-    # Normalize allowed
-    normalized_allowed = {
-        cat: {re.sub(r'[\/\s\-_]+', '', s.strip()).upper() for s in cfg.get("allowed", [])}
-        for cat, cfg in allowed_config.items()
-    }
-
-    # Broker name mapping (remove trailing numbers)
-    broker_name_mapping = {}
-    for broker_name in brokersdictionary.keys():
-        base = re.sub(r'\d+$', '', broker_name)
-        broker_name_mapping[broker_name] = base
-
-    print("\n" + "="*100)
-    print("SYMBOL MATCHING DEBUG REPORT")
-    print("="*100)
-
-    test_symbols = [
-        "Drift Switch Index 20", "Drift Switch Index 30",
-        "Volatility 75 Index", "Boom 1000 Index", "Step Index",
-        "USDJPY", "BTCUSD", "Wall Street 30"
-    ]
-
-    for test_sym in test_symbols:
-        print(f"\n--- CHECKING: {test_sym} ---")
-        found_any = False
-        for broker_name, cfg in brokersdictionary.items():
-            mapped_broker = broker_name_mapping.get(broker_name, broker_name)
-
-            # Find in symbolsmatch
-            broker_symbols = []
-            for entry in symbolsmatch_data.get("main_symbols", []):
-                base_sym = entry.get("symbol")
-                if not base_sym:
-                    continue
-                if any(test_sym.upper() in s.upper() or s.upper() in test_sym.upper() for s in entry.get(mapped_broker, [])):
-                    broker_symbols = entry.get(mapped_broker, [])
-                    break
-
-            if not broker_symbols:
-                print(f"  × {broker_name.upper():15} → NOT IN symbolsmatch.json under '{mapped_broker}'")
-                continue
-
-            actual_mt5_sym = broker_symbols[0]  # first match
-
-            # Category?
-            norm_test = re.sub(r'[\/\s\-_]+', '', test_sym).upper()
-            category = symbol_to_category.get(norm_test)
-            if not category:
-                category = symbol_to_category.get(test_sym.upper())
-            if not category:
-                print(f"  × {broker_name.upper():15} → NOT IN allsymbolsvolumesandrisk.json (no category)")
-                continue
-
-            # Allowed?
-            cat_cfg = allowed_config.get(category, {})
-            if cat_cfg.get("limited", False):
-                allowed_set = normalized_allowed.get(category, set())
-                if norm_test not in allowed_set and test_sym.upper() not in {s.upper() for s in cat_cfg.get("allowed", [])}:
-                    print(f"  × {broker_name.upper():15} → BLOCKED: category '{category}' is LIMITED and symbol not in allowed[]")
-                    continue
-
-            # Broker SYMBOLS filter?
-            broker_symbols_setting = cfg.get("SYMBOLS", "").strip()
-            if broker_symbols_setting and broker_symbols_setting.lower() != "all":
-                allowed_broker_syms = {re.sub(r'[\/\s\-_]+', '', s.strip()).upper() for s in broker_symbols_setting.split(",")}
-                if norm_test not in allowed_broker_syms:
-                    print(f"  × {broker_name.upper():15} → BLOCKED by broker's SYMBOLS= (not in list)")
-                    continue
-
-            # If we get here → WILL BE PROCESSED
-            print(f"  ✓ {broker_name.upper():15} → WILL BE PROCESSED")
-            print(f"      MT5 name  : {actual_mt5_sym}")
-            print(f"      Category  : {category}")
-            print(f"      Limited?  : {cat_cfg.get('limited', False)}")
-            found_any = True
-
-        if not found_any:
-            print(f"  → '{test_sym}' is COMPLETELY EXCLUDED on ALL brokers")
-
-    print("\n" + "="*100)
-    print("Add missing symbols to allsymbolsvolumesandrisk.json under correct category (usually 'synthetics')")
-    print("Most common fix: Drift Switch, Volatility, Boom/Crash → must be in 'synthetics' category")
-    print("="*100)
-
-def why_is_drift_and_dex_not_processed():
-    import json, os, re
-    
-    match_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
-    allsymbols_path = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    
-    # Load files
-    with open(match_path, "r", encoding="utf-8") as f:
-        match_data = json.load(f)
-    with open(allsymbols_path, "r", encoding="utf-8") as f:
-        allsym_data = json.load(f)
-    
-    # Build quick lookup
-    symbol_to_category = {}
-    for cat, items in allsym_data.get("deriv", {}).items():
-        for item in items:
-            sym = item.get("symbol")
-            if sym:
-                symbol_to_category[sym] = cat
-    
-    # Your broker name (change if different)
-    broker_name = list(brokersdictionary.keys())[0]  # e.g. DERIV2
-    base = re.sub(r'\d+$', '', broker_name).lower()  # deriv2 → deriv
-    
-    targets = ["Drift Switch Index 20", "Drift Switch Index 30", "DEX 1000 Index", "DEX 900 Index", "DEX 600 Index"]
-    
-    print("DRIFT & DEX DEBUG REPORT".center(80, "="))
-    for target in targets:
-        print(f"\n→ Checking: {target}")
-        
-        # 1. Is it in symbolsmatch.json under your broker?
-        found = False
-        mt5_name = None
-        for entry in match_data.get("main_symbols", []):
-            if entry.get("symbol") == target:
-                broker_list = entry.get(base, []) or entry.get("deriv", [])
-                if broker_list:
-                    mt5_name = broker_list[0]
-                    found = True
-                    break
-        
-        if not found:
-            print("   NOT IN symbolsmatch.json → THIS IS THE BLOCKER (99% of cases)")
-            print("   → You must add it under your broker key (deriv or deriv2)")
-            continue
-        
-        print(f"   In symbolsmatch.json → MT5 name: '{mt5_name}'")
-        
-        # 2. Is it available live in your MT5?
-        ok, _ = initialize_mt5(brokersdictionary[broker_name]["TERMINAL_PATH"],
-                               brokersdictionary[broker_name]["LOGIN_ID"],
-                               brokersdictionary[broker_name]["PASSWORD"],
-                               brokersdictionary[broker_name]["SERVER"])
-        if not ok:
-            print("   Cannot connect to MT5")
-            continue
-        live, _ = get_symbols()
-        mt5.shutdown()
-        
-        if mt5_name not in live:
-            print(f"   MT5 name '{mt5_name}' NOT AVAILABLE in terminal → broker removed it or wrong name")
-        else:
-            print(f"   Available in MT5")
-        
-        # 3. Does it have a category in allsymbolsvolumesandrisk.json?
-        cat = symbol_to_category.get(target)
-        if not cat:
-            print("   MISSING in allsymbolsvolumesandrisk.json → no category assigned")
-            print("   → Add it under 'synthetics' category")
-        else:
-            print(f"   Category: {cat}")
-            if cat == "synthetics" and not any("synthetics" in c for c in ["synthetics", "indices"]):
-                print("   synthetics category exists → should work if limited=false")
-    
-    print("\n" + "="*80)
 
 
 if __name__ == "__main__":

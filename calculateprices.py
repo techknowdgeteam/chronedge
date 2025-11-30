@@ -2,6 +2,14 @@ import json
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+import json
+from pathlib import Path
+from typing import Optional, Dict, Any
+import json
+from pathlib import Path
+from typing import Optional, Dict, Any
+import shutil
+import re
 
 
 
@@ -27,9 +35,9 @@ def symbolsorderfiltering():
     # ------------------------------------------------------------------
     # CORRECT PATH TO allowedmarkets.json
     # ------------------------------------------------------------------
-    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
-    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points")
-    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
+    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points")
+    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
 
     INPUT_ROOT.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -284,7 +292,7 @@ def clean_5m_timeframes():
     # ------------------------------------------------------------------
     # 1. INPUT FILES (volumesandrisk)
     # ------------------------------------------------------------------
-    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points")
+    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points")
     INPUT_FILES = [
         "forexvolumesandrisk.json",
         "syntheticsvolumesandrisk.json",
@@ -302,7 +310,7 @@ def clean_5m_timeframes():
     # ------------------------------------------------------------------
     # 2. OUTPUT FILES (calculatedprices)
     # ------------------------------------------------------------------
-    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
         3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
@@ -449,7 +457,7 @@ def delete_all_calculated_risk_jsons():
     import json
     from collections import defaultdict
 
-    BASE_OUTPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    BASE_OUTPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
         3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
@@ -535,8 +543,8 @@ def delete_all_calculated_risk_jsons():
     return True
     
 def calculate_forex_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\forexvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\forexvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
 
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd",
@@ -694,8 +702,8 @@ def calculate_forex_sl_tp_markets():
     return True
 
 def calculate_synthetics_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -824,8 +832,8 @@ def calculate_synthetics_sl_tp_markets():
     return True
 
 def calculate_crypto_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\cryptovolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\cryptovolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -954,8 +962,8 @@ def calculate_crypto_sl_tp_markets():
     return True
 
 def calculate_basketindices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\basketindicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\basketindicesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1084,8 +1092,8 @@ def calculate_basketindices_sl_tp_markets():
     return True
 
 def calculate_indices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\indicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\indicesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1214,8 +1222,8 @@ def calculate_indices_sl_tp_markets():
     return True
 
 def calculate_metals_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\metalsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\metalsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1344,8 +1352,8 @@ def calculate_metals_sl_tp_markets():
     return True
 
 def calculate_stocks_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\stocksvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\stocksvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1474,8 +1482,8 @@ def calculate_stocks_sl_tp_markets():
     return True
 
 def calculate_etfs_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\etfsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\etfsvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1605,8 +1613,8 @@ def calculate_etfs_sl_tp_markets():
 
 
 def calculate_equities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\equitiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\equitiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1736,8 +1744,8 @@ def calculate_equities_sl_tp_markets():
 
 
 def calculate_energies_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\energiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\energiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1867,8 +1875,8 @@ def calculate_energies_sl_tp_markets():
 
 
 def calculate_commodities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\chart\symbols_volumes_points\commoditiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\commoditiesvolumesandrisk.json"
+    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
 
     in_file = Path(INPUT_JSON)
@@ -1997,7 +2005,7 @@ def calculate_commodities_sl_tp_markets():
     return True
 
 def scale_lowerorders_proportionally():
-    BASE_INPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    BASE_INPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
     RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
@@ -2118,7 +2126,7 @@ def scale_lowerorders_proportionally():
 
 
 def checkriskorders():
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices"
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
@@ -2293,7 +2301,7 @@ def checkriskorders():
     return True
 
 def categorise_strategy():
-    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\chart\symbols_calculated_prices")
+    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
     RISK_FOLDERS = {
         0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
         3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
@@ -2648,6 +2656,114 @@ def symbolvolumeupdater():
     print(f"\n[NUKE] NUCLEAR SYNC COMPLETE | {changes} records updated | {recalc_success} asset(s) recalculated.", "SUCCESS")
     return True  
 
+
+def get_chosen_broker() -> Optional[Dict[str, Any]]:
+    """
+    FINAL VERSION — Enforces correct folder naming (e.g. deriv6, not 'Deriv 6')
+    Finds the real chosen broker and syncs all same-type brokers perfectly.
+    """
+    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
+    BROKERS_DICT_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json")
+
+    if not BASE_DIR.is_dir():
+        print(f"[get_chosen_broker] Base directory missing: {BASE_DIR}")
+        return None
+    if not BROKERS_DICT_PATH.is_file():
+        print(f"[get_chosen_broker] brokersdictionary.json missing: {BROKERS_DICT_PATH}")
+        return None
+
+    # Load dictionary
+    try:
+        brokers_dict = json.loads(BROKERS_DICT_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[get_chosen_broker] Failed to read brokersdictionary.json: {e}")
+        return None
+
+    chosen_broker = None
+    chosen_folder_path = None
+    chosen_key = None
+
+    print("[get_chosen_broker] Starting scan with strict folder name enforcement...")
+
+    # Step 1: Find which broker is actually chosen (by checking its folder)
+    for broker_key, info in brokers_dict.items():
+        expected_folder_name = broker_key  # e.g. "deriv6"
+        expected_path = BASE_DIR / expected_folder_name
+
+        chosen_file = expected_path / "chosenbroker.json"
+        if not chosen_file.is_file():
+            continue
+
+        try:
+            data = json.loads(chosen_file.read_text(encoding="utf-8"))
+            if data.get("chosen") is True:
+                # Found the real chosen one!
+                chosen_broker = data
+                chosen_folder_path = expected_path.resolve()
+                chosen_key = broker_key
+
+                # Auto-fix wrong folder names (e.g. "Deriv 6" → "deriv6")
+                wrong_paths = [p for p in BASE_DIR.iterdir() if p.is_dir() and p.name.lower() == broker_key.lower() and p.name != broker_key]
+                for wrong in wrong_paths:
+                    correct = BASE_DIR / broker_key
+                    print(f"   Fixing wrong folder name: {wrong.name} → {broker_key}")
+                    if correct.exists():
+                        shutil.rmtree(correct)
+                    wrong.rename(correct)
+
+                print(f"[get_chosen_broker] Chosen broker confirmed: {broker_key}")
+                print(f"   Folder: {expected_folder_name}")
+                print(f"   Balance: ${data.get('balance', 'N/A')}")
+                break
+        except Exception as e:
+            print(f"   [Error] Bad chosenbroker.json in {expected_path}: {e}")
+
+    if not chosen_broker:
+        print("[get_chosen_broker] No broker currently chosen.")
+        return None
+
+    # Step 2: Determine broker family (e.g. "deriv")
+    family = re.sub(r'\d+$', '', chosen_key).lower()  # deriv6 → deriv, octafx10 → octafx
+    print(f"[get_chosen_broker] Syncing all brokers in family: '{family}'")
+
+    # Step 3: Sync all same-family brokers
+    targets = []
+    for key, info in brokers_dict.items():
+        if not re.sub(r'\d+$', '', key).lower() == family:
+            continue
+        target_folder = BASE_DIR / key
+        if target_folder.resolve() == chosen_folder_path:
+            continue  # skip source
+        targets.append((key, target_folder))
+
+    if not targets:
+        print(f"[get_chosen_broker] No other '{family}' brokers to sync.")
+        return chosen_broker
+
+    print(f"[get_chosen_broker] Syncing {len(targets)} broker(s)...")
+
+    def copy_clean(src: Path, dst: Path):
+        if dst.exists():
+            print(f"   Replacing: {dst.name}")
+            shutil.rmtree(dst)
+        shutil.copytree(
+            src, dst,
+            ignore=shutil.ignore_patterns("chosenbroker.json", "*.log", "__pycache__")
+        )
+        # Extra safety
+        (dst / "chosenbroker.json").unlink(missing_ok=True)
+
+    for key, target_path in targets:
+        try:
+            copy_clean(chosen_folder_path, target_path)
+            print(f"   Synced → {key}")
+        except Exception as e:
+            print(f"   Failed to sync {key}: {e}")
+
+    print(f"[get_chosen_broker] All '{family}' brokers synchronized successfully!")
+    print(f"    Source (active): {chosen_key}")
+    return chosen_broker
+
 def main():
     
     symbolsorderfiltering()
@@ -2714,13 +2830,16 @@ def main():
         return False
     print("Promotion phase completed.\n", "SUCCESS")
     clean_5m_timeframes()
+    get_chosen_broker()
     print("="*60, "FOOTER")
     print("FULL PIPELINE COMPLETED SUCCESSFULLY!", "SUCCESS")
     print("="*60 + "\n", "FOOTER")
     return True
 
 
+
+
 if __name__ == "__main__":
-    main()
+    get_chosen_broker()
     
    
