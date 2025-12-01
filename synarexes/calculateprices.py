@@ -2764,8 +2764,183 @@ def get_chosen_broker() -> Optional[Dict[str, Any]]:
     print(f"    Source (active): {chosen_key}")
     return chosen_broker
 
-def main():
+def purge_non_allowed_orders():
     
+    from pathlib import Path
+    import json
+    from datetime import datetime
+
+    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
+    NON_ALLOWED_OUT = BASE_DIR / "nonallowedorders.json"
+
+    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
+    ALL_SYMBOLS_PATH      = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json")
+    SYMBOL_MATCH_PATH     = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json")
+
+    print("[PURGE] Starting detection + REMOVAL of non-allowed orders...")
+
+    # Load control files
+    try:
+        allowed_cfg = json.loads(ALLOWED_MARKETS_PATH.read_text(encoding="utf-8"))
+        all_symbols_data = json.loads(ALL_SYMBOLS_PATH.read_text(encoding="utf-8"))
+        symbol_match_raw = json.loads(SYMBOL_MATCH_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[PURGE] Failed to load control file: {e}")
+        return False
+
+    # === Build symbol → asset class mapping ===
+    symbol_to_asset = {}
+    for risk_key, asset_groups in all_symbols_data.items():
+        for raw_asset_class, entries in asset_groups.items():
+            asset_key = raw_asset_class.lower().replace(" ", "").replace("_", "")
+            if asset_key == "basket_indices":
+                asset_key = "basketindices"
+            for entry in entries:
+                sym = entry.get("symbol")
+                if sym:
+                    symbol_to_asset[sym.strip()] = asset_key
+
+    # === Broker variant → main symbol ===
+    main_symbol_lookup = {}
+    for item in symbol_match_raw.get("main_symbols", []):
+        main = item.get("symbol")
+        if not main: continue
+        for broker in ["deriv", "bybit", "exness"]:
+            for variant in item.get(broker, []):
+                if variant:
+                    main_symbol_lookup[variant] = main
+
+    # === Build allowed config ===
+    allowed_config = {}
+    for raw_cls, cfg in allowed_cfg.items():
+        cls_key = raw_cls.lower().replace("_", "")
+        if cls_key == "basket_indices":
+            cls_key = "basketindices"
+        allowed_config[cls_key] = {
+            "limited": bool(cfg.get("limited", False)),
+            "whitelist": {s.strip().upper() for s in cfg.get("allowed", []) if s.strip()}
+        }
+
+    # === Scan + Clean All Files ===
+    non_allowed_orders = []
+    total_removed = 0
+    files_modified = 0
+
+    for broker_dir in BASE_DIR.iterdir():
+        if not broker_dir.is_dir():
+            continue
+
+        for risk_folder in broker_dir.iterdir():
+            if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_"):
+                continue
+
+            for json_file in ["hightolow.json", "lowtohigh.json"]:
+                fpath = risk_folder / json_file
+                if not fpath.exists():
+                    continue
+
+                try:
+                    data = json.loads(fpath.read_text(encoding="utf-8"))
+                except:
+                    continue
+
+                original_entries = data.get("entries", [])
+                if not original_entries:
+                    continue
+
+                clean_entries = []
+                file_removed = 0
+
+                for entry in original_entries:
+                    market = entry.get("market", "")
+                    if not market:
+                        clean_entries.append(entry)
+                        continue
+
+                    raw_symbol = market.strip()
+                    resolved = main_symbol_lookup.get(raw_symbol, raw_symbol)
+                    asset_class = symbol_to_asset.get(resolved) or symbol_to_asset.get(raw_symbol)
+
+                    # Fallback guess
+                    if not asset_class:
+                        lower = raw_symbol.lower()
+                        if raw_symbol.endswith("USD") and len(raw_symbol) <= 10:
+                            asset_class = "crypto"
+                        elif any(c in raw_symbol for c in ["AUD","EUR","GBP","USD","JPY","CAD","CHF","NZD"]):
+                            asset_class = "forex"
+                        elif "volatility" in lower or "index" in lower:
+                            asset_class = "synthetics"
+                        else:
+                            asset_class = "unknown"
+
+                    config = allowed_config.get(asset_class, {"limited": False, "whitelist": set()})
+                    is_whitelisted = resolved.upper() in config["whitelist"] or raw_symbol.upper() in config["whitelist"]
+
+                    if config["limited"] and not is_whitelisted:
+                        # → BAD ORDER: Move to trash
+                        non_allowed_orders.append({
+                            **entry,
+                            "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "source_file": str(fpath.relative_to(BASE_DIR)),
+                            "broker": broker_dir.name,
+                            "resolved_symbol": resolved,
+                            "detected_asset_class": asset_class,
+                            "reason": f"LIMITED asset class '{asset_class}' – not in whitelist"
+                        })
+                        file_removed += 1
+                        total_removed += 1
+                    else:
+                        # → GOOD ORDER: Keep
+                        clean_entries.append(entry)
+
+                # === Rewrite cleaned file if anything was removed ===
+                if file_removed > 0:
+                    data["entries"] = clean_entries
+
+                    # Update summary counts
+                    summary = data.get("summary", {})
+                    for key in summary:
+                        if "symbols" in key:
+                            # Re-count from clean entries
+                            if key == "allmarketssymbols":
+                                summary[key] = len(clean_entries)
+                            else:
+                                asset = key.replace("symbols", "")
+                                summary[key] = sum(1 for e in clean_entries if (symbol_to_asset.get(e.get("market",""), "") or "unknown") == asset)
+
+                    data["summary"] = summary
+                    data["purged_non_allowed"] = file_removed
+                    data["purged_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    # Save cleaned file
+                    try:
+                        fpath.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                        files_modified += 1
+                        print(f"  [REMOVED] {file_removed} bad orders → {fpath.relative_to(BASE_DIR)}")
+                    except Exception as e:
+                        print(f"  [ERROR] Failed to save {fpath}: {e}")
+
+    # === Save all purged orders ===
+    result = {
+        "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "total_purged_orders": total_removed,
+        "files_cleaned": files_modified,
+        "purged_orders": non_allowed_orders
+    }
+
+    try:
+        NON_ALLOWED_OUT.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        print(f"\n[PURGE] SUCCESS → {total_removed} non-allowed orders REMOVED permanently!")
+        print(f"        {files_modified} files cleaned.")
+        print(f"        Full log: {NON_ALLOWED_OUT}\n")
+        if total_removed == 0:
+            print("[PURGE] SYSTEM ALREADY CLEAN – Nothing to remove.")
+    except Exception as e:
+        print(f"[PURGE] Failed to write log: {e}")
+
+    return total_removed == 0
+
+def main():
     symbolsorderfiltering()
     clean_5m_timeframes()
     print("\n" + "="*60, "HEADER")
@@ -2830,6 +3005,7 @@ def main():
         return False
     print("Promotion phase completed.\n", "SUCCESS")
     clean_5m_timeframes()
+    purge_non_allowed_orders()
     get_chosen_broker()
     print("="*60, "FOOTER")
     print("FULL PIPELINE COMPLETED SUCCESSFULLY!", "SUCCESS")
@@ -2840,6 +3016,7 @@ def main():
 
 
 if __name__ == "__main__":
-    get_chosen_broker()
+     main()
+     
     
    

@@ -3692,6 +3692,125 @@ def clear_chart_folder(base_folder: str):
         "SUCCESS")
     return True, error_log
 
+def clear_unknown_broker():
+    base_path = r"C:\xampp\htdocs\chronedge\synarex\chart"
+    
+    if not os.path.exists(base_path):
+        print(f"ERROR: Base directory does not exist:\n    {base_path}")
+        return
+    
+    if not brokersdictionary:
+        print("No brokers found in brokersdictionary.")
+        return
+
+    print("Configured Brokers & Folder Check (Human-readable folders):")
+    print("=" * 90)
+    
+    configured_displays = set()
+    known_broker_bases = set()
+    broker_details = []
+    existing = 0
+    missing = 0
+    
+    def format_broker_name(name):
+        name = name.strip()
+        match = re.match(r"([a-zA-Z_]+)(\d*)$", name, re.IGNORECASE)
+        if not match:
+            return name.capitalize()
+        base, num = match.groups()
+        base_clean = base.capitalize()
+        if num:
+            known_broker_bases.add(base_clean)
+            return f"{base_clean} {int(num)}"
+        known_broker_bases.add(base_clean)
+        return base_clean
+
+    # ——— Scan configured brokers ———
+    for broker_name in brokersdictionary.keys():
+        original = broker_name.strip()
+        display_name = format_broker_name(original)
+        lower_display = display_name.lower()
+        
+        configured_displays.add(lower_display)
+        
+        folder_path = os.path.join(base_path, display_name)
+        exists = os.path.isdir(folder_path)
+        
+        marker = "Success" if exists else "Error"
+        status = "EXISTS" if exists else "MISSING"
+        
+        print(f"{marker} {original.ljust(25)} → {display_name.ljust(20)} → {status}")
+        print(f"    Path: {folder_path}\n")
+        
+        broker_details.append({
+            'original': original,
+            'display': display_name,
+            'lower': lower_display,
+            'path': folder_path,
+            'exists': exists
+        })
+        
+        if exists: existing += 1
+        else: missing += 1
+    
+    print("=" * 90)
+    print(f"Total configured: {len(brokersdictionary)} broker(s) | {existing} folder(s) exist | {missing} missing")
+
+    # ——— Unique broker types ———
+    print("\nUnique Configured Broker Types:")
+    print("-" * 60)
+    for base in sorted(known_broker_bases):
+        instances = [b['display'] for b in broker_details if b['display'].startswith(base)]
+        print(f"• {base.ljust(15)} → {len(instances)} account(s): {', '.join(instances)}")
+    print("-" * 60)
+    print(f"Unique broker types: {len(known_broker_bases)}")
+
+    # ——— AUTO-DELETE ORPHANED FOLDERS (NO CONFIRMATION) ———
+    print("\nCleaning Orphaned Broker Folders (AUTO-DELETE enabled)...")
+    print("-" * 70)
+    
+    if not os.path.isdir(base_path):
+        print("Base path not accessible.")
+    else:
+        orphaned = []
+        all_folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
+        
+        for folder in all_folders:
+            folder_lower = folder.lower()
+            full_path = os.path.join(base_path, folder)
+            
+            if folder_lower in configured_displays:
+                continue
+                
+            suspected_base = None
+            for base in known_broker_bases:
+                if folder_lower.startswith(base.lower()):
+                    suspected_base = base
+                    break
+            
+            if suspected_base:
+                orphaned.append((folder, full_path, suspected_base))
+        
+        if orphaned:
+            print(f"Deleting {len(orphaned)} orphaned broker folder(s):")
+            deleted_count = 0
+            for folder, full_path, base in orphaned:
+                try:
+                    shutil.rmtree(full_path)
+                    print(f"  Deleted: {folder}  (was {base})")
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  Failed to delete {folder}: {e}")
+            print(f"\nAuto-clean complete: {deleted_count}/{len(orphaned)} orphaned folders removed.")
+        else:
+            print("No orphaned broker folders found. Directory is clean!")
+
+    print("-" * 70)
+    
+    if missing > 0:
+        print(f"\nReminder: {missing} configured broker(s) missing their folder!")
+        print("   Expected format: Deriv 2, Bybit 6, Exness 1, etc.")
+
 def fetch_charts_all_brokers(
     bars,
     neighborcandles_left,
@@ -3704,6 +3823,7 @@ def fetch_charts_all_brokers(
     delete_all_category_jsons()
     delete_all_calculated_risk_jsons()
     delete_issue_jsons()
+    clear_unknown_broker()
     required_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     fallback_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     allsymbols_path       = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"

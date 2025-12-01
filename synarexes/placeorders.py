@@ -2934,10 +2934,10 @@ def _8_12_orders():
             "SUCCESS"
         )
         return True
-    _2usd_live_sl_tp_amounts()
+    #_2usd_live_sl_tp_amounts()
     place_2usd_orders()
-    _2usd_history_and_deduplication()
-    _2usd_ratio_levels()
+    #_2usd_history_and_deduplication()
+    #_2usd_ratio_levels()
 
 def _12_20_orders():
     def _3usd_live_sl_tp_amounts():
@@ -5804,6 +5804,7 @@ def _80_160_orders():
             "SUCCESS"
         )
         return True
+    
     _8usd_live_sl_tp_amounts()
     place_8usd_orders()
     _8usd_history_and_deduplication()
@@ -6760,13 +6761,200 @@ def _160_320_orders():
             "SUCCESS"
         )
         return True
+    
     _16usd_live_sl_tp_amounts()
     place_16usd_orders()
     _16usd_history_and_deduplication()
     _16usd_ratio_levels()
 
+def restore_missing_orders():
+    import json
+    from pathlib import Path
+    from datetime import datetime
+    import pytz
 
+    TZ = pytz.timezone("Africa/Lagos")
+    BROKERS_ORDERS_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\brokerslimitorders.json")
+    CALC_BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
 
+    RISK_MAP = {
+        0.5: "risk_0_50cent_usd",
+        1.0: "risk_1_usd",
+        2.0: "risk_2_usd",
+        3.0: "risk_3_usd",
+        4.0: "risk_4_usd",
+        8.0: "risk_8_usd",
+        16.0: "risk_16_usd"
+    }
+    TOLERANCE = 0.15
+
+    restored_count = 0
+    dedup_removed_count = 0
+    files_touched = 0
+
+    print(f"\n[Restore + Dedup] Starting cleanup & restoration...\n")
+
+    # ========================================
+    # 1. Load & deduplicate brokerslimitorders.json
+    # ========================================
+    if BROKERS_ORDERS_PATH.exists():
+        try:
+            data = json.loads(BROKERS_ORDERS_PATH.read_text(encoding="utf-8"))
+            original_pending = data.get("pending_orders", [])
+            seen_tickets = set()
+            clean_pending = []
+            for o in original_pending:
+                ticket = o.get("ticket")
+                if ticket and ticket not in seen_tickets:
+                    seen_tickets.add(ticket)
+                    clean_pending.append(o)
+                elif not ticket:
+                    clean_pending.append(o)
+
+            if len(clean_pending) < len(original_pending):
+                removed = len(original_pending) - len(clean_pending)
+                dedup_removed_count += removed
+                data["pending_orders"] = clean_pending
+                BROKERS_ORDERS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                print(f"[Clean] Removed {removed} duplicate pending order(s) from brokerslimitorders.json")
+                files_touched += 1
+        except Exception as e:
+            print(f"[Error] Failed to clean brokerslimitorders.json → {e}")
+
+    if not BROKERS_ORDERS_PATH.exists():
+        print("[Restore] brokerslimitorders.json not found")
+        return False
+
+    try:
+        brokers_data = json.loads(BROKERS_ORDERS_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[Restore] Cannot read brokerslimitorders.json → {e}")
+        return False
+
+    pending_orders = brokers_data.get("pending_orders", [])
+    if not pending_orders:
+        print("[Restore] No pending orders → nothing to do.")
+        return True
+
+    # ========================================
+    # 2. Process each pending order
+    # ========================================
+    for order in pending_orders:
+        broker = order.get("broker")
+        symbol = order.get("symbol")
+        order_type = order.get("type", "")
+        entry_price = order.get("entry_price")
+        volume = order.get("volume")
+        sl_amount = order.get("sl_amount")
+        ticket = order.get("ticket")
+
+        if not all([broker, symbol, entry_price is not None, volume, sl_amount is not None]):
+            continue
+
+        # Find risk folder
+        risk_folder = None
+        target_risk = None
+        for val, folder in RISK_MAP.items():
+            if abs(sl_amount - val) <= TOLERANCE:
+                risk_folder = folder
+                target_risk = val
+                break
+        if not risk_folder:
+            continue
+
+        broker_risk_dir = CALC_BASE_DIR / broker / risk_folder
+        if not broker_risk_dir.exists():
+            continue
+
+        limit_side = "buy_limit" if "BUY" in order_type.upper() else "sell_limit"
+
+        for direction_file in ["hightolow.json", "lowtohigh.json"]:
+            file_path = broker_risk_dir / direction_file
+            if not file_path.exists():
+                continue
+
+            try:
+                content = json.loads(file_path.read_text(encoding="utf-8"))
+                entries = content.get("entries", [])
+                summary = content.get("summary", {})
+            except:
+                continue
+
+            # === DEDUPLICATE FIRST ===
+            seen = set()
+            unique_entries = []
+            local_dedup = 0
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                key = (e.get("symbol"), e.get("limit_order"), round(e.get("entry_price", 0), 8), e.get("volume"))
+                if key not in seen:
+                    seen.add(key)
+                    unique_entries.append(e)
+                else:
+                    local_dedup += 1
+
+            # === CHECK IF ORDER IS MISSING ===
+            order_key = (symbol, limit_side, round(entry_price, 8), volume)
+            is_missing = order_key not in seen
+
+            action = ""
+            if local_dedup > 0:
+                dedup_removed_count += local_dedup
+                action += f"DEDUPED({local_dedup}) "
+            if is_missing:
+                new_entry = {
+                    "symbol": symbol,
+                    "market": symbol,
+                    "entry_price": round(entry_price, 8),
+                    "volume": volume,
+                    "limit_order": limit_side,
+                    "sl_pips": None,
+                    "tp_pips": None,
+                    "timeframe": "restored",
+                    "source": "restore_missing_orders",
+                    "restored_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "original_ticket": ticket,
+                    "original_comment": order.get("comment"),
+                    "magic": order.get("magic")
+                }
+                unique_entries.append(new_entry)
+                restored_count += 1
+                action += "RESTORED"
+
+            # === UPDATE SUMMARY ===
+            unique_symbols = {e.get("symbol") for e in unique_entries if isinstance(e, dict) and e.get("symbol")}
+            if isinstance(summary, dict):
+                summary["allmarketssymbols"] = len(unique_symbols)
+            content["summary"] = summary
+            content["entries"] = unique_entries
+
+            # === SAVE ONLY IF CHANGED ===
+            if local_dedup > 0 or is_missing:
+                try:
+                    file_path.write_text(json.dumps(content, indent=2, ensure_ascii=False), encoding="utf-8")
+                    files_touched += 1
+                    dir_name = "HIGH→LOW" if "hightolow" in direction_file else "LOW→HIGH"
+                    status = action.strip() or "OK"
+                    print(f"[Done] {status} → {broker} | ${target_risk} | {symbol} {order_type.split()[0]} @ {entry_price} → {dir_name}")
+                except Exception as e:
+                    print(f"[Error] Failed to save {file_path}: {e}")
+            # If no change → do nothing and stay silent
+
+    # ========================================
+    # Final Report
+    # ========================================
+    print(f"\n{'='*70}")
+    print(f"[Restore + Dedup] COMPLETED")
+    print(f"   • Orders restored         : {restored_count}")
+    print(f"   • Duplicates removed      : {dedup_removed_count}")
+    print(f"   • Files updated           : {files_touched}")
+    if restored_count == 0 and dedup_removed_count == 0:
+        print(f"   All files already clean and complete")
+    print(f"{'='*70}\n")
+
+    return True 
+  
 def collect_all_brokers_limit_orders():
     BASE_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets"
     REPORT_NAME = "brokerslimitorders.json"
@@ -6778,7 +6966,7 @@ def collect_all_brokers_limit_orders():
 
     all_pending_orders = []
     all_open_positions = []
-    all_history_orders = []  # Only filled or closed with P/L
+    all_history_orders = []
     total_pending = 0
     total_positions = 0
     total_history = 0
@@ -6799,6 +6987,37 @@ def collect_all_brokers_limit_orders():
         days = hours // 24
         hours = hours % 24
         return f"{days}d {hours}h" if hours else f"{days}d"
+
+    # Helper: Calculate monetary value of SL/TP distance
+    def calculate_risk_reward(symbol, volume, entry_price, sl_price, tp_price, currency):
+        if not sl_price and not tp_price:
+            return None, None
+
+        symbol_info = mt5.symbol_info(symbol)
+        if not symbol_info:
+            return None, None
+
+        tick_value = symbol_info.trade_tick_value
+        tick_size = symbol_info.trade_tick_size
+        point = symbol_info.point
+        digits = symbol_info.digits
+
+        contract_size = symbol_info.trade_contract_size
+
+        sl_amount = None
+        tp_amount = None
+
+        if sl_price and sl_price != 0:
+            price_diff_sl = abs(entry_price - sl_price)
+            ticks_sl = price_diff_sl / tick_size
+            sl_amount = round(ticks_sl * tick_value * volume, 2)
+
+        if tp_price and tp_price != 0:
+            price_diff_tp = abs(tp_price - entry_price)
+            ticks_tp = price_diff_tp / tick_size
+            tp_amount = round(ticks_tp * tick_value * volume, 2)
+
+        return sl_amount, tp_amount
 
     log_and_print(f"\n{'='*100}", "INFO")
     log_and_print(f"COLLECTING PENDING LIMITS + OPEN POSITIONS + RECENT FILLED HISTORY (<5h)", "INFO")
@@ -6873,12 +7092,24 @@ def collect_all_brokers_limit_orders():
                 age_seconds = (current_time - order_time).total_seconds()
 
                 side_key = "BUY" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL"
+
+                sl_amount, tp_amount = calculate_risk_reward(
+                    symbol=symbol,
+                    volume=order.volume_current,
+                    entry_price=order.price_open,
+                    sl_price=order.sl,
+                    tp_price=order.tp,
+                    currency=currency
+                )
+
                 broker_symbol_data[broker_name][symbol]["pending"][side_key] = {
                     "ticket": order.ticket,
                     "volume": order.volume_current,
                     "entry_price": round(order.price_open, 6),
                     "sl": round(order.sl, 6) if order.sl != 0 else None,
                     "tp": round(order.tp, 6) if order.tp != 0 else None,
+                    "sl_amount": sl_amount,
+                    "tp_amount": tp_amount,
                     "setup_time": order_time.strftime("%Y-%m-%d %H:%M:%S"),
                     "comment": order.comment.strip() if order.comment else None,
                     "magic": order.magic,
@@ -6903,6 +7134,15 @@ def collect_all_brokers_limit_orders():
                 pos_type_str = "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL"
                 open_time = datetime.fromtimestamp(pos.time, TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+                sl_amount, tp_amount = calculate_risk_reward(
+                    symbol=symbol,
+                    volume=pos.volume,
+                    entry_price=pos.price_open,
+                    sl_price=pos.sl,
+                    tp_price=pos.tp,
+                    currency=currency
+                )
+
                 if symbol not in broker_symbol_data[broker_name]:
                     broker_symbol_data[broker_name][symbol] = {
                         "has_open": True,
@@ -6926,12 +7166,15 @@ def collect_all_brokers_limit_orders():
                     "current_price": round(pos.price_current, 6),
                     "sl": round(pos.sl, 6) if pos.sl != 0 else None,
                     "tp": round(pos.tp, 6) if pos.tp != 0 else None,
+                    "sl_amount": sl_amount,
+                    "tp_amount": tp_amount,
                     "open_time": open_time,
                     "profit": round(pos.profit, 2),
                     "swap": round(pos.swap, 2),
                     "comment": pos.comment.strip() if pos.comment else None,
                     "magic": pos.magic
                 })
+
         else:
             log_and_print("No open positions.", "INFO")
 
@@ -6942,15 +7185,10 @@ def collect_all_brokers_limit_orders():
 
         history_orders = mt5.history_orders_get(from_ts, to_ts) or []
 
-        # Filter: only limit orders that were executed (filled or partially filled and closed)
         relevant_history = []
         for h in history_orders:
             if h.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
                 continue
-            # Conditions to include:
-            # 1. Was filled (state filled)
-            # 2. OR volume_current == 0 and has profit (means fully executed or closed)
-            # 3. Exclude pure cancellations (never filled, volume_current > 0, profit = 0)
             if (h.state == mt5.ORDER_STATE_FILLED or 
                 (h.volume_current == 0 and getattr(h, 'profit', 0) != 0)):
                 relevant_history.append(h)
@@ -6967,7 +7205,16 @@ def collect_all_brokers_limit_orders():
                 age_seconds = (current_time - datetime.fromtimestamp(h.time_done, TZ)).total_seconds() if h.time_done else 0
                 age_str = format_age(age_seconds)
 
-                profit = round(getattr(h, 'profit', 0), 2) if hasattr(h, 'profit') else 0
+                profit = round(getattr(h, 'profit', 0), 2)
+
+                sl_amount, tp_amount = calculate_risk_reward(
+                    symbol=symbol,
+                    volume=h.volume_initial,
+                    entry_price=h.price_open,
+                    sl_price=getattr(h, 'sl', 0),
+                    tp_price=getattr(h, 'tp', 0),
+                    currency=currency
+                )
 
                 entry = {
                     "broker": broker_name,
@@ -6981,6 +7228,8 @@ def collect_all_brokers_limit_orders():
                     "filled_volume": h.volume_current if h.volume_current > 0 else h.volume_initial,
                     "entry_price": round(h.price_open, 6),
                     "fill_price": round(h.price_current, 6) if h.price_current != 0 else None,
+                    "sl_amount": sl_amount,
+                    "tp_amount": tp_amount,
                     "fill_time": fill_time,
                     "setup_time": datetime.fromtimestamp(h.time_setup, TZ).strftime("%Y-%m-%d %H:%M:%S"),
                     "comment": h.comment.strip() if h.comment else None,
@@ -7044,6 +7293,8 @@ def collect_all_brokers_limit_orders():
                     "entry_price": order["entry_price"],
                     "sl": order["sl"],
                     "tp": order["tp"],
+                    "sl_amount": order["sl_amount"],
+                    "tp_amount": order["tp_amount"],
                     "setup_time": order["setup_time"],
                     "comment": order["comment"],
                     "magic": order["magic"]
@@ -7089,7 +7340,8 @@ def collect_all_brokers_limit_orders():
         log_and_print(f"FAILED TO SAVE REPORT: {e}", "ERROR")
 
     log_and_print(f"{'='*100}", "INFO")
-    return True
+    restore_missing_orders()
+    return True  
 
 def deduplicate_pending_orders():
     r"""
@@ -7569,6 +7821,228 @@ def BreakevenRunningPositions():
 
     log_and_print("All brokers breakeven processed.", "SUCCESS")
 
+def risk_reward_ratio_levels():
+    """
+    8usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING POSITIONS) – BROKER-SAFE
+    - Works on ANY balance (balance check removed)
+    - Auto-supports riskreward: 1, 2, 3, 8... (any integer)
+    - Case-insensitive config
+    - consistency → Dynamic TP = RISKREWARD × Risk
+    - martingale → TP = 1R (always), ignores RISKREWARD
+    - Smart ratio ladder (shows 1R, 2R, 3R only when needed)
+    """
+    TZ = pytz.timezone("Africa/Lagos")
+
+    log_and_print(f"\n{'='*80}", "INFO")
+    log_and_print("RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
+    log_and_print(f"{'='*80}", "INFO")
+
+    for broker_name, cfg in brokersdictionary.items():
+        TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
+        LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
+        PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
+        SERVER        = cfg.get("SERVER")        or cfg.get("server")
+        SCALE         = (cfg.get("SCALE")        or cfg.get("scale")        or "").strip().lower()
+        STRATEGY      = (cfg.get("STRATEGY")    or cfg.get("strategy")    or "").strip().lower()
+
+        # === Case-insensitive riskreward lookup ===
+        riskreward_raw = None
+        for key in cfg:
+            if key.lower() == "riskreward":
+                riskreward_raw = cfg[key]
+                break
+
+        if riskreward_raw is None:
+            riskreward_raw = 2
+            log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+
+        log_and_print(
+            f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+            f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
+        )
+
+        # === Validate required fields ===
+        missing = []
+        for f in ("TERMINAL_PATH", "LOGIN_ID", "PASSWORD", "SERVER", "SCALE"):
+            if not locals()[f]: missing.append(f)
+        if missing:
+            log_and_print(f"Missing config: {', '.join(missing)} → SKIPPED", "ERROR")
+            continue
+
+        # === MT5 Init ===
+        if not os.path.exists(TERMINAL_PATH):
+            log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+            continue
+
+        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD,
+                                server=SERVER, timeout=30000):
+            log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
+            continue
+
+        if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
+            log_and_print(f"MT5 login failed: {mt5.last_error()}", "ERROR")
+            mt5.shutdown()
+            continue
+
+        account_info = mt5.account_info()
+        if not account_info:
+            log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
+            mt5.shutdown()
+            continue
+
+        balance = account_info.balance
+        # REMOVED: Balance restriction ($12–$20)
+        log_and_print(f"Balance: ${balance:.2f} → Scanning positions & pending orders...", "INFO")
+
+        # === Determine effective RR ===
+        try:
+            config_rr = int(float(riskreward_raw))
+            if config_rr < 1: config_rr = 1
+        except (ValueError, TypeError):
+            config_rr = 2
+            log_and_print(f"Invalid riskreward '{riskreward_raw}' → using 2R", "WARNING")
+
+        effective_rr = 1 if SCALE == "martingale" else config_rr
+        rr_source = "MARTINGALE (forced 1R)" if SCALE == "martingale" else f"CONFIG ({effective_rr}R)"
+        log_and_print(f"Effective TP: {effective_rr}R [{rr_source}]", "INFO")
+
+        # ------------------------------------------------------------------ #
+        # 1. PENDING LIMIT ORDERS
+        # ------------------------------------------------------------------ #
+        pending_orders = [
+            o for o in (mt5.orders_get() or [])
+            if o.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT)
+            and getattr(o, 'sl', 0) != 0 and getattr(o, 'tp', 0) != 0
+        ]
+
+        # ------------------------------------------------------------------ #
+        # 2. RUNNING POSITIONS
+        # ------------------------------------------------------------------ #
+        running_positions = [
+            p for p in (mt5.positions_get() or [])
+            if p.type in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_SELL)
+            and p.sl != 0 and p.tp != 0
+        ]
+
+        # Merge into a single iterable with a flag
+        items_to_process = []
+        for o in pending_orders:
+            items_to_process.append(('PENDING', o))
+        for p in running_positions:
+            items_to_process.append(('RUNNING', p))
+
+        if not items_to_process:
+            log_and_print("No valid pending orders or running positions found.", "INFO")
+            mt5.shutdown()
+            continue
+
+        log_and_print(f"Found {len(pending_orders)} pending + {len(running_positions)} running → total {len(items_to_process)}", "INFO")
+
+        processed_symbols = set()
+        updated_count = 0
+
+        for kind, obj in items_to_process:
+            symbol   = obj.symbol
+            ticket   = getattr(obj, 'ticket', None) or getattr(obj, 'order', None)
+            entry_price = getattr(obj, 'price_open', None) or getattr(obj, 'price_current', None)
+            sl_price = obj.sl
+            current_tp  = obj.tp
+            is_buy   = obj.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY)
+
+            if symbol in processed_symbols:
+                continue
+
+            risk_distance = abs(entry_price - sl_price)
+            if risk_distance <= 0:
+                log_and_print(f"Zero risk distance on {symbol} ({kind}) → skipped", "WARNING")
+                continue
+
+            symbol_info = mt5.symbol_info(symbol)
+            if not symbol_info:
+                log_and_print(f"Symbol info missing: {symbol}", "WARNING")
+                continue
+
+            digits = symbol_info.digits
+            def r(p): return round(p, digits)
+
+            entry_price = r(entry_price)
+            sl_price    = r(sl_price)
+            current_tp  = r(current_tp)
+            direction   = 1 if is_buy else -1
+            target_tp   = r(entry_price + direction * effective_rr * risk_distance)
+
+            # ----- Ratio ladder (display only) -----
+            ratio1 = r(entry_price + direction * 1 * risk_distance)
+            ratio2 = r(entry_price + direction * 2 * risk_distance)
+            ratio3 = r(entry_price + direction * 3 * risk_distance) if effective_rr >= 3 else None
+
+            print(f"\n{symbol} | {kind} | Target: {effective_rr}R ({SCALE.upper()})")
+            print(f"  Entry : {entry_price}")
+            print(f"  1R    : {ratio1}")
+            print(f"  2R    : {ratio2}")
+            if ratio3:
+                print(f"  3R    : {ratio3}")
+            print(f"  TP    : {current_tp} → ", end="")
+
+            # ----- Modify TP -----
+            tolerance = 10 ** -digits
+            if abs(current_tp - target_tp) > tolerance:
+                if kind == "PENDING":
+                    request = {
+                        "action": mt5.TRADE_ACTION_MODIFY,
+                        "order": ticket,
+                        "price": entry_price,
+                        "sl": sl_price,
+                        "tp": target_tp,
+                        "type": obj.type,
+                        "type_time": obj.type_time,
+                        "type_filling": obj.type_filling,
+                        "magic": getattr(obj, 'magic', 0),
+                        "comment": getattr(obj, 'comment', "")
+                    }
+                    if hasattr(obj, 'expiration') and obj.expiration:
+                        request["expiration"] = obj.expiration
+                else:  # RUNNING
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": ticket,
+                        "sl": sl_price,
+                        "tp": target_tp,
+                        "symbol": symbol
+                    }
+
+                result = mt5.order_send(request)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    print(f"{target_tp} [UPDATED]")
+                    log_and_print(
+                        f"TP → {effective_rr}R | {symbol} | {kind} | {current_tp} → {target_tp} [{SCALE.upper()}]",
+                        "SUCCESS"
+                    )
+                    updated_count += 1
+                else:
+                    err = result.comment if result else "Unknown"
+                    print(f"{current_tp} [FAILED: {err}]")
+                    log_and_print(f"TP UPDATE FAILED | {symbol} | {kind} | {err}", "ERROR")
+            else:
+                print(f"{current_tp} [OK]")
+
+            print(f"  SL    : {sl_price}")
+            processed_symbols.add(symbol)
+
+        mt5.shutdown()
+        log_and_print(
+            f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+            f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
+            "SUCCESS"
+        )
+
+    log_and_print(
+        "\nALL ACCOUNTS: R:R UPDATE (PENDING + RUNNING) – "
+        "consistency=N×R, martingale=1R = DONE",
+        "SUCCESS"
+    )
+    return True
+
 def martingale_enforcement():
     """
     MARTINGALE ENFORCER v5.2 – SMART KILL + REAL HISTORY SCALING
@@ -7849,8 +8323,641 @@ def martingale_enforcement():
     log_and_print("\nMARTINGALE v5.2 → HISTORY CHECKED. SCALED. DONE.", "SUCCESS")
     return True
 
+def place_2usd_orders():
+    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
+    RISK_FOLDER = "risk_2_usd"
+    STRATEGY_FILE = "hightolow.json"
+    REPORT_SUFFIX = "forex_order_report.json"
+    ISSUES_FILE = "ordersissues.json"
+
+    for broker_name, broker_cfg in brokersdictionary.items():
+        TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
+        LOGIN_ID = broker_cfg["LOGIN_ID"]
+        PASSWORD = broker_cfg["PASSWORD"]
+        SERVER = broker_cfg["SERVER"]
+
+        log_and_print(f"Processing broker: {broker_name} (Balance $8–$11.99 → 2 USD risk mode)", "INFO")
+
+        # === MT5 Init ===
+        if not os.path.exists(TERMINAL_PATH):
+            log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
+            continue
+
+        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=60000):
+            log_and_print(f"MT5 initialize failed: {mt5.last_error()}", "ERROR")
+            continue
+
+        if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
+            log_and_print(f"MT5 login failed: {mt5.last_error()}", "ERROR")
+            mt5.shutdown()
+            continue
+
+        account_info = mt5.account_info()
+        if not account_info:
+            log_and_print(f"Failed to get account info: {mt5.last_error()}", "ERROR")
+            mt5.shutdown()
+            continue
+
+        balance = account_info.balance
+        equity = account_info.equity
+        log_and_print(f"Balance: ${balance:.2f}, Equity: ${equity:.2f}", "INFO")
+
+        # Strict balance check for 2 USD risk mode
+        if not (8.0 <= balance < 11.99):
+            log_and_print(f"Balance ${balance:.2f} not in $8.00–$11.99 → SKIPPED", "INFO")
+            mt5.shutdown()
+            continue
+
+        if equity < 8.0:
+            log_and_print(f"Equity ${equity:.2f} < $8.0 → In drawdown → SKIPPED", "WARNING")
+            mt5.shutdown()
+            continue
+
+        log_and_print(f"Account valid → Proceeding with {RISK_FOLDER} strategy", "INFO")
+
+        # === Load hightolow.json ===
+        file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+        if not file_path.exists():
+            log_and_print(f"Strategy file not found: {file_path}", "WARNING")
+            mt5.shutdown()
+            continue
+
+        try:
+            with file_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                entries = data.get("entries", [])
+        except Exception as e:
+            log_and_print(f"Failed to load JSON: {e}", "ERROR")
+            mt5.shutdown()
+            continue
+
+        if not entries:
+            log_and_print("No entries found in hightolow.json", "INFO")
+            mt5.shutdown()
+            continue
+
+        # === Track existing orders & positions ===
+        existing_pending = {}   # (symbol, type) → ticket
+        running_positions = set()
+
+        for order in (mt5.orders_get() or []):
+            if order.type in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
+                existing_pending[(order.symbol, order.type)] = order.ticket
+
+        for pos in (mt5.positions_get() or []):
+            running_positions.add(pos.symbol)
+
+        # === Reporting setup ===
+        report_file = file_path.parent / REPORT_SUFFIX
+        issues_path = file_path.parent / ISSUES_FILE
+        existing_reports = []
+        if report_file.exists():
+            try:
+                with report_file.open("r", encoding="utf-8") as f:
+                    existing_reports = json.load(f)
+            except:
+                existing_reports = []
+
+        issues_list = []
+        now_str = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f+01:00")
+        placed = failed = skipped = 0
+
+        for entry in entries:
+            try:
+                symbol = entry["market"]
+                price = float(entry["entry_price"])
+                sl = float(entry["sl_price"])
+                tp = float(entry["tp_price"])
+                volume = float(entry["volume"])
+                order_type_str = entry["limit_order"]
+                order_type = mt5.ORDER_TYPE_BUY_LIMIT if order_type_str == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT
+
+                # Skip if already running or pending
+                if symbol in running_positions:
+                    skipped += 1
+                    log_and_print(f"{symbol} → Already has open position → SKIPPED", "INFO")
+                    continue
+
+                key = (symbol, order_type)
+                if key in existing_pending:
+                    skipped += 1
+                    log_and_print(f"{symbol} {order_type_str} → Already pending → SKIPPED", "INFO")
+                    continue
+
+                # Symbol info
+                symbol_info = mt5.symbol_info(symbol)
+                if not symbol_info or not symbol_info.visible:
+                    issues_list.append({"symbol": symbol, "reason": "Symbol not visible"})
+                    failed += 1
+                    continue
+
+                if not mt5.symbol_select(symbol, True):
+                    issues_list.append({"symbol": symbol, "reason": "Failed to select symbol"})
+                    failed += 1
+                    continue
+
+                tick = mt5.symbol_info_tick(symbol)
+                if not tick:
+                    issues_list.append({"symbol": symbol, "reason": "No tick data"})
+                    failed += 1
+                    continue
+
+                point = symbol_info.point
+
+                # === DERIV-SPECIFIC MINIMUM DISTANCE ===
+                is_synthetic = any(x in symbol for x in ["Volatility", "Boom", "Crash", "Jump", "Step"])
+                min_distance_points = 120 if is_synthetic else 30  # 120+ safe for all Deriv synthetics
+
+                if order_type == mt5.ORDER_TYPE_BUY_LIMIT:
+                    current_price = tick.ask
+                    if price >= current_price or (current_price - price) < min_distance_points * point:
+                        skipped += 1
+                        log_and_print(f"{symbol} BUY_LIMIT price too close ({current_price - price:.1f} points < {min_distance_points}) → SKIPPED", "INFO")
+                        continue
+                else:
+                    current_price = tick.bid
+                    if price <= current_price or (price - current_price) < min_distance_points * point:
+                        skipped += 1
+                        log_and_print(f"{symbol} SELL_LIMIT price too close ({price - current_price:.1f} points < {min_distance_points}) → SKIPPED", "INFO")
+                        continue
+
+                # SL/TP distance check
+                min_sl_tp = min_distance_points * point
+                if abs(price - sl) < min_sl_tp or abs(price - tp) < min_sl_tp:
+                    issues_list.append({"symbol": symbol, "reason": "SL/TP too close"})
+                    failed += 1
+                    log_and_print(f"{symbol} SL/TP too tight (< {min_distance_points} points) → REJECTED", "WARNING")
+                    continue
+
+                # Volume correction
+                vol_step = symbol_info.volume_step
+                vol_min = symbol_info.volume_min
+                vol_max = symbol_info.volume_max
+                volume = max(vol_min, round(volume / vol_step) * vol_step)
+                volume = min(volume, vol_max)
+
+                if volume < vol_min:
+                    issues_list.append({"symbol": symbol, "reason": f"Volume too small: {volume} < {vol_min}"})
+                    failed += 1
+                    continue
+
+                # === FINAL ORDER REQUEST (DERIV-PROVEN SETTINGS) ===
+                request = {
+                    "action": mt5.TRADE_ACTION_PENDING,
+                    "symbol": symbol,
+                    "volume": volume,
+                    "type": order_type,
+                    "price": price,
+                    "sl": sl,
+                    "tp": tp,
+                    "deviation": 20,
+                    "magic": 123456,
+                    "comment": "Risk2_Auto",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_FOK,   # Critical for Deriv!
+                }
+
+                result = mt5.order_send(request)
+
+                # Enhanced error reporting
+                if result is None:
+                    retcode = 10000
+                    comment = "order_send returned None"
+                else:
+                    retcode = result.retcode
+                    comment = result.comment
+
+                success = (result and result.retcode == mt5.TRADE_RETCODE_DONE)
+
+                if success:
+                    placed += 1
+                    existing_pending[key] = result.order
+                    log_and_print(f"{symbol} {order_type_str.upper()} @ {price:.5f} → PLACED (Ticket: {result.order})", "SUCCESS")
+                else:
+                    failed += 1
+                    error_msg = f"Retcode: {retcode} | {comment}"
+                    issues_list.append({"symbol": symbol, "reason": error_msg})
+                    log_and_print(f"{symbol} → FAILED → {error_msg}", "ERROR")
+
+                # Save report entry
+                report_entry = {
+                    "symbol": symbol,
+                    "order_type": order_type_str,
+                    "price": price,
+                    "volume": volume,
+                    "sl": sl,
+                    "tp": tp,
+                    "risk_usd": 2.0,
+                    "ticket": result.order if success else None,
+                    "success": success,
+                    "error_code": retcode if not success else None,
+                    "error_msg": comment if not success else None,
+                    "timestamp": now_str
+                }
+                existing_reports.append(report_entry)
+
+            except Exception as e:
+                failed += 1
+                issues_list.append({"symbol": symbol if 'symbol' in locals() else "Unknown", "reason": f"Exception: {str(e)}"})
+                log_and_print(f"Exception processing entry: {e}", "ERROR")
+
+        # === Save reports ===
+        try:
+            with report_file.open("w", encoding="utf-8") as f:
+                json.dump(existing_reports, f, indent=2)
+        except Exception as e:
+            log_and_print(f"Failed to save report: {e}", "ERROR")
+
+        try:
+            existing_issues = []
+            if issues_path.exists():
+                with issues_path.open("r", encoding="utf-8") as f:
+                    existing_issues = json.load(f)
+            with issues_path.open("w", encoding="utf-8") as f:
+                json.dump(existing_issues + issues_list, f, indent=2)
+        except Exception as e:
+            log_and_print(f"Failed to save issues: {e}", "ERROR")
+
+        mt5.shutdown()
+        log_and_print(f"{broker_name} → Placed: {placed} | Failed: {failed} | Skipped: {skipped}", "SUCCESS")
+
+    log_and_print("All 2 USD risk accounts processed successfully.", "SUCCESS")
+    return True
+
+def purge_non_allowed_orders():
+    """
+    Enhanced Purge: 
+      • Removes non-allowed orders from JSON files (original behavior)
+      • ALSO cancels any PENDING LIMIT orders in MT5 that belong to restricted markets
+    """
+    from pathlib import Path
+    import json
+    from datetime import datetime
+    import MetaTrader5 as mt5
+    import pytz
+
+    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
+    NON_ALLOWED_OUT = BASE_DIR / "nonallowedorders.json"
+
+    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
+    ALL_SYMBOLS_PATH      = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json")
+    SYMBOL_MATCH_PATH     = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json")
+
+    print("[PURGE] Starting detection + REMOVAL of non-allowed orders (JSON + LIVE PENDING)...")
+
+    # ========================= LOAD CONTROL FILES =========================
+    try:
+        allowed_cfg = json.loads(ALLOWED_MARKETS_PATH.read_text(encoding="utf-8"))
+        all_symbols_data = json.loads(ALL_SYMBOLS_PATH.read_text(encoding="utf-8"))
+        symbol_match_raw = json.loads(SYMBOL_MATCH_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[PURGE] Failed to load control file: {e}")
+        return False
+
+    # === Build symbol → asset class mapping ===
+    symbol_to_asset = {}
+    for risk_key, asset_groups in all_symbols_data.items():
+        for raw_asset_class, entries in asset_groups.items():
+            asset_key = raw_asset_class.lower().replace(" ", "").replace("_", "")
+            if asset_key == "basket_indices":
+                asset_key = "basketindices"
+            for entry in entries:
+                sym = entry.get("symbol")
+                if sym:
+                    symbol_to_asset[sym.strip()] = asset_key
+
+    # === Broker variant → main symbol ===
+    main_symbol_lookup = {}
+    for item in symbol_match_raw.get("main_symbols", []):
+        main = item.get("symbol")
+        if not main: continue
+        for broker in ["deriv", "bybit", "exness"]:
+            for variant in item.get(broker, []):
+                if variant:
+                    main_symbol_lookup[variant] = main
+
+    # === Build allowed config ===
+    allowed_config = {}
+    for raw_cls, cfg in allowed_cfg.items():
+        cls_key = raw_cls.lower().replace("_", "")
+        if cls_key == "basket_indices":
+            cls_key = "basketindices"
+        allowed_config[cls_key] = {
+            "limited": bool(cfg.get("limited", False)),
+            "whitelist": {s.strip().upper() for s in cfg.get("allowed", []) if s.strip()}
+        }
+
+    # ========================= PURGE FROM JSON FILES (Original Logic) =========================
+    non_allowed_orders = []
+    total_removed_json = 0
+    files_modified = 0
+
+    for broker_dir in BASE_DIR.iterdir():
+        if not broker_dir.is_dir():
+            continue
+
+        for risk_folder in broker_dir.iterdir():
+            if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_"):
+                continue
+
+            for json_file in ["hightolow.json", "lowtohigh.json"]:
+                fpath = risk_folder / json_file
+                if not fpath.exists():
+                    continue
+
+                try:
+                    data = json.loads(fpath.read_text(encoding="utf-8"))
+                except:
+                    continue
+
+                original_entries = data.get("entries", [])
+                if not original_entries:
+                    continue
+
+                clean_entries = []
+                file_removed = 0
+
+                for entry in original_entries:
+                    market = entry.get("market", "").strip()
+                    if not market:
+                        clean_entries.append(entry)
+                        continue
+
+                    resolved = main_symbol_lookup.get(market, market)
+                    asset_class = symbol_to_asset.get(resolved) or symbol_to_asset.get(market)
+
+                    # Fallback classification
+                    if not asset_class:
+                        lower = market.lower()
+                        if market.endswith("USD") and len(market) <= 10:
+                            asset_class = "crypto"
+                        elif any(c in market for c in ["AUD","EUR","GBP","USD","JPY","CAD","CHF","NZD"]):
+                            asset_class = "forex"
+                        elif "volatility" in lower or "index" in lower:
+                            asset_class = "synthetics"
+                        else:
+                            asset_class = "unknown"
+
+                    config = allowed_config.get(asset_class, {"limited": False, "whitelist": set()})
+                    is_whitelisted = resolved.upper() in config["whitelist"] or market.upper() in config["whitelist"]
+
+                    if config["limited"] and not is_whitelisted:
+                        non_allowed_orders.append({
+                            **entry,
+                            "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "source_file": str(fpath.relative_to(BASE_DIR)),
+                            "broker": broker_dir.name,
+                            "resolved_symbol": resolved,
+                            "detected_asset_class": asset_class,
+                            "reason": f"LIMITED asset class '{asset_class}' – not in whitelist",
+                            "purged_from": "JSON"
+                        })
+                        file_removed += 1
+                        total_removed_json += 1
+                    else:
+                        clean_entries.append(entry)
+
+                if file_removed > 0:
+                    data["entries"] = clean_entries
+                    summary = data.get("summary", {})
+                    # Rebuild summary counts
+                    for key in list(summary.keys()):
+                        if "symbols" in key:
+                            if key == "allmarketssymbols":
+                                summary[key] = len(clean_entries)
+                            else:
+                                asset = key.replace("symbols", "")
+                                summary[key] = sum(1 for e in clean_entries if (symbol_to_asset.get(e.get("market",""), "") or "unknown") == asset)
+                    data["summary"] = summary
+                    data["purged_non_allowed"] = file_removed
+                    data["purged_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    try:
+                        fpath.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                        files_modified += 1
+                        print(f"  [JSON PURGED] {file_removed} → {fpath.relative_to(BASE_DIR)}")
+                    except Exception as e:
+                        print(f"  [ERROR] Failed to save {fpath}: {e}")
+
+    # ========================= CANCEL PENDING LIMIT ORDERS IN MT5 =========================
+    total_removed_pending = 0
+    for broker_name, cfg in brokersdictionary.items():  # Assuming you have this dict defined globally
+        print(f"[PURGE] Connecting to {broker_name} to cancel non-allowed pending orders...")
+
+        if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
+                              password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=60000):
+            print(f"[PURGE] {broker_name}: MT5 initialize failed")
+            continue
+
+        if not mt5.login(int(cfg["LOGIN_ID"]), password=cfg["PASSWORD"], server=cfg["SERVER"]):
+            print(f"[PURGE] {broker_name}: Login failed")
+            mt5.shutdown()
+            continue
+
+        orders = mt5.orders_get()
+        if not orders:
+            mt5.shutdown()
+            continue
+
+        canceled_this_broker = 0
+        for order in orders:
+            if order.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
+                continue
+
+            sym = order.symbol
+            resolved = main_symbol_lookup.get(sym, sym)
+            asset_class = symbol_to_asset.get(resolved) or symbol_to_asset.get(sym)
+
+            # Fallback
+            if not asset_class:
+                lower = sym.lower()
+                if sym.endswith("USD") and len(sym) <= 10:
+                    asset_class = "crypto"
+                elif any(c in sym for c in ["AUD","EUR","GBP","USD","JPY","CAD","CHF","NZD"]):
+                    asset_class = "forex"
+                elif "volatility" in lower or "index" in lower:
+                    asset_class = "synthetics"
+                else:
+                    asset_class = "unknown"
+
+            config = allowed_config.get(asset_class, {"limited": False, "whitelist": set()})
+            is_whitelisted = resolved.upper() in config["whitelist"] or sym.upper() in config["whitelist"]
+
+            if config["limited"] and not is_whitelisted:
+                # CANCEL THE ORDER
+                request = {
+                    "action": mt5.TRADE_ACTION_REMOVE,
+                    "order": order.ticket,
+                }
+                result = mt5.order_send(request)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    print(f"  [CANCELED PENDING] {sym} (ticket {order.ticket}) → {asset_class}")
+                    canceled_this_broker += 1
+                    total_removed_pending += 1
+
+                    non_allowed_orders.append({
+                        "symbol": sym,
+                        "ticket": order.ticket,
+                        "type": "BUY_LIMIT" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL_LIMIT",
+                        "price_open": order.price_open,
+                        "sl": order.sl,
+                        "tp": order.tp,
+                        "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": broker_name,
+                        "resolved_symbol": resolved,
+                        "detected_asset_class": asset_class,
+                        "reason": f"LIMITED asset class '{asset_class}' – not in whitelist",
+                        "purged_from": "PENDING_ORDER_MT5"
+                    })
+                else:
+                    print(f"  [FAILED CANCEL] {sym} (ticket {order.ticket}) – {result.comment if result else 'No result'}")
+
+        print(f"[PURGE] {broker_name}: Canceled {canceled_this_broker} non-allowed pending orders.")
+        mt5.shutdown()
+
+    # ========================= FINAL REPORT =========================
+    total_removed = total_removed_json + total_removed_pending
+    result = {
+        "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "total_purged_orders": total_removed,
+        "purged_from_json": total_removed_json,
+        "purged_from_pending_mt5": total_removed_pending,
+        "files_cleaned": files_modified,
+        "purged_orders": non_allowed_orders
+    }
+
+    try:
+        NON_ALLOWED_OUT.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\n[PURGE] SUCCESS → {total_removed} non-allowed orders removed!")
+        print(f"        → {total_removed_json} from JSON files")
+        print(f"        → {total_removed_pending} pending orders canceled in MT5")
+        print(f"        Full log saved: {NON_ALLOWED_OUT}\n")
+        if total_removed == 0:
+            print("[PURGE] SYSTEM CLEAN – No non-allowed orders found anywhere.")
+    except Exception as e:
+        print(f"[PURGE] Failed to write final log: {e}")
+
+    return total_removed == 0
+
+def print_broker_names():
+    base_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
+    
+    if not os.path.exists(base_path):
+        print(f"ERROR: Base directory does not exist:\n    {base_path}")
+        return
+    
+    if not brokersdictionary:
+        print("No brokers found in brokersdictionary.")
+        return
+
+    print("Configured Brokers & Folder Check:")
+    print("=" * 90)
+    
+    configured_names = set()
+    broker_details = []
+    existing = 0
+    missing = 0
+    
+    for broker_name in brokersdictionary.keys():
+        configured_names.add(broker_name.strip())
+        safe_broker_name = "".join(c if c not in r'\/:*?"<>|' else "_" for c in broker_name.strip())
+        folder_path = os.path.join(base_path, safe_broker_name)
+        
+        exists = os.path.isdir(folder_path)
+        marker = "Success" if exists else "Error"
+        status = "EXISTS" if exists else "MISSING"
+        
+        print(f"{marker} {broker_name.ljust(30)} → {status}")
+        print(f"    Path: {folder_path}\n")
+        
+        broker_details.append({
+            'full': broker_name.strip(),
+            'safe': safe_broker_name,
+            'exists': exists
+        })
+        
+        if exists:
+            existing += 1
+        else:
+            missing += 1
+    
+    print("=" * 90)
+    print(f"Total configured: {len(brokersdictionary)} broker(s) | "
+          f"{existing} folder(s) exist | {missing} missing")
+
+    # ——————————————————————————————
+    # Unique configured broker bases
+    # ——————————————————————————————
+    print("\nUnique Configured Broker Bases:")
+    print("-" * 60)
+    
+    base_names = {}
+    for broker in broker_details:
+        full = broker['full']
+        match = re.match(r"([a-zA-Z_]+)\d*$", full)
+        base = match.group(1) if match else full
+        base_names.setdefault(base, []).append(full)
+    
+    for base, instances in sorted(base_names.items()):
+        print(f"• {base.ljust(15)} → {len(instances)} configured account(s): {', '.join(instances)}")
+    print("-" * 60)
+    print(f"Unique configured broker types: {len(base_names)}")
+
+    # ——————————————————————————————
+    # AUTO-DELETE ORPHANED FOLDERS (NO CONFIRMATION)
+    # ——————————————————————————————
+    print("\nScanning and AUTO-DELETING Orphaned Broker Folders...")
+    print("-" * 70)
+    
+    if not os.path.isdir(base_path):
+        print("Base path not accessible. Skipping cleanup.")
+        return
+    
+    orphaned_to_delete = []
+    all_folders = [f for f in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, f))]
+    
+    for folder_name in all_folders:
+        clean_name = folder_name.strip()
+        original_folder_path = os.path.join(base_path, folder_name)
+        
+        # Try to extract base broker name (e.g., "deriv" from "deriv7" or "deriv8_something")
+        match = re.match(r"([a-zA-Z_]+)\d*", clean_name.split('_')[0])
+        base = match.group(1) if match else None
+        
+        # Case 1: Folder name doesn't match any configured broker exactly
+        if clean_name not in configured_names:
+            if base and any(b['full'].startswith(base) for b in broker_details):
+                reason = "same broker family but unconfigured account"
+            elif base:
+                reason = "completely unknown broker type"
+            else:
+                reason = "invalid naming pattern"
+            
+            orphaned_to_delete.append((folder_name, base or "unknown", reason, original_folder_path))
+
+    deleted_count = 0
+    if orphaned_to_delete:
+        print("Deleting orphaned folders immediately:")
+        for folder, base, reason, full_path in orphaned_to_delete:
+            try:
+                shutil.rmtree(full_path)  # Permanently deletes folder + all contents
+                print(f"  DELETED: {folder.ljust(25)} → {base.ljust(12)} | {reason}")
+                deleted_count += 1
+            except Exception as e:
+                print(f"  FAILED to delete: {folder} → {str(e)}")
+        
+        print(f"\nCleanup complete: {deleted_count} orphaned folder(s) permanently deleted.")
+    else:
+        print("No orphaned folders found. Nothing to delete.")
+
+    print("-" * 70)
+    
+    if missing > 0:
+        print(f"\nReminder: {missing} configured broker(s) are missing their folder!")
 
 def main():
+    print_broker_names()
+    collect_all_brokers_limit_orders()
     _12_20_orders()
     _0_50_4_orders()
     _4_8_orders()
@@ -7859,7 +8966,8 @@ def main():
     _80_160_orders()
     _160_320_orders()
     deduplicate_pending_orders()
-    collect_all_brokers_limit_orders()
+    purge_non_allowed_orders()
+    risk_reward_ratio_levels()
     martingale_enforcement()
 
-_8_12_orders()
+
