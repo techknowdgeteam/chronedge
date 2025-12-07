@@ -1,0 +1,88 @@
+{
+    "BARS": 201,
+    "SUBJECT": "custom",
+    "drawings_switch":{
+        "trendline":"yes",
+        "horizontal_line":"no"
+    },
+    "parenthighsandlows": {
+        "NEIGHBOR_LEFT": 10,
+        "NEIGHBOR_RIGHT": 15
+    },
+    "childhighsandlows": {
+        "NEIGHBOR_LEFT": 5,
+        "NEIGHBOR_RIGHT": 7
+    },
+    "trendline": {
+        "1":{
+            "FROM": "ph",
+            "rules":{
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle"
+            },
+            "TO": "ph",
+            "BREAKOUT": "yes"
+        },
+        "2":{
+            "FROM": "pl",
+            "rules":{
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle"
+            },
+            "TO": "pl",
+            "BREAKOUT": "yes"
+        },
+        "3":{
+            "FROM": "ch",
+            "rules":{
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle"
+            },
+            "TO": "ch",
+            "BREAKOUT": "yes"
+        },
+        "4":{
+            "FROM": "cl",
+            "rules":{
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle"
+            },
+            "TO": "cl",
+            "BREAKOUT": "yes"
+        }
+    },
+    "horizontal_line": {
+        "1":{
+            "FROM": "ph",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "ph"
+        },
+        "2":{
+            "FROM": "pl",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "pl"
+        },
+        "3":{
+            "FROM": "ch",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "ch"
+        },
+        "4":{
+            "FROM": "cl",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "cl"
+        }
+    }
+}
