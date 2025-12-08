@@ -15,44 +15,104 @@
     },
     "trendline": {
         "1":{
+            "TREND": "bearish",
             "FROM": "ph",
             "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bearish",
+                    "receiver_candle":"bearish",
+                    "extreme_interceptor":"bearish",
+                    "target_zone":"bearish",
+                    "opposition_candle":"bullish",
+                    "retest_candle":"bearish"
+                },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
-                "breakout_condition":"3_sequence_candle"
+                "breakout_condition":"3_sequence_candle",
+                "order_block_condition":{
+                    "bullish":"lowprice",
+                    "bearish":"highprice"
+                }
             },
             "TO": "ph",
-            "BREAKOUT": "yes"
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "breakout",
+            "ORDER_BLOCK": "sender"
         },
         "2":{
+            "TREND": "bullish",
             "FROM": "pl",
             "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bullish",
+                    "receiver_candle":"bullish",
+                    "opposition_candle":"bearish",
+                    "retest_candle":"bullish",
+                    "extreme_interceptor":"bullish",
+                    "target_zone":"bullish"
+                },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
-                "breakout_condition":"3_sequence_candle"
+                "breakout_condition":"3_sequence_candle",
+                "order_block_condition":{
+                    "bullish":"lowprice",
+                    "bearish":"highprice"
+                }
             },
             "TO": "pl",
-            "BREAKOUT": "yes"
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "breakout",
+            "ORDER_BLOCK": "sender"
         },
         "3":{
+            "TREND": "bearish",
             "FROM": "ch",
             "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bearish",
+                    "receiver_candle":"bearish",
+                    "opposition_candle":"bullish",
+                    "retest_candle":"bearish",
+                    "extreme_interceptor":"bearish",
+                    "target_zone":"bearish"
+                },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
-                "breakout_condition":"3_sequence_candle"
+                "breakout_condition":"3_sequence_candle",
+                "order_block_condition":{
+                    "bullish":"lowprice",
+                    "bearish":"highprice"
+                }
             },
             "TO": "ch",
-            "BREAKOUT": "yes"
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "breakout",
+            "ORDER_BLOCK": "sender"
         },
         "4":{
+            "TREND": "bullish",
             "FROM": "cl",
             "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bullish",
+                    "receiver_candle":"bullish",
+                    "opposition_candle":"bearish",
+                    "retest_candle":"bullish",
+                    "extreme_interceptor":"bullish",
+                    "target_zone":"bullish"
+                },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
-                "breakout_condition":"3_sequence_candle"
+                "breakout_condition":"3_sequence_candle",
+                "order_block_condition":{
+                    "bullish":"lowprice",
+                    "bearish":"highprice"
+                }
             },
             "TO": "cl",
-            "BREAKOUT": "yes"
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "breakout",
+            "ORDER_BLOCK": "sender"
         }
     },
     "horizontal_line": {
