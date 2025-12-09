@@ -4100,7 +4100,7 @@ def custom_trendline():
     # ------------------------------------------------------------------
     # MARKERS (unchanged)
     # ------------------------------------------------------------------
-    def mark_extreme_interceptor(img, x, body_y, color):
+    def mark_breakout_extreme_interceptor(img, x, body_y, color):
         cv2.circle(img, (x, body_y), 18, color, 4)
         cv2.circle(img, (x, body_y), 14, (0, 255, 255), 2)
         arrow_start_x = x - 70
@@ -4108,6 +4108,20 @@ def custom_trendline():
         cv2.arrowedLine(img, (arrow_start_x, body_y), (arrow_end_x, body_y), color, thickness=4, tipLength=0.3)
 
     def mark_breakout_candle(img, x, body_y, color):
+        label_x = x - 38
+        label_y = body_y + 6
+        cv2.putText(img, "B", (label_x + 1, label_y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3)
+        cv2.putText(img, "B", (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+        cv2.putText(img, "B", (label_x - 1, label_y - 1), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1)
+
+    def mark_continuation_extreme_interceptor(img, x, body_y, color):
+        cv2.circle(img, (x, body_y), 18, color, 4)
+        cv2.circle(img, (x, body_y), 14, (0, 255, 255), 2)
+        arrow_start_x = x - 70
+        arrow_end_x = x - 20
+        cv2.arrowedLine(img, (arrow_start_x, body_y), (arrow_end_x, body_y), color, thickness=4, tipLength=0.3)
+
+    def mark_continuation_candle(img, x, body_y, color):
         label_x = x - 38
         label_y = body_y + 6
         cv2.putText(img, "B", (label_x + 1, label_y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3)
@@ -4248,8 +4262,10 @@ def custom_trendline():
                     "interceptor_enabled": str(conf.get("INTERCEPTOR", "no")).strip().lower() == "yes",
                     "direction": direction,
                     "breakout_sequence_count": seq_count if direction == "breakout" and seq_count > 0 else 0,
+                    "continuation_sequence_count": seq_count if direction == "continuation" and seq_count > 0 else 0,
                     # NEW DYNAMIC KEYS
-                    "trend_family": trend_family,
+                    "HORIZONTAL_LINE_ENTRY": conf.get("HORIZONTAL_LINE_ENTRY", "none").strip().lower(),
+                    "trend_family": trend_family, 
                     "point_keys": {
                         "sender": sender_key_name,
                         "receiver": receiver_key_name,
@@ -4462,7 +4478,7 @@ def custom_trendline():
                             "color": list(map(int, color)),
                             "interceptors": [],
                             "opposition_candle": None,
-                            "extreme_interceptor_candle": None,
+                            "breakout_extreme_interceptor_candle": None,
                             "breakout_sequence_candles": [],
                             "retest_candle": None,
                             "target_zone_candle": None 
@@ -4476,363 +4492,532 @@ def custom_trendline():
                 # ==================================================================
                 # FINAL PROCESSING — INTERCEPTORS, OPPOSITION, RETEST, & TARGET ZONE
                 # ==================================================================
-                for trend in final_trendlines_for_redraw:
-                    fx, fy = trend["from_x"], trend["from_y"]
-                    tx, ty = trend["to_x"], trend["to_y"]
-                    color = trend["color"]
-                    line_id = trend["line_id"]
-                    receiver_cnum = trend["receiver_cnum"]
-                    from_key = trend["from_key"]
-                    direction = trend["direction"]
-                    seq_count = trend["breakout_sequence_count"]
+                def OPPOSITION_BREAKOUT_INTERCEPTORS_RETEST_TARGET_ZONE(final_valid_trends):
+                    """
+                    Processes institutional trendlines for breakout confirmation, adaptation, and stores
+                    valid trends in the passed-in dictionary.
                     
-                    # NEW: Get dynamic key for the opposition candle
-                    opposition_key_name = trend["point_keys"]["opposition"]
-                    retest_key_name = trend["point_keys"]["retest"]
-                    
-                    if tx - fx == 0:
-                        continue
+                    Args:
+                        final_valid_trends (dict): A dictionary to store the final, validated trend states.
                         
-                    # 1. Redraw Ray
-                    slope = (ty - fy) / (tx - fx)
-                    extend_x = img.shape[1] - 10
-                    extend_y = int(fy + slope * (extend_x - fx))
-                    cv2.line(img, (fx, fy), (extend_x, extend_y), color, 3)
-                    cv2.putText(img, line_id, (fx + 20, fy - 20), cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
+                    Returns:
+                        dict: The updated dictionary of final, validated trend states.
+                    """
+
+                    def draw_final_trendline(trend, fx, fy, tx, ty, color):
+                        if tx - fx == 0:
+                            return
+                        slope = (ty - fy) / (tx - fx)
+                        extend_x = img.shape[1] - 10
+                        extend_y = int(fy + slope * (extend_x - fx))
+                        cv2.line(img, (fx, fy), (extend_x, extend_y), color, 3)
+                        cv2.putText(img, trend["line_id"], (fx + 20, fy - 20), cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
+
+                        # Mark receiver
+                        receiver_cnum = trend["receiver_cnum"]
+                        if receiver_cnum in positions:
+                            rx = positions[receiver_cnum]["x"]
+                            ry = get_y_position(positions, receiver_cnum, trend["from_key"])
+                            cv2.circle(img, (rx, ry), 12, (0, 0, 0), -1)
+                            cv2.putText(img, "R", (rx - 8, ry + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+
+                    def process_single_trend(trend, depth=0, max_depth=5):
+                        if depth > max_depth:
+                            log(f"Max adaptation depth reached for {trend['line_id']} → DISCARDING", "WARNING")
+                            return False, trend  # Invalid → do NOT draw and return final state
+
+                        line_id = trend["line_id"]
+                        fx, fy = trend["from_x"], trend["from_y"]
+                        tx, ty = trend["to_x"], trend["to_y"]
+                        color = trend["color"]
+                        from_key = trend["from_key"]
+                        direction = trend["direction"]
+                        seq_count = trend["breakout_sequence_count"]
+                        point_keys = trend["point_keys"]
+                        opposition_key_name = point_keys["opposition"]
+                        retest_key_name = point_keys["retest"]
+                        sender_condition = trend.get("sender_condition", "none")
+                        extreme_rule = trend.get("extreme_rule", "continue")
+
+                        # === Sender candle (FROM point) ===
+                        if "sender_cnum" not in trend:
+                            sender_candle = next((c for c in reversed(candles) if is_level_match(c, from_key)), None)
+                            trend["sender_cnum"] = sender_candle["candle_number"] if sender_candle else None
+                        sender_cnum = trend["sender_cnum"]
+                        if not sender_cnum or sender_cnum not in positions:
+                            return False, trend
+
+                        receiver_cnum = trend["receiver_cnum"]
+
+                        if tx - fx == 0:
+                            return False, trend
+
+                        # === Extend ray for detection ===
+                        slope = (ty - fy) / (tx - fx)
+                        extend_x = img.shape[1] - 10
+                        extend_y = int(fy + slope * (extend_x - fx))
+
+                        # === 1. Find future interceptors ===
+                        interceptors = []
+                        receiver_x = positions.get(receiver_cnum, {}).get("x", -99999)
+
+                        for c in candles:
+                            cn = c["candle_number"]
+                            if cn not in positions or positions[cn]["x"] <= receiver_x:
+                                continue
+                            pos = positions[cn]
+                            if line_intersects_rect(fx, fy, extend_x, extend_y,
+                                                    pos["x"] - pos["width"]//2, pos["high_y"],
+                                                    pos["x"] + pos["width"]//2, pos["low_y"]):
+                                body_y = (pos["high_y"] + pos["low_y"]) // 2
+                                cv2.circle(img, (pos["x"], body_y), 14, color, 4)
+                                interceptors.append({
+                                    "candle_number": cn, "x": pos["x"], "y": body_y,
+                                    "high": c["high"], "low": c["low"], "close": c["close"], "open": c["open"],
+                                    "candle": c
+                                })
+
+                        # === No interceptors → valid only if original line was valid ===
+                        if not interceptors:
+                            draw_final_trendline(trend, fx, fy, tx, ty, color)
+                            final_teams[line_id] = {"team": {"trendline_info": {
+                                "line_id": line_id, "interceptors": [], "touched_interceptors": [],
+                                "opposition_candle": None, "breakout_extreme_interceptor_candle": None,
+                                "breakout_sequence_candles": [], "retest_candle": None, "target_zone_candle": None,
+                                "valid": True, "adapted": depth > 0
+                            }}}
+                            log(f"{line_id}: No interceptors → Valid & drawn", "INFO")
+                            return True, trend
+
+                        # === 2. Find opposition candle ===
+                        opposition_cnum = None
+                        if receiver_cnum and opposition_key_name:
+                            oldest_int_cnum = min(i["candle_number"] for i in interceptors)
+                            receiver_candle = next((c for c in candles if c["candle_number"] == receiver_cnum), None)
+                            if receiver_candle:
+                                receiver_level = next((k for k in ["ph","ch","pl","cl"] if receiver_candle.get(f"is_{k}")), None)
+                                if receiver_level:
+                                    target_levels = BULLISH_FAMILY if opposition_key_name == "bullish" else BEARISH_FAMILY
+                                    if is_parent_level(receiver_level):
+                                        target_levels = {lvl for lvl in target_levels if is_parent_level(lvl)}
+                                    for cn in range(receiver_cnum - 1, oldest_int_cnum - 1, -1):
+                                        if cn <= 0: break
+                                        candle = next((c for c in candles if c["candle_number"] == cn), None)
+                                        if candle and any(candle.get(f"is_{lvl}") for lvl in target_levels):
+                                            opposition_cnum = cn
+                                            break
+
+                        # === 3. Find extreme interceptor (oldest opposing color BEFORE opposition) ===
+                        extreme_interceptor_cnum = None
+                        extreme_interceptor_data = None
+                        pre_opp_ints = [i for i in interceptors if i["candle_number"] < (opposition_cnum or 99999)]
+                        if pre_opp_ints:
+                            pre_opp_ints.sort(key=lambda i: i["candle_number"])
+                            opposing_red = is_bullish_level(from_key)
+                            for intr in reversed(pre_opp_ints):
+                                is_red = intr["close"] < intr["open"]
+                                if (opposing_red and is_red) or (not opposing_red and not is_red):
+                                    extreme_interceptor_cnum = intr["candle_number"]
+                                    extreme_interceptor_data = intr
+                                    break
+
+                        # === 4. Check breakout sequence ===
+                        breakout_sequence_cnums = []
+                        has_breakout = False
+                        if direction == "breakout" and seq_count > 0 and extreme_interceptor_cnum:
+                            ext_c = next(c for c in candles if c["candle_number"] == extreme_interceptor_cnum)
+                            younger = [c for c in candles if c["candle_number"] < extreme_interceptor_cnum]
+                            younger.sort(key=lambda x: x["candle_number"], reverse=True)
+                            for i in range(len(younger) - seq_count + 1):
+                                seq = younger[i:i + seq_count]
+                                if is_bullish_level(from_key):
+                                    if all(c["high"] < ext_c["high"] and c["low"] < ext_c["low"] for c in seq):
+                                        breakout_sequence_cnums = [c["candle_number"] for c in seq]
+                                        break
+                                else:
+                                    if all(c["high"] > ext_c["high"] and c["low"] > ext_c["low"] for c in seq):
+                                        breakout_sequence_cnums = [c["candle_number"] for c in seq]
+                                        break
+                            has_breakout = bool(breakout_sequence_cnums)
+
+                        # === BREAKOUT → Valid & draw current line ===
+                        if has_breakout:
+                            draw_final_trendline(trend, fx, fy, tx, ty, color)
+                            if extreme_interceptor_data:
+                                mark_breakout_extreme_interceptor(img, extreme_interceptor_data["x"], extreme_interceptor_data["y"], color)
+                            for cnum in breakout_sequence_cnums:
+                                if cnum in positions:
+                                    body_y = (positions[cnum]["high_y"] + positions[cnum]["low_y"]) // 2
+                                    mark_breakout_candle(img, positions[cnum]["x"], body_y, color)
+
+                            # Opposition, Retest, Target Zone (same as before)
+                            if opposition_cnum and opposition_cnum in positions:
+                                opp_candle = next(c for c in candles if c["candle_number"] == opposition_cnum)
+                                opp_level = next(k for k in ["ph","ch","pl","cl"] if opp_candle.get(f"is_{k}"))
+                                direction_up = opp_level in {"pl", "cl"}
+                                arrow_y = positions[opposition_cnum]["low_y"] if direction_up else positions[opposition_cnum]["high_y"]
+                                draw_opposition_arrow(img, positions[opposition_cnum]["x"], arrow_y, color, direction_up=direction_up)
+
+                            retest_cnum = None
+                            if retest_key_name and breakout_sequence_cnums:
+                                younger = [c for c in candles if c["candle_number"] < extreme_interceptor_cnum]
+                                younger.sort(key=lambda x: x["candle_number"], reverse=True)
+                                allowed = BULLISH_FAMILY if retest_key_name == "bullish" else BEARISH_FAMILY
+                                receiver_candle = next((c for c in candles if c["candle_number"] == receiver_cnum), None)
+                                if receiver_candle:
+                                    r_level = next((k for k in ["ph","ch","pl","cl"] if receiver_candle.get(f"is_{k}")), None)
+                                    if r_level and is_parent_level(r_level):
+                                        allowed = {lvl for lvl in allowed if is_parent_level(lvl)}
+                                for c in younger:
+                                    if c["candle_number"] in breakout_sequence_cnums: continue
+                                    if any(c.get(f"is_{lvl}") for lvl in allowed):
+                                        retest_cnum = c["candle_number"]
+                                        break
+
+                            if retest_cnum and retest_cnum in positions:
+                                retest_candle = next(c for c in candles if c["candle_number"] == retest_cnum)
+                                level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
+                                is_bullish_retest = level in {"pl", "cl"}
+                                y_price = positions[retest_cnum]["low_y"] if is_bullish_retest else positions[retest_cnum]["high_y"]
+                                draw_double_retest_arrow(img, positions[retest_cnum]["x"], y_price, color, direction_up=is_bullish_retest)
+
+                            target_zone_cnum = None
+                            if retest_cnum:
+                                level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
+                                nr = parent_neighbor_right if is_parent_level(level) else child_neighbor_right
+                                if nr > 0:
+                                    target_zone_cnum = retest_cnum - nr
+                                    if target_zone_cnum > 0 and target_zone_cnum in positions:
+                                        txz = positions[target_zone_cnum]["x"]
+                                        tyz = positions[target_zone_cnum]["high_y"] - 20 if is_bullish_level(from_key) else positions[target_zone_cnum]["low_y"] + 20
+                                        draw_target_zone_marker(img, txz, tyz, color)
+
+                            final_teams[line_id] = {"team": {"trendline_info": {
+                                "interceptors": [i for i in interceptors if "candle" not in i],
+                                "touched_interceptors": [i["candle_number"] for i in interceptors],
+                                "opposition_candle": opposition_cnum,
+                                "breakout_extreme_interceptor_candle": extreme_interceptor_cnum,
+                                "breakout_sequence_candles": breakout_sequence_cnums,
+                                "retest_candle": retest_cnum,
+                                "target_zone_candle": target_zone_cnum,
+                                "valid": True, "adapted": depth > 0
+                            }}}
+                            log(f"{line_id}: BREAKOUT confirmed → Valid & drawn", "SUCCESS")
+                            return True, trend
+
+                        # === NO BREAKOUT → Try to adapt (strict validation) ===
+                        if depth < max_depth:
+                            # === Try extreme_intruder rule first ===
+                            touches = []
+                            min_c = min(sender_cnum, receiver_cnum)
+                            max_c = max(sender_cnum, receiver_cnum)
+                            for c in candles:
+                                cn = c["candle_number"]
+                                if cn in [sender_cnum, receiver_cnum] or cn not in positions: continue
+                                if not (min_c <= cn <= max_c): continue
+                                pos = positions[cn]
+                                if line_intersects_rect(fx, fy, tx, ty,
+                                                        pos["x"] - pos["width"]//2, pos["high_y"],
+                                                        pos["x"] + pos["width"]//2, pos["low_y"]):
+                                    touches.append(cn)
+
+                            extreme_cnum = extreme_y = None
+                            if touches and extreme_rule != "continue":
+                                s_min, s_max = min(touches), max(touches)
+                                if is_bearish_level(from_key):
+                                    best = max((c for c in candles if s_min <= c["candle_number"] <= s_max), key=lambda c: c["high"], default=None)
+                                else:
+                                    best = min((c for c in candles if s_min <= c["candle_number"] <= s_max), key=lambda c: c["low"], default=None)
+                                if best:
+                                    extreme_cnum = best["candle_number"]
+                                    extreme_y = positions[extreme_cnum]["high_y"] if is_bearish_level(from_key) else positions[extreme_cnum]["low_y"]
+
+                            new_fx, new_fy = fx, fy
+                            new_tx, new_ty = tx, ty
+                            new_receiver_cnum = receiver_cnum
+
+                            if extreme_rule == "new_from" and extreme_cnum:
+                                new_fx, new_fy = positions[extreme_cnum]["x"], extreme_y
+                                # Crucially, update the sender_cnum for the next iteration's logic
+                                trend["sender_cnum"] = extreme_cnum 
+                            elif extreme_rule == "new_to" and extreme_cnum:
+                                new_tx, new_ty = positions[extreme_cnum]["x"], extreme_y
+                                new_receiver_cnum = extreme_cnum
+
+                            if (new_fx, new_fy, new_tx, new_ty) != (fx, fy, tx, ty):
+                                if validate_sender_condition(sender_cnum, new_receiver_cnum, from_key, sender_condition):
+                                    log(f"{line_id}: Adapting via extreme_intruder → {extreme_cnum}", "INFO")
+                                    trend.update({
+                                        "from_x": new_fx, "from_y": new_fy,
+                                        "to_x": new_tx, "to_y": new_ty,
+                                        "receiver_cnum": new_receiver_cnum,
+                                        "line_id": f"{line_id}_adapted{depth+1}"
+                                    })
+                                    return process_single_trend(trend, depth + 1, max_depth)  # Recurse
+
+                            # === Fallback: Price extreme interceptor ===
+                            if is_bullish_level(from_key):
+                                candidate = min(interceptors, key=lambda i: i["low"])
+                                compare, base_key = candidate["low"], "low"
+                            else:
+                                candidate = max(interceptors, key=lambda i: i["high"])
+                                compare, base_key = candidate["high"], "high"
+                            base_price = next(c[base_key] for c in candles if c["candle_number"] == receiver_cnum)
+
+                            should_adapt = (is_bullish_level(from_key) and compare < base_price) or \
+                                            (is_bearish_level(from_key) and compare > base_price)
+
+                            if should_adapt and validate_sender_condition(sender_cnum, candidate["candle_number"], from_key, sender_condition):
+                                log(f"{line_id}: Adapting to price extreme → {candidate['candle_number']}", "INFO")
+                                trend.update({
+                                    "to_x": candidate["x"],
+                                    "to_y": get_y_position(positions, candidate["candle_number"], from_key),
+                                    "receiver_cnum": candidate["candle_number"],
+                                    "line_id": f"{line_id}_adapted{depth+1}"
+                                })
+                                return process_single_trend(trend, depth + 1, max_depth)
+
+                        # === NO VALID ADAPTATION POSSIBLE → DISCARD ENTIRE TRENDLINE ===
+                        log(f"{line_id}: No breakout + no valid adaptation → DISCARDING trendline", "INFO")
+                        return False, trend  # Do NOT draw and return final state
+
+                    # --- MAIN EXECUTION ---
                     
-                    # Mark Receiver Candle
-                    if receiver_cnum and receiver_cnum in positions:
-                        rx = positions[receiver_cnum]["x"]
-                        ry = get_y_position(positions, receiver_cnum, from_key)
-                        cv2.circle(img, (rx, ry), 12, (0, 0, 0), -1)
-                        cv2.putText(img, "R", (rx - 8, ry + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    # 1. Iterate over the trends
+                    for trend in final_trendlines_for_redraw[:]:
+                        # Restore original rules and state
+                        orig_id = trend["line_id"].split("_")[0].lstrip("T")
+                        orig_conf = next((c for c in trend_list if c["id"] == orig_id), None)
+                        if orig_conf:
+                            trend["sender_condition"] = orig_conf.get("sender_condition", "none")
+                            trend["extreme_rule"] = orig_conf.get("rule", "continue")
+                            
+                        # process_single_trend returns (was_valid, final_trend_state)
+                        was_valid, final_state = process_single_trend(trend, depth=0)
                         
-                    # 2. Interceptors
-                    interceptors = []
-                    receiver_x = positions[receiver_cnum]["x"] if receiver_cnum in positions else -99999
-                    for c in candles:
-                        cn = c["candle_number"]
-                        if cn not in positions: continue
-                        pos = positions[cn]
-                        if pos["x"] <= receiver_x: continue
-                        if line_intersects_rect(fx, fy, extend_x, extend_y,
-                                                pos["x"] - pos["width"]//2, pos["high_y"],
-                                                pos["x"] + pos["width"]//2, pos["low_y"]):
-                            body_y = (pos["high_y"] + pos["low_y"]) // 2
-                            cv2.circle(img, (pos["x"], body_y), 14, color, 4)
-                            interceptors.append({
-                                "candle_number": cn,
-                                "x": pos["x"],
-                                "y": body_y,
-                                "high": c["high"],
-                                "low": c["low"],
-                                "close": c["close"]
+                        if was_valid:
+                            base_id = final_state["line_id"].split("_")[0]
+                            # Store the final, potentially adapted, trend state in the passed-in dictionary
+                            final_valid_trends[base_id] = final_state
+                            
+                    log(f"→ {symbol_folder}/{tf_folder} | {len(final_valid_trends)} Trendlines validated for BREAKOUT (strict validation)", "SUCCESS")
+                    
+                    # 2. Return the updated dictionary
+                    return final_valid_trends
+   
+
+                def CONTINUATION_EXTREME_INTERCEPTOR(final_valid_trends):
+                    for trend in final_trendlines_for_redraw:
+                        fx, fy = trend["from_x"], trend["from_y"]
+                        tx, ty = trend["to_x"], trend["to_y"]
+                        color = trend["color"]
+                        line_id = trend["line_id"]
+                        receiver_cnum = trend["receiver_cnum"]
+                        from_key = trend["from_key"]
+
+                        if tx - fx == 0:
+                            continue
+
+                        # 1. Redraw Ray
+                        slope = (ty - fy) / (tx - fx)
+                        extend_x = img.shape[1] - 10
+                        extend_y = int(fy + slope * (extend_x - fx))
+                        cv2.line(img, (fx, fy), (extend_x, extend_y), color, 3)
+                        cv2.putText(img, line_id, (fx + 20, fy - 20), cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
+                        
+                        # Mark Receiver
+                        if receiver_cnum and receiver_cnum in positions:
+                            rx = positions[receiver_cnum]["x"]
+                            ry = get_y_position(positions, receiver_cnum, from_key)
+                            cv2.circle(img, (rx, ry), 12, (0, 0, 0), -1)
+                            cv2.putText(img, "R", (rx - 8, ry + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                            
+                        # 2. Find all interceptors after receiver (future candles)
+                        interceptors = []
+                        touched_interceptors_enriched = []
+                        receiver_x = positions.get(receiver_cnum, {}).get("x", -99999)
+                        
+                        for c in candles:
+                            cn = c["candle_number"]
+                            if cn not in positions:
+                                continue
+                            pos = positions[cn]
+                            
+                            # Filter for candles to the right/future of the receiver
+                            if pos["x"] <= receiver_x:
+                                continue
+                            
+                            if line_intersects_rect(fx, fy, extend_x, extend_y,
+                                                    pos["x"] - pos["width"]//2, pos["high_y"],
+                                                    pos["x"] + pos["width"]//2, pos["low_y"]):
+                                
+                                body_y = (pos["high_y"] + pos["low_y"]) // 2
+                                is_green = c["close"] > c["open"]
+                                is_red = c["close"] < c["open"]
+                                candle_color = "green" if is_green else "red" if is_red else "doji"
+                                
+                                # Mark the interceptor on the chart
+                                cv2.circle(img, (pos["x"], body_y), 14, color, 4)
+                                
+                                interceptor_data = {
+                                    "candle_number": cn,
+                                    "x": pos["x"],
+                                    "y": body_y,
+                                    "high": c["high"],
+                                    "low": c["low"],
+                                    "open": c["open"],
+                                    "close": c["close"],
+                                    "color": candle_color
+                                }
+                                interceptors.append(interceptor_data)
+                                
+                                touched_interceptors_enriched.append({
+                                    "candle_number": cn,
+                                    "color": candle_color,
+                                    "is_extreme": False
+                                })
+                                
+                        # 3. Determine Extreme Interceptor (OLDEST opposing color)
+                        extreme_interceptor_cnum = None
+                        extreme_interceptor_data = None
+                        is_bullish_trend = is_bullish_level(from_key) 
+                        
+                        if interceptors:
+                            # Sort NEWEST (lowest CN) → OLDEST (highest CN) by candle number (reverse=False is ascending)
+                            interceptors.sort(key=lambda x: x["candle_number"], reverse=False) 
+                            
+                            if is_bullish_trend:
+                                # Bullish trend (Support) → want oldest opposing RED candle
+                                for intr in interceptors:
+                                    if intr["color"] == "red":
+                                        # Overwrite on every match. Final match will be the oldest red candle.
+                                        extreme_interceptor_cnum = intr["candle_number"]
+                                        extreme_interceptor_data = intr
+                            else:
+                                # Bearish trend (Resistance) → want oldest opposing GREEN candle
+                                for intr in interceptors:
+                                    if intr["color"] == "green":
+                                        # Overwrite on every match. Final match will be the oldest green candle.
+                                        extreme_interceptor_cnum = intr["candle_number"]
+                                        extreme_interceptor_data = intr
+                                        
+                        # 4. Mark Extreme Interceptor on chart
+                        if extreme_interceptor_cnum and extreme_interceptor_data:
+                            ex = extreme_interceptor_data
+                            # Mark the extreme interceptor with the circle/arrow graphic
+                            mark_continuation_extreme_interceptor(img, ex["x"], ex["y"], color) 
+                            
+                            # Update the enriched list: mark this one as extreme
+                            for item in touched_interceptors_enriched:
+                                if item["candle_number"] == extreme_interceptor_cnum:
+                                    item["is_extreme"] = True
+                                    
+                        # 5. Save to JSON and update final_valid_trends
+                        
+                        # Check if the trend was originally valid (i.e., exists in final_teams from setup)
+                        if line_id in final_teams:
+                            
+                            # --- Update final_teams for reporting/debugging ---
+                            final_teams[line_id]["team"]["trendline_info"].update({
+                                "interceptors": interceptors, 
+                                "touched_interceptors": touched_interceptors_enriched,
+                                "continuation_extreme_interceptor_candle": (
+                                    {
+                                        "candle_number": extreme_interceptor_cnum,
+                                        "x": extreme_interceptor_data["x"] if extreme_interceptor_data else None,
+                                        "y": extreme_interceptor_data["y"] if extreme_interceptor_data else None,
+                                        "color": extreme_interceptor_data["color"] if extreme_interceptor_data else None
+                                    } if extreme_interceptor_cnum else None
+                                )
                             })
                             
-                    # 3. Opposition Candle
-                    opposition_cnum = None
-                    if interceptors and receiver_cnum:
-                        oldest_int_cnum = min(i["candle_number"] for i in interceptors)
-                        
-                        # Find the actual level of the receiver (ph, pl, ch, cl)
-                        receiver_candle = next(c for c in candles if c["candle_number"] == receiver_cnum)
-                        receiver_level = next((k for k in ["ph","ch","pl","cl"] if receiver_candle.get(f"is_{k}")), None)
-                        
-                        if receiver_level and opposition_key_name: # Check for the dynamic key name
-                            # The target levels for opposition are the *opposite* family, but must be the *type* defined in the JSON.
-                            # The JSON gives the family (e.g., "bullish"), we need the actual level keys (e.g., "pl", "cl").
-                            
-                            target_levels = []
-                            if opposition_key_name == "bullish":
-                                target_levels = BULLISH_FAMILY
-                            elif opposition_key_name == "bearish":
-                                target_levels = BEARISH_FAMILY
-
-                            # Enforce: Parent receivers ignore child opposition (Parent/Child Hierarchy)
-                            if is_parent_level(receiver_level):
-                                target_levels = {lvl for lvl in target_levels if is_parent_level(lvl)}
+                            # Clean unused fields inherited from the template (if applicable)
+                            for key in ["opposition_candle", "retest_candle", "target_zone_candle",
+                                        "continuation_sequence_candles", "breakout_extreme_interceptor_candle"]:
+                                final_teams[line_id]["team"]["trendline_info"][key] = None
                                 
-                            for cn in range(receiver_cnum - 1, oldest_int_cnum, -1):
-                                if cn <= 0: break
-                                candle = next((c for c in candles if c["candle_number"] == cn), None)
-                                if candle and any(candle.get(f"is_{lvl}") for lvl in target_levels):
-                                    opposition_cnum = cn
-                                    break
-                                    
-                    if opposition_cnum and opposition_cnum in positions:
-                        opp_x = positions[opposition_cnum]["x"]
-                        opp_candle = next(c for c in candles if c["candle_number"] == opposition_cnum)
-                        # Find the actual level of the opposition candle
-                        opp_level = next(k for k in ["ph","ch","pl","cl"] if opp_candle.get(f"is_{k}"))
-                        direction_up = opp_level in {"pl", "cl"}
-                        arrow_y = positions[opposition_cnum]["low_y"] if direction_up else positions[opposition_cnum]["high_y"]
-                        draw_opposition_arrow(img, opp_x, arrow_y, color, direction_up=direction_up)
-                        
-                    # 4. Extreme Interceptor
-                    extreme_interceptor_cnum = None
-                    if opposition_cnum and interceptors:
-                        pre_opposition = [i for i in interceptors if i["candle_number"] < opposition_cnum]
-                        if pre_opposition:
-                            extreme_interceptor_cnum = max(i["candle_number"] for i in pre_opposition)
+                            # --- Update final_valid_trends for drawing sender levels later ---
+                            final_valid_trends[line_id] = trend.copy() # Store the trend's current state
+                            final_valid_trends[line_id]['valid'] = True # Mark as valid continuation
                             
-                    if extreme_interceptor_cnum and extreme_interceptor_cnum in positions:
-                        ex_int = next(i for i in interceptors if i["candle_number"] == extreme_interceptor_cnum)
-                        mark_extreme_interceptor(img, ex_int["x"], ex_int["y"], color)
-                        
-                    # 5. BREAKOUT SEQUENCE
-                    breakout_sequence_cnums = []
-                    if direction == "breakout" and seq_count > 0 and extreme_interceptor_cnum:
-                        ext_candle = next(c for c in candles if c["candle_number"] == extreme_interceptor_cnum)
-                        ext_high = ext_candle["high"]
-                        ext_low = ext_candle["low"]
-                        younger_candles = [c for c in candles if c["candle_number"] < extreme_interceptor_cnum]
-                        younger_candles.sort(key=lambda x: x["candle_number"], reverse=True)
-                        
-                        for i in range(len(younger_candles) - seq_count + 1):
-                            seq = younger_candles[i:i + seq_count]
-                            if is_bullish_level(from_key): # Bullish trendline (support) -> look for break below (Bearish breakout)
-                                if all(c["high"] < ext_high and c["low"] < ext_low for c in seq):
-                                    breakout_sequence_cnums = [c["candle_number"] for c in seq]
-                                    break
-                            else: # Bearish trendline (resistance) -> look for break above (Bullish breakout)
-                                if all(c["high"] > ext_high and c["low"] > ext_low for c in seq):
-                                    breakout_sequence_cnums = [c["candle_number"] for c in seq]
-                                    break
-                                
-                    for cnum in breakout_sequence_cnums:
-                        if cnum in positions:
-                            body_y = (positions[cnum]["high_y"] + positions[cnum]["low_y"]) // 2
-                            mark_breakout_candle(img, positions[cnum]["x"], body_y, color)
-                            
-                    # 6. RETEST CANDLE
-                    retest_cnum = None
-                    if breakout_sequence_cnums and extreme_interceptor_cnum and retest_key_name:
-                        younger_candles = [c for c in candles if c["candle_number"] < extreme_interceptor_cnum]
-                        younger_candles.sort(key=lambda x: x["candle_number"], reverse=True)
-                        
-                        receiver_candle = next(c for c in candles if c["candle_number"] == receiver_cnum)
-                        receiver_level = next((k for k in ["ph","ch","pl","cl"] if receiver_candle.get(f"is_{k}")), None)
-                        
-                        if receiver_level:
-                            # The retest is an opposite move back to the trendline. 
-                            # The JSON 'retest_candle' specifies the FAMILY of the retest level.
-                            
-                            allowed_levels = set()
-                            if retest_key_name == "bullish":
-                                allowed_levels = BULLISH_FAMILY
-                            elif retest_key_name == "bearish":
-                                allowed_levels = BEARISH_FAMILY
-                                
-                            # Enforce: Parent receivers ignore child retests (Parent/Child Hierarchy)
-                            if is_parent_level(receiver_level):
-                                allowed_levels = {lvl for lvl in allowed_levels if is_parent_level(lvl)}
-
-                            for c in younger_candles:
-                                if c["candle_number"] in breakout_sequence_cnums: continue
-                                # Start searching from the youngest candle
-                                if any(c.get(f"is_{lvl}") for lvl in allowed_levels):
-                                    retest_cnum = c["candle_number"]
-                                    break
-                                    
-                    if retest_cnum and retest_cnum in positions:
-                        retest_candle = next(c for c in candles if c["candle_number"] == retest_cnum)
-                        level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
-                        is_bullish_retest = level in {"cl", "pl"}
-                        y_price = positions[retest_cnum]["low_y"] if is_bullish_retest else positions[retest_cnum]["high_y"]
-                        draw_double_retest_arrow(img, positions[retest_cnum]["x"], y_price, color, direction_up=is_bullish_retest)
-                        
-                    # 7. TARGET ZONE CANDLE LOGIC
-                    target_zone_cnum = None
-                    neighbor_right = 0 # Initialize for reporting
+                    log(f"→ {symbol_folder}/{tf_folder} | {len(final_valid_trends)} Trendlines validated for CONTINUATION", "SUCCESS")
                     
-                    if retest_cnum and retest_cnum in positions:
-                        retest_candle = next(c for c in candles if c["candle_number"] == retest_cnum)
-                        level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
-                        
-                        if level in PARENT_LEVELS:
-                            neighbor_right = parent_neighbor_right
-                        elif level in CHILD_LEVELS:
-                            neighbor_right = child_neighbor_right
-                            
-                        if neighbor_right > 0:
-                            # Target is 'neighbor_right' candles *after* the retest candle.
-                            # Decreasing candle numbers means forward in time.
-                            target_cnum = retest_cnum - neighbor_right
-                            
-                            if target_cnum in positions:
-                                target_zone_cnum = target_cnum
-                                target_x = positions[target_cnum]["x"]
-                                
-                                # Determine the Y position for the marker
-                                if is_bullish_level(from_key): # Bullish Trendline (Entry is Long) -> Target is above
-                                    target_y = positions[target_cnum]["high_y"] - 20 
-                                else: # Bearish Trendline (Entry is Short) -> Target is below
-                                    target_y = positions[target_cnum]["low_y"] + 20
-                                    
-                                draw_target_zone_marker(img, target_x, target_y, color)
+                    # 6. Return the updated dictionary
+                    return final_valid_trends
+  
 
-                    # 8. Save to JSON
-                    if line_id in final_teams:
-                        final_teams[line_id]["team"]["trendline_info"]["interceptors"] = interceptors
-                        
-                        if opposition_cnum:
-                            opp_candle = next(c for c in candles if c["candle_number"] == opposition_cnum)
-                            level = next(k for k in ["ph","ch","pl","cl"] if opp_candle.get(f"is_{k}"))
-                            final_teams[line_id]["team"]["trendline_info"]["opposition_candle"] = {
-                                "candle_number": opposition_cnum,
-                                "x": positions[opposition_cnum]["x"],
-                                "y": get_y_position(positions, opposition_cnum, level),
-                                "level": level
-                            }
-                            
-                        if extreme_interceptor_cnum:
-                            final_teams[line_id]["team"]["trendline_info"]["extreme_interceptor_candle"] = {
-                                "candle_number": extreme_interceptor_cnum,
-                                "x": positions[extreme_interceptor_cnum]["x"],
-                                "y": (positions[extreme_interceptor_cnum]["high_y"] + positions[extreme_interceptor_cnum]["low_y"]) // 2
-                            }
-                            
-                        if breakout_sequence_cnums:
-                            final_teams[line_id]["team"]["trendline_info"]["breakout_sequence_candles"] = [
-                                {"candle_number": cnum, "x": positions[cnum]["x"], "y": (positions[cnum]["high_y"] + positions[cnum]["low_y"]) // 2}
-                                for cnum in breakout_sequence_cnums
-                            ]
-                            
-                        if retest_cnum:
-                            retest_candle = next(c for c in candles if c["candle_number"] == retest_cnum)
-                            level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
-                            final_teams[line_id]["team"]["trendline_info"]["retest_candle"] = {
-                                "candle_number": retest_cnum,
-                                "x": positions[retest_cnum]["x"],
-                                "y": get_y_position(positions, retest_cnum, level),
-                                "level": level
-                            }
-                            
-                        if target_zone_cnum: # Save new target zone info
-                            final_teams[line_id]["team"]["trendline_info"]["target_zone_candle"] = {
-                                "candle_number": target_zone_cnum,
-                                "x": positions[target_zone_cnum]["x"],
-                                "level_type": level, # This is the level type of the *Retest* candle (ph/pl/ch/cl) which determined NR
-                                "neighbor_right": neighbor_right
-                            }
+                def DRAW_ALL_SENDER_LEVELS(valid_trends):
+                    """
+                    Draws the horizontal sender price level for all trendlines successfully processed and validated.
+                    Accepts the dictionary of valid trends as a parameter.
+                    """
+                    # Remove 'global final_valid_trends'
+                    
+                    if not valid_trends:
+                        log("No valid trendlines found to draw sender levels.", "INFO")
+                        return
 
-                cv2.imwrite(output_path, img)
-                with open(report_path, 'w', encoding='utf-8') as f:
-                    json.dump(final_teams, f, indent=2, ensure_ascii=False)
-                log(f"→ {symbol_folder}/{tf_folder} | {len(final_teams)} Trendlines processed", "SUCCESS")
-                
+                    for trend in valid_trends.values():
+                        color = trend["color"]
+                        from_key = trend["from_key"]
+                        
+                        # Use the final, adapted coordinates for the horizontal line
+                        fx = trend["from_x"]
+                        y_level = trend["from_y"]
+                        
+                        # Determine the text label based on trend direction
+                        if is_bearish_level(from_key):
+                            level_key = "High"
+                        elif is_bullish_level(from_key):
+                            level_key = "Low"
+                        else:
+                            continue
+
+                        # Extend line to the right edge of the chart (minus a small margin)
+                        extend_x = img.shape[1] - 10
+
+                        # Draw the horizontal line using the exact trendline color
+                        line_color = color
+                        cv2.line(img, (fx, y_level), (extend_x, y_level), line_color, 1, cv2.LINE_AA)
+                        cv2.putText(img, level_key, (fx - 30, y_level + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, line_color, 1)
+
+                    log(f"→ {symbol_folder}/{tf_folder} | {len(valid_trends)} Sender Levels drawn", "SUCCESS")
+                   
+                    
+                def trend_direction():
+                    """Internal function to execute direction-specific trendline processing based on technique.json configuration."""
+                    
+                    # 1. Initialize the central data store
+                    final_valid_trends = {}
+                    
+                    for trend in final_trendlines_for_redraw:
+                        direction = trend["direction"]
+                        
+                        if direction == "breakout":
+                            # 2. Pass the dictionary in and capture the returned (updated) dictionary
+                            final_valid_trends = OPPOSITION_BREAKOUT_INTERCEPTORS_RETEST_TARGET_ZONE(final_valid_trends)
+                            
+                        elif direction == "continuation":
+                            # Assuming this function also takes and returns the dictionary if it populates it
+                            final_valid_trends = CONTINUATION_EXTREME_INTERCEPTOR(final_valid_trends)
+                            
+                        else:
+                            log(f"Unknown direction '{direction}' for trend {trend['line_id']} - skipping processing", "WARNING")
+                            
+                    # 3. Pass the final, populated dictionary to the drawing function
+                    DRAW_ALL_SENDER_LEVELS(final_valid_trends)
+                            
+                    # Final save after processing all trends
+                    cv2.imwrite(output_path, img)
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        json.dump(final_teams, f, indent=2, ensure_ascii=False)
+                    log(f"→ {symbol_folder}/{tf_folder} | {len(final_teams)} Trendlines processed based on direction", "SUCCESS")                                                    
+   
+                trend_direction()
+
     log("=== INSTITUTIONAL TRENDLINE ENGINE v10.1 — DYNAMIC CONFIGURATION & TARGET ZONE ADDED ===", "SUCCESS")
        
-def trendline_interceptor():
-    import cv2
-    import json
-    import os
-    from datetime import datetime
-    import pytz
-
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-
-    developer_brokers = {k: v for k, v in brokersdictionary.items() if v.get("POSITION", "").lower() == "developer"}
-    if not developer_brokers:
-        log("No developer brokers found!", "ERROR")
-        return
-
-    processed_count = 0
-
-    for broker_raw_name, cfg in developer_brokers.items():
-        base_folder = cfg["BASE_FOLDER"]
-
-        # Check if trendlines are enabled
-        technique_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "technique.json")
-        if not os.path.exists(technique_path):
-            technique_path = os.path.join(base_folder, "technique.json")
-        if not os.path.exists(technique_path):
-            continue
-
-        with open(technique_path, 'r', encoding='utf-8') as f:
-            tech = json.load(f)
-
-        if str(tech.get("drawings_switch", {}).get("trendline", "no")).strip().lower() != "yes":
-            continue
-
-        for symbol_folder in os.listdir(base_folder):
-            sym_path = os.path.join(base_folder, symbol_folder)
-            if not os.path.isdir(sym_path):
-                continue
-
-            for tf_folder in os.listdir(sym_path):
-                tf_path = os.path.join(sym_path, tf_folder)
-                if not os.path.isdir(tf_path):
-                    continue
-
-                chart_path = os.path.join(tf_path, "chart_custom.png")
-                report_path = os.path.join(tf_path, "custom_levels.json")
-
-                if not os.path.exists(chart_path) or not os.path.exists(report_path):
-                    continue
-
-                img = cv2.imread(chart_path)
-                if img is None:
-                    continue
-
-                with open(report_path, 'r', encoding='utf-8') as f:
-                    final_teams = json.load(f)
-
-                if not final_teams:
-                    continue
-
-                updated = False
-                img_height, img_width = img.shape[:2]
-
-                for line_id, data in final_teams.items():
-                    info = data["team"]["trendline_info"]
-
-                    fx = info.get("from_x")
-                    fy = info.get("from_y")
-                    tx = info.get("to_x")
-                    ty = info.get("to_y")
-                    color = tuple(info["color"])
-
-                    # Skip if pixel coordinates are missing (shouldn't happen after custom_trendline fix)
-                    if None in (fx, fy, tx, ty):
-                        continue
-
-                    fx, fy, tx, ty = int(fx), int(fy), int(tx), int(ty)
-
-                    # Avoid division by zero
-                    dx = tx - fx
-                    if abs(dx) < 5:
-                        dx = 5 if dx >= 0 else -5
-
-                    slope = (ty - fy) / dx
-                    extend_x = img_width - 20
-                    extend_y = int(fy + slope * (extend_x - fx))
-
-                    # Draw infinite ray
-                    cv2.line(img, (fx, fy), (extend_x, extend_y), color, 3)
-
-                    # Label near the starting point (clean and always visible)
-                    cv2.putText(img, line_id, (fx + 15, fy - 15),
-                                cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
-
-                    # Mark receiver candle with "R" if exists
-                    if info.get("to_candle") is not None:
-                        rx, ry = tx, ty
-                        cv2.circle(img, (rx, ry), 11, (0, 0, 0), -1)        # black circle
-                        cv2.putText(img, "R", (rx - 9, ry + 9),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-                    updated = True
-
-                if updated:
-                    cv2.imwrite(chart_path, img)
-                    processed_count += 1
-
-    log(f"EXTENDED {processed_count} CHARTS → INFINITE INSTITUTIONAL TRENDLINES + 'R' MARKERS", "SUCCESS")
-    
 
 def custom_horizontal_line():
     import cv2
@@ -5070,9 +5255,8 @@ def custom_horizontal_line():
 
     log("=== CUSTOM HORIZONTAL LINE (STOPS AT TO) COMPLETED ===", "SUCCESS")
 
+
 if __name__ == "__main__":
     custom_trendline()
-
-
-        
-        
+                             
+                                                                                  
