@@ -21,7 +21,7 @@
                 "define_trend_points":{
                     "sender_candle":"bearish",
                     "receiver_candle":"bearish",
-                    "extreme_interceptor":"bearish",
+                    "breakout_extreme_interceptor":"bearish",
                     "target_zone":"bearish",
                     "opposition_candle":"bullish",
                     "retest_candle":"bearish"
@@ -29,15 +29,15 @@
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
                 "breakout_condition":"3_sequence_candle",
-                "order_block_condition":{
-                    "bullish":"lowprice",
-                    "bearish":"highprice"
-                }
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"high_price"
+                } 
             },
             "TO": "ph",
             "INTERCEPTOR": "yes",
-            "DIRECTION": "breakout",
-            "ORDER_BLOCK": "sender"
+            "DIRECTION": "breakout"
         },
         "2":{
             "TREND": "bullish",
@@ -48,21 +48,21 @@
                     "receiver_candle":"bullish",
                     "opposition_candle":"bearish",
                     "retest_candle":"bullish",
-                    "extreme_interceptor":"bullish",
+                    "breakout_extreme_interceptor":"bullish",
                     "target_zone":"bullish"
                 },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
                 "breakout_condition":"3_sequence_candle",
-                "order_block_condition":{
-                    "bullish":"lowprice",
-                    "bearish":"highprice"
-                }
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"low_price"
+                } 
             },
             "TO": "pl",
             "INTERCEPTOR": "yes",
-            "DIRECTION": "breakout",
-            "ORDER_BLOCK": "sender"
+            "DIRECTION": "breakout"
         },
         "3":{
             "TREND": "bearish",
@@ -73,21 +73,22 @@
                     "receiver_candle":"bearish",
                     "opposition_candle":"bullish",
                     "retest_candle":"bearish",
-                    "extreme_interceptor":"bearish",
+                    "breakout_extreme_interceptor":"bearish",
+                    "continuation_extreme_interceptor":"bearish",
                     "target_zone":"bearish"
                 },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
                 "breakout_condition":"3_sequence_candle",
-                "order_block_condition":{
-                    "bullish":"lowprice",
-                    "bearish":"highprice"
-                }
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"high_price"
+                } 
             },
             "TO": "ch",
             "INTERCEPTOR": "yes",
-            "DIRECTION": "breakout",
-            "ORDER_BLOCK": "sender"
+            "DIRECTION": "breakout"
         },
         "4":{
             "TREND": "bullish",
@@ -98,21 +99,21 @@
                     "receiver_candle":"bullish",
                     "opposition_candle":"bearish",
                     "retest_candle":"bullish",
-                    "extreme_interceptor":"bullish",
+                    "breakout_extreme_interceptor":"bullish",
                     "target_zone":"bullish"
                 },
                 "sender_condition":"beyond",
                 "extreme_intruder":"new_from",
                 "breakout_condition":"3_sequence_candle",
-                "order_block_condition":{
-                    "bullish":"lowprice",
-                    "bearish":"highprice"
-                }
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"low_price"
+                } 
             },
             "TO": "cl",
             "INTERCEPTOR": "yes",
-            "DIRECTION": "breakout",
-            "ORDER_BLOCK": "sender"
+            "DIRECTION": "breakout"
         }
     },
     "horizontal_line": {
