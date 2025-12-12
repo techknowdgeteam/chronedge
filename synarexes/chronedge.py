@@ -2738,10 +2738,10 @@ def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
     try:
         # Crop chart.png
         with Image.open(chart_path) as img:
-            right = 20
-            left = 130
-            top = 150
-            bottom = 180
+            right = 0
+            left = 0
+            top = 0
+            bottom = 0
             crop_box = (left, top, img.width - right, img.height - bottom)
             cropped_img = img.crop(crop_box)
             cropped_img.save(chart_path, "PNG")

@@ -530,7 +530,7 @@ def custom_trendline():
                     def process_single_trend(trend, depth=0, max_depth=5):
                         if depth > max_depth:
                             log(f"Max adaptation depth reached for {trend['line_id']} → DISCARDING", "WARNING")
-                            return False, trend # Invalid → do NOT draw and return final state
+                            return False, trend
 
                         line_id = trend["line_id"]
                         fx, fy = trend["from_final_valid_sender_x"], trend["from_final_valid_sender_y"]
@@ -545,27 +545,24 @@ def custom_trendline():
                         sender_condition = trend.get("sender_condition", "none")
                         extreme_rule = trend.get("extreme_rule", "continue")
 
-                        # --- Initialize all variables and their boolean flags ---
+                        # --- Initialize variables ---
                         target_zone_cnum = None
+                        target_zone_candle = None
                         target_zone_candle_found = False
-
                         extreme_target_reached_candle = None
                         extreme_target_reached_candle_found = False
-
                         extreme_target_reached_mutual_candle = []
-                        extreme_target_reached_mutual_candle_found = False # NEW BOOLEAN
-
-                        target_zone_mutuals_cnums = [] # Initialized early for fallback
-                        target_zone_mutuals_found = False # NEW BOOLEAN
-
+                        extreme_target_reached_mutual_candle_found = False
+                        target_zone_mutuals_cnums = []
+                        target_zone_mutuals_found = False
                         target_zone_mutual_limit_cnum = None
                         target_zone_mutual_limit_found = False
-
                         extreme_target_reached_limit_candle = None
                         fourth_candle_found = False
-                        # --- END Initialization ---
+                        extreme_opposition_cnum = None
+                        extreme_opposition_reason = None
 
-                        # === Sender candle (FROM point) ===
+                        # === Sender candle ===
                         if "sender_cnum" not in trend:
                             sender_candle = next((c for c in reversed(candles) if is_level_match(c, from_key)), None)
                             trend["sender_cnum"] = sender_candle["candle_number"] if sender_candle else None
@@ -574,7 +571,6 @@ def custom_trendline():
                             return False, trend
 
                         receiver_cnum = trend["receiver_cnum"]
-
                         if tx - fx == 0:
                             return False, trend
 
@@ -586,7 +582,6 @@ def custom_trendline():
                         # === 1. Find future interceptors ===
                         interceptors = []
                         receiver_x = positions.get(receiver_cnum, {}).get("x", -99999)
-
                         for c in candles:
                             cn = c["candle_number"]
                             if cn not in positions or positions[cn]["x"] <= receiver_x:
@@ -602,42 +597,25 @@ def custom_trendline():
                                     "candle": c
                                 })
 
-                        # === No interceptors → valid only if original line was valid ===
                         if not interceptors:
                             draw_final_trendline(trend, fx, fy, tx, ty, color)
                             final_teams[line_id] = {"team": {"trendline_info": {
-                                "line_id": line_id, 
-                                "interceptors": [], 
+                                "line_id": line_id,
+                                "interceptors": [],
                                 "touched_interceptors": [],
-                                "opposition_candle": None, 
-                                "breakout_extreme_interceptor_candle": None,
-                                "breakout_sequence_candles": [], 
-                                "retest_candle": None, 
-                                
-                                # CNUM/LIST FIELDS
-                                "target_zone_candle": target_zone_cnum,
-                                "target_zone_mutuals": target_zone_mutuals_cnums,
-                                "target_zone_mutual_limit": target_zone_mutual_limit_cnum,
-                                "target_reached_candles": [], 
-                                "extreme_target_reached_candle": extreme_target_reached_candle,
-                                "extreme_target_reached_mutual_candle": extreme_target_reached_mutual_candle,
-                                "extreme_target_reached_limit_candle_cnum": extreme_target_reached_limit_candle,
-                                
-                                # BOOLEAN FIELDS (ORDERED)
-                                "valid": True, 
+                                "opposition_candle": None,
+                                "further_oppositions": [],
+                                "extreme_opposition_candle": None,
+                                "extreme_opposition_reason": "No interceptors found",
+                                "valid": True,
                                 "adapted": depth > 0,
-                                "target_zone_candle_found": target_zone_candle_found,
-                                "target_zone_mutuals_found": target_zone_mutuals_found,
-                                "target_zone_mutual_limit_found": target_zone_mutual_limit_found,
-                                "extreme_target_reached_candle_found": extreme_target_reached_candle_found,
-                                "extreme_target_reached_mutual_candle_found": extreme_target_reached_mutual_candle_found,
-                                "extreme_target_reached_limit_found": fourth_candle_found,
                             }}}
                             log(f"{line_id}: No interceptors → Valid & drawn", "INFO")
                             return True, trend
 
-                        # === 2. Find opposition candle ===
+                        # === 2. Find opposition candle(s) ===
                         opposition_cnum = None
+                        further_oppositions = []
                         if receiver_cnum and opposition_key_name:
                             oldest_int_cnum = min(i["candle_number"] for i in interceptors)
                             receiver_candle = next((c for c in candles if c["candle_number"] == receiver_cnum), None)
@@ -651,13 +629,19 @@ def custom_trendline():
                                         if cn <= 0: break
                                         candle = next((c for c in candles if c["candle_number"] == cn), None)
                                         if candle and any(candle.get(f"is_{lvl}") for lvl in target_levels):
-                                            opposition_cnum = cn
-                                            break
+                                            if opposition_cnum is None:
+                                                opposition_cnum = cn
+                                            else:
+                                                further_oppositions.append(cn)
 
-                        # === 3. Find extreme interceptor (oldest opposing color BEFORE opposition) ===
+                        if opposition_cnum is None:
+                            log(f"{line_id}: No opposition candle found → DISCARDING trendline", "INFO")
+                            return False, trend
+
+                        # === 3. Find extreme interceptor ===
                         extreme_interceptor_cnum = None
                         extreme_interceptor_data = None
-                        pre_opp_ints = [i for i in interceptors if i["candle_number"] < (opposition_cnum or 99999)]
+                        pre_opp_ints = [i for i in interceptors if i["candle_number"] < opposition_cnum]
                         if pre_opp_ints:
                             pre_opp_ints.sort(key=lambda i: i["candle_number"])
                             opposing_red = is_bullish_level(from_key)
@@ -668,10 +652,14 @@ def custom_trendline():
                                     extreme_interceptor_data = intr
                                     break
 
+                        if extreme_interceptor_cnum is None:
+                            log(f"{line_id}: No extreme interceptor found → DISCARDING trendline", "INFO")
+                            return False, trend
+
                         # === 4. Check breakout sequence ===
                         breakout_sequence_cnums = []
                         has_breakout = False
-                        if direction == "breakout" and seq_count > 0 and extreme_interceptor_cnum:
+                        if direction == "breakout" and seq_count > 0:
                             ext_c = next(c for c in candles if c["candle_number"] == extreme_interceptor_cnum)
                             younger = [c for c in candles if c["candle_number"] < extreme_interceptor_cnum]
                             younger.sort(key=lambda x: x["candle_number"], reverse=True)
@@ -697,15 +685,7 @@ def custom_trendline():
                                     body_y = (positions[cnum]["high_y"] + positions[cnum]["low_y"]) // 2
                                     mark_breakout_candle(img, positions[cnum]["x"], body_y, color)
 
-                            # --- Opposition ---
-                            if opposition_cnum and opposition_cnum in positions:
-                                opp_candle = next(c for c in candles if c["candle_number"] == opposition_cnum)
-                                opp_level = next(k for k in ["ph","ch","pl","cl"] if opp_candle.get(f"is_{k}"))
-                                direction_up = opp_level in {"pl", "cl"}
-                                arrow_y = positions[opposition_cnum]["low_y"] if direction_up else positions[opposition_cnum]["high_y"]
-                                draw_opposition_arrow(img, positions[opposition_cnum]["x"], arrow_y, color, direction_up=direction_up)
-
-                            # --- Retest ---
+                            # === Retest ===
                             retest_cnum = None
                             retest_candle = None
                             if retest_key_name and breakout_sequence_cnums:
@@ -724,15 +704,13 @@ def custom_trendline():
                                         retest_candle = c
                                         break
 
-                            # Draw retest marker
                             if retest_cnum and retest_cnum in positions and retest_candle:
                                 level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
                                 is_bullish_retest = level in {"pl", "cl"}
                                 y_price = positions[retest_cnum]["low_y"] if is_bullish_retest else positions[retest_cnum]["high_y"]
                                 draw_double_retest_arrow(img, positions[retest_cnum]["x"], y_price, color, direction_up=is_bullish_retest)
 
-
-                            # --- Target Zone Marker ---
+                            # === Target Zone Marker ===
                             if retest_cnum and retest_candle:
                                 level = next(k for k in ["ph","ch","pl","cl"] if retest_candle.get(f"is_{k}"))
                                 nr = parent_neighbor_right if is_parent_level(level) else child_neighbor_right
@@ -741,82 +719,57 @@ def custom_trendline():
                                     if target_zone_cnum > 0:
                                         target_zone_candle = next((c for c in candles if c["candle_number"] == target_zone_cnum), None)
                                         if target_zone_cnum in positions:
-                                            target_zone_candle_found = True # SET BOOLEAN FLAG
+                                            target_zone_candle_found = True
                                             txz = positions[target_zone_cnum]["x"]
                                             tyz = positions[target_zone_cnum]["high_y"] - 20 if is_bullish_level(from_key) else positions[target_zone_cnum]["low_y"] + 20
                                             draw_target_zone_marker(img, txz, tyz, color)
 
-                            # --- Target Reached Diamond Marker (Extreme and Fourth) ---
+                            # === Target Reached Diamond Marker (only if target zone exists) ===
                             target_reached_cnums = []
-
                             if target_zone_cnum:
                                 target_reach_candidates = [i for i in interceptors if i["candle_number"] < target_zone_cnum]
-
                                 for c_data in target_reach_candidates:
                                     target_reached_cnums.append(c_data["candle_number"])
-
                                 if target_reached_cnums:
                                     sorted_reached = sorted(target_reached_cnums, reverse=True)
-
-                                    # 1. Extreme (oldest) target reached candle
                                     extreme_target_reached_candle = sorted_reached[0] if sorted_reached else None
-                                    extreme_target_reached_candle_found = extreme_target_reached_candle is not None # SET BOOLEAN FLAG
-
-                                    # 2. Mutual candidates (2nd and 3rd oldest)
+                                    extreme_target_reached_candle_found = extreme_target_reached_candle is not None
                                     mutual_candidates = sorted_reached[1:3]
-
-                                    # 3. Fourth candle candidate
                                     extreme_target_reached_limit_candle = sorted_reached[3] if len(sorted_reached) >= 4 else None
-                                    fourth_candle_found = extreme_target_reached_limit_candle is not None # SET BOOLEAN FLAG
-
+                                    fourth_candle_found = extreme_target_reached_limit_candle is not None
                                     extreme_target_reached_mutual_candle = []
-
                                     if extreme_target_reached_candle is not None:
                                         extreme_candle_data = next((c for c in candles if c["candle_number"] == extreme_target_reached_candle), None)
-
                                         if extreme_candle_data:
                                             is_bullish = is_bullish_level(from_key)
-
                                             for cnum in mutual_candidates:
                                                 candidate_candle_data = next((c for c in candles if c["candle_number"] == cnum), None)
-
                                                 if candidate_candle_data:
-                                                    # Check for higher high (bullish) or lower low (bearish)
                                                     if (is_bullish and candidate_candle_data["high"] > extreme_candle_data["high"]) or \
                                                     (not is_bullish and candidate_candle_data["low"] < extreme_candle_data["low"]):
                                                         extreme_target_reached_mutual_candle.append(cnum)
-                                    
-                                    # SET NEW BOOLEAN FLAG for mutual list
                                     extreme_target_reached_mutual_candle_found = bool(extreme_target_reached_mutual_candle)
 
-                                    # 4. DRAWING LOGIC (Extreme (1st) and Fourth (4th) ONLY)
                                     final_draw_cnums = []
                                     if extreme_target_reached_candle is not None:
                                         final_draw_cnums.append(extreme_target_reached_candle)
                                     if extreme_target_reached_limit_candle is not None:
                                         final_draw_cnums.append(extreme_target_reached_limit_candle)
-
                                     for cn in final_draw_cnums:
                                         if cn in positions:
                                             pos = positions[cn]
                                             body_y = (pos["high_y"] + pos["low_y"]) // 2
                                             cv2.drawMarker(img, (pos["x"], body_y), color,
-                                                            markerType=cv2.MARKER_DIAMOND,
-                                                            markerSize=12, thickness=3)
+                                                        markerType=cv2.MARKER_DIAMOND,
+                                                        markerSize=12, thickness=3)
 
-                            # --- Target Zone Mutuals (Cross Marker) & New Third Mutual ---
-                            # target_zone_mutuals_cnums is initialized to []
-
+                            # === Target Zone Mutuals (only if target zone exists) ===
                             if target_zone_cnum and target_zone_candle:
-
                                 is_bullish = is_bullish_level(from_key)
                                 target_zone_price = target_zone_candle["high"] if is_bullish else target_zone_candle["low"]
-
-                                # Define the three candidates
                                 younger_c1_num = target_zone_cnum - 1
                                 younger_c2_num = target_zone_cnum - 2
                                 younger_c3_num = target_zone_cnum - 3
-
                                 candidates = []
                                 if younger_c1_num > 0:
                                     c1 = next((c for c in candles if c["candle_number"] == younger_c1_num), None)
@@ -827,8 +780,6 @@ def custom_trendline():
                                 if younger_c3_num > 0:
                                     c3 = next((c for c in candles if c["candle_number"] == younger_c3_num), None)
                                     if c3: candidates.append((younger_c3_num, c3))
-
-                                # Check the first two candidates for the price condition (Mutuals 1 & 2)
                                 for cn, candle in candidates[:2]:
                                     meets_condition = False
                                     if is_bullish:
@@ -837,47 +788,96 @@ def custom_trendline():
                                     else:
                                         if candle["low"] <= target_zone_price:
                                             meets_condition = True
-
                                     if meets_condition:
                                         target_zone_mutuals_cnums.append(cn)
-
-                                # Set NEW BOOLEAN FLAG for target zone mutuals list
                                 target_zone_mutuals_found = bool(target_zone_mutuals_cnums)
-
-                                # Check the third candidate (Mutual 3)
                                 target_zone_mutual_limit_cnum = None
                                 if len(candidates) >= 3:
                                     cn, candle = candidates[2]
                                     target_zone_mutual_limit_cnum = cn
-                                    target_zone_mutual_limit_found = True # SET BOOLEAN FLAG HERE
+                                    target_zone_mutual_limit_found = True
 
-                                # Mark the mutuals on the image
                                 for cn in target_zone_mutuals_cnums:
                                     if cn in positions:
                                         pos = positions[cn]
                                         body_y = (pos["high_y"] + pos["low_y"]) // 2
                                         cv2.drawMarker(img, (pos["x"], body_y), color,
-                                                        markerType=cv2.MARKER_CROSS,
-                                                        markerSize=10, thickness=2)
-
-                                # Mark the third mutual on the image
+                                                    markerType=cv2.MARKER_CROSS,
+                                                    markerSize=10, thickness=2)
                                 if target_zone_mutual_limit_cnum and target_zone_mutual_limit_cnum in positions:
                                     pos = positions[target_zone_mutual_limit_cnum]
                                     body_y = (pos["high_y"] + pos["low_y"]) // 2
                                     cv2.circle(img, (pos["x"], body_y), 8, color, 2)
 
+                            # === Extreme Opposition Logic (only if target zone exists) ===
+                            extreme_opposition_reason = "Not calculated"
+                            if target_zone_cnum is not None:
+                                opposition_group = [opposition_cnum] + further_oppositions
+                                valid_oppositions = [cn for cn in opposition_group if target_zone_cnum <= cn <= opposition_cnum]
 
-                            # --- CONSTRUCT FINAL DICTIONARY WITH ORDERED BOOLEANS ---
-                            final_teams[line_id] = {"team": {"trendline_info": {
+                                if valid_oppositions:
+                                    opp_candles = []
+                                    for cn in valid_oppositions:
+                                        candle = next((c for c in candles if c["candle_number"] == cn), None)
+                                        if candle:
+                                            opp_candles.append((cn, candle))
+
+                                    if opp_candles:
+                                        is_bullish_trend = is_bullish_level(from_key)
+                                        if is_bullish_trend:
+                                            extreme_opposition_cnum = max(opp_candles, key=lambda x: x[1]["high"])[0]
+                                        else:
+                                            extreme_opposition_cnum = min(opp_candles, key=lambda x: x[1]["low"])[0]
+
+                                        if extreme_opposition_cnum and extreme_opposition_cnum in positions:
+                                            opp_candle = next(c for c in candles if c["candle_number"] == extreme_opposition_cnum)
+                                            opp_level = next(k for k in ["ph","ch","pl","cl"] if opp_candle.get(f"is_{k}"))
+                                            direction_up = opp_level in {"pl", "cl"}
+                                            arrow_y = positions[extreme_opposition_cnum]["low_y"] if direction_up else positions[extreme_opposition_cnum]["high_y"]
+                                            draw_opposition_arrow(img, positions[extreme_opposition_cnum]["x"], arrow_y, color, direction_up=direction_up)
+
+                                        extreme_opposition_reason = f"Selected extreme opposition: {extreme_opposition_cnum}"
+                                    else:
+                                        extreme_opposition_reason = "No candle data found for valid opposition candles"
+                                else:
+                                    extreme_opposition_reason = f"No opposition candles in range [{target_zone_cnum} - {opposition_cnum}]"
+                            else:
+                                extreme_opposition_reason = "No target zone found → extreme opposition skipped"
+
+                            # === NEW: Special "X" marker for invalid target zone relative to extreme opposition ===
+                            # This block draws the "X" on the chart (always kept)
+                            invalid_target_zone = False
+                            if target_zone_cnum is not None and extreme_opposition_cnum is not None and target_zone_candle is not None:
+                                opp_candle = next((c for c in candles if c["candle_number"] == extreme_opposition_cnum), None)
+                                tz_candle = target_zone_candle
+
+                                if opp_candle and tz_candle:
+                                    tz_x = positions[target_zone_cnum]["x"]
+                                    tz_high_y = positions[target_zone_cnum]["high_y"]
+                                    tz_low_y = positions[target_zone_cnum]["low_y"]
+
+                                    # Bearish trendline
+                                    if not is_bullish_level(from_key):
+                                        if tz_candle["low"] < opp_candle["high"]:
+                                            invalid_target_zone = True
+                                            cv2.putText(img, "X", (tz_x, tz_low_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 4)
+                                            cv2.putText(img, "X", (tz_x, tz_low_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+
+                                    # Bullish trendline
+                                    else:
+                                        if tz_candle["high"] > opp_candle["low"]:
+                                            invalid_target_zone = True
+                                            cv2.putText(img, "X", (tz_x, tz_high_y - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 4)
+                                            cv2.putText(img, "X", (tz_x, tz_high_y - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+
+                            # === Final dictionary ===
+                            final_info = {
                                 "line_id": line_id,
                                 "interceptors": [i for i in interceptors if "candle" not in i],
                                 "touched_interceptors": [i["candle_number"] for i in interceptors],
-                                "opposition_candle": opposition_cnum,
                                 "breakout_extreme_interceptor_candle": extreme_interceptor_cnum,
                                 "breakout_sequence_candles": breakout_sequence_cnums,
                                 "retest_candle": retest_cnum,
-
-                                # CNUM / LIST FIELDS (Data points)
                                 "target_zone_candle": target_zone_cnum,
                                 "target_reached_candles": target_reached_cnums,
                                 "extreme_target_reached_candle": extreme_target_reached_candle,
@@ -885,8 +885,6 @@ def custom_trendline():
                                 "target_zone_mutuals": target_zone_mutuals_cnums,
                                 "target_zone_mutual_limit": target_zone_mutual_limit_cnum,
                                 "extreme_target_reached_limit_candle_cnum": extreme_target_reached_limit_candle,
-
-                                # BOOLEAN FIELDS (ORDERED LAST)
                                 "valid": True,
                                 "adapted": depth > 0,
                                 "target_zone_candle_found": target_zone_candle_found,
@@ -895,13 +893,51 @@ def custom_trendline():
                                 "target_zone_mutuals_found": target_zone_mutuals_found,
                                 "target_zone_mutual_limit_found": target_zone_mutual_limit_found,
                                 "extreme_target_reached_limit_found": fourth_candle_found,
-                            }}}
+                            }
+
+                            # If the "X" marker was triggered → completely wipe opposition and extreme opposition data from JSON
+                            if invalid_target_zone:
+                                final_info.update({
+                                    "opposition_candle": None,
+                                    "further_oppositions": [],
+                                    "extreme_opposition_candle": None,
+                                    "extreme_opposition_reason": "Removed – invalid target zone (X marker)",
+                                    # Also wipe all other fields to fully clear the record
+                                    "breakout_extreme_interceptor_candle": None,
+                                    "breakout_sequence_candles": [],
+                                    "retest_candle": None,
+                                    "target_zone_candle": None,
+                                    "target_reached_candles": [],
+                                    "extreme_target_reached_candle": None,
+                                    "extreme_target_reached_mutual_candle": [],
+                                    "target_zone_mutuals": [],
+                                    "target_zone_mutual_limit": None,
+                                    "extreme_target_reached_limit_candle_cnum": None,
+                                    "target_zone_candle_found": False,
+                                    "target_zone_mutuals_found": False,
+                                    "target_zone_mutual_limit_found": False,
+                                    "extreme_target_reached_candle_found": False,
+                                    "extreme_target_reached_mutual_candle_found": False,
+                                    "extreme_target_reached_limit_found": False,
+                                    "valid": False,  # Mark as invalid in JSON
+                                })
+
+                            else:
+                                # Normal case – keep all data
+                                final_info.update({
+                                    "opposition_candle": opposition_cnum,
+                                    "further_oppositions": further_oppositions,
+                                    "extreme_opposition_candle": extreme_opposition_cnum,
+                                    "extreme_opposition_reason": extreme_opposition_reason,
+                                })
+
+                            final_teams[line_id] = {"team": {"trendline_info": final_info}}
+
                             log(f"{line_id}: BREAKOUT confirmed → Valid & drawn", "SUCCESS")
                             return True, trend
 
-                        # === NO BREAKOUT → Try to adapt (strict validation) ===
+                        # === NO BREAKOUT → Try to adapt (unchanged) ===
                         if depth < max_depth:
-                            # === Adaptation Logic (Unchanged) ===
                             touches = []
                             min_c = min(sender_cnum, receiver_cnum)
                             max_c = max(sender_cnum, receiver_cnum)
@@ -929,7 +965,6 @@ def custom_trendline():
                             new_fx, new_fy = fx, fy
                             new_tx, new_ty = tx, ty
                             new_receiver_cnum = receiver_cnum
-
                             if extreme_rule == "new_from" and extreme_cnum:
                                 new_fx, new_fy = positions[extreme_cnum]["x"], extreme_y
                                 trend["sender_cnum"] = extreme_cnum
@@ -946,19 +981,19 @@ def custom_trendline():
                                         "receiver_cnum": new_receiver_cnum,
                                         "line_id": f"{line_id}_adapted{depth+1}"
                                     })
-                                    return process_single_trend(trend, depth + 1, max_depth) # Recurse
+                                    return process_single_trend(trend, depth + 1, max_depth)
 
-                            # === Fallback: Price extreme interceptor (Unchanged) ===
+                            # Fallback price extreme
                             if is_bullish_level(from_key):
                                 candidate = min(interceptors, key=lambda i: i["low"])
                                 compare, base_key = candidate["low"], "low"
                             else:
                                 candidate = max(interceptors, key=lambda i: i["high"])
                                 compare, base_key = candidate["high"], "high"
-                            base_price = next(c[base_key] for c in candles if c["candle_number"] == receiver_cnum)
 
+                            base_price = next(c[base_key] for c in candles if c["candle_number"] == receiver_cnum)
                             should_adapt = (is_bullish_level(from_key) and compare < base_price) or \
-                                            (is_bearish_level(from_key) and compare > base_price)
+                                        (is_bearish_level(from_key) and compare > base_price)
 
                             if should_adapt and validate_sender_condition(sender_cnum, candidate["candle_number"], from_key, sender_condition):
                                 log(f"{line_id}: Adapting to price extreme → {candidate['candle_number']}", "INFO")
@@ -970,12 +1005,12 @@ def custom_trendline():
                                 })
                                 return process_single_trend(trend, depth + 1, max_depth)
 
-                        # === NO VALID ADAPTATION POSSIBLE → DISCARD ENTIRE TRENDLINE ===
+                        # === DISCARD ===
                         log(f"{line_id}: No breakout + no valid adaptation → DISCARDING trendline", "INFO")
-                        return False, trend # Do NOT draw and return final state
+                        return False, trend
+ 
 
                     # --- MAIN EXECUTION ---
-
                     for trend in final_trendlines_for_redraw[:]: # Use the list from the external scope
                         # Restore original rules and state
                         orig_id = trend["line_id"].split("_")[0].lstrip("T")
@@ -1163,8 +1198,10 @@ def custom_trendline():
                     if not valid_trends:
                         log("No valid trendlines → nothing to draw for points levels.", "INFO")
                         return
+
                     drawn_levels = 0
                     pending_entry = img.shape[1] - 10
+
                     for trend in valid_trends.values():
                         color = trend["color"]
                         base_id = trend["line_id"].split("_")[0].lstrip("T")
@@ -1172,10 +1209,12 @@ def custom_trendline():
                         orig_conf = next((c for c in trend_list if c["id"] == base_id), None)
                         if not orig_conf:
                             continue
+
                         direction = orig_conf.get("direction", "continuation").lower()
                         horiz_cfg = orig_conf.get("horizontal_line_subject", {})
                         subject_wanted = horiz_cfg.get("subject", "").strip().lower()
                         entry_wanted = horiz_cfg.get("entry", "").strip().lower()
+
                         if not subject_wanted or entry_wanted not in {"high_price", "low_price"}:
                             continue
 
@@ -1196,17 +1235,22 @@ def custom_trendline():
                                     if abs(pos["x"] - x_check) < 12:
                                         return cnum, "R"
                             elif subject_wanted in {"opposition", "opp"}:
-                                cnum = info.get("opposition_candle")
-                                if cnum and cnum in positions: return cnum, "OPP"
+                                # === NEW: Use extreme opposition candle if available, otherwise fallback to regular opposition ===
+                                cnum = info.get("extreme_opposition_candle") or info.get("opposition_candle")
+                                if cnum and cnum in positions:
+                                    return cnum, "EXT-OPP" if info.get("extreme_opposition_candle") else "OPP"
                             elif subject_wanted == "extreme":
                                 cnum = info.get("breakout_extreme_interceptor_candle") or info.get("continuation_extreme_interceptor_candle")
-                                if cnum and cnum in positions: return cnum, "EXT"
+                                if cnum and cnum in positions:
+                                    return cnum, "EXT"
                             elif subject_wanted == "retest":
                                 cnum = info.get("retest_candle")
-                                if cnum and cnum in positions: return cnum, "RET"
+                                if cnum and cnum in positions:
+                                    return cnum, "RET"
                             elif subject_wanted in {"target_zone", "target", "tz"}:
                                 cnum = info.get("target_zone_candle")
-                                if cnum and cnum in positions: return cnum, "TZ"
+                                if cnum and cnum in positions:
+                                    return cnum, "TZ"
                             return None, ""
 
                         target_cnum, label = get_target_cnum_and_label()
@@ -1219,7 +1263,7 @@ def custom_trendline():
                             if tz_cnum is None:
                                 continue
 
-                        # === FULL CANDLE DATA — IMMEDIATELY AVAILABLE ===
+                        # === FULL CANDLE DATA ===
                         source_candle = next(c for c in candles if c["candle_number"] == target_cnum)
                         high_price = source_candle["high"]
                         low_price = source_candle["low"]
@@ -1236,10 +1280,14 @@ def custom_trendline():
                                 continue
                             p = positions[cn]
                             touched = False
-                            if draw_high and p["high_y"] <= high_y <= p["low_y"]: touched = True
-                            elif draw_low and p["high_y"] <= low_y <= p["low_y"]: touched = True
-                            elif draw_high and abs(p["high_y"] - high_y) < 8: touched = True
-                            elif draw_low and abs(p["low_y"] - low_y) < 8: touched = True
+                            if draw_high and p["high_y"] <= high_y <= p["low_y"]:
+                                touched = True
+                            elif draw_low and p["high_y"] <= low_y <= p["low_y"]:
+                                touched = True
+                            elif draw_high and abs(p["high_y"] - high_y) < 8:
+                                touched = True
+                            elif draw_low and abs(p["low_y"] - low_y) < 8:
+                                touched = True
                             if touched:
                                 body_y = (p["high_y"] + p["low_y"]) // 2
                                 touched_candles.append({
@@ -1258,10 +1306,11 @@ def custom_trendline():
                                 extreme_touch_x = positions[extreme_touch_cnum]["x"]
                                 cv2.putText(img, "blck", (extreme_touch["x"] + 20, extreme_touch["y"] - 10),
                                             cv2.FONT_HERSHEY_DUPLEX, 0.7, color, 2)
+
                         end_x = extreme_touch_x
 
                         # ==================================================================
-                        # === NEW BREAKOUT VALIDATION RULE — ONLY FOR BREAKOUT TRENDS ===
+                        # === BREAKOUT VALIDATION RULE ===
                         # ==================================================================
                         if direction == "breakout" and target_zone_cnum is not None:
                             tz_candle = next((c for c in candles if c["candle_number"] == target_zone_cnum), None)
@@ -1269,46 +1318,23 @@ def custom_trendline():
                                 tz_high = tz_candle["high"]
                                 tz_low = tz_candle["low"]
 
-                                pending_high_price = high_price if draw_high else low_price  # not used directly but for clarity
-                                pending_low_price = low_price if draw_low else high_price
-
                                 should_draw = True
 
-                                if "bear" in direction or "down" in direction.lower():  # Bearish breakout
-                                    if draw_high:
-                                        # We're drawing horizontal from a high → expect price to go down
-                                        # Invalid if TZ high is already below our pending low (means price went way past)
-                                        if tz_high <= low_price:
-                                            should_draw = False
-                                    elif draw_low:
-                                        # Drawing from low in bearish → very rare, but same logic
-                                        if tz_high <= high_price:
-                                            should_draw = False
-
-                                elif "bull" in direction or "up" in direction.lower():  # Bullish breakout
-                                    if draw_high:
-                                        # Drawing from high in bullish → rare, but check TZ low not above our high
-                                        if tz_low >= high_price:
-                                            should_draw = False
-                                    elif draw_low:
-                                        # Drawing from low → expect price to go up
-                                        # Invalid if TZ low is already above our pending high
-                                        if tz_low >= high_price:
-                                            should_draw = False
-
-                                # Positive condition version (more readable)
-                                if "bear" in direction.lower():
-                                    if not (tz_high > low_price):  # Must be room to drop
+                                if "bear" in direction or "down" in direction.lower():
+                                    if draw_high and tz_high <= low_price:
                                         should_draw = False
-                                elif "bull" in direction.lower():
-                                    if not (tz_low < high_price):  # Must be room to rise
+                                    elif draw_low and tz_high <= high_price:
+                                        should_draw = False
+                                elif "bull" in direction or "up" in direction.lower():
+                                    if draw_high and tz_low >= high_price:
+                                        should_draw = False
+                                    elif draw_low and tz_low >= high_price:
                                         should_draw = False
 
                                 if not should_draw:
-                                    # Skip drawing entirely for this trend
                                     continue
 
-                        # === DRAW LINES (only if passed breakout filter or not breakout) ===
+                        # === DRAW LINES ===
                         if draw_high:
                             cv2.line(img, (pos["x"], high_y), (end_x, high_y), color, 1, cv2.LINE_AA)
                             cv2.putText(img, f"{label}-H", (pos["x"] - 58, high_y + 8),
@@ -1320,7 +1346,7 @@ def custom_trendline():
 
                         drawn_levels += 1
 
-                        # === SAVE PERFECT DATA — INCLUDING ENTRY POINT ===
+                        # === SAVE PERFECT DATA ===
                         if line_id not in final_teams:
                             final_teams[line_id] = {"team": {"trendline_info": {}}}
                         info = final_teams[line_id]["team"]["trendline_info"]
@@ -1330,7 +1356,6 @@ def custom_trendline():
                         }
                         display_subject = subject_map.get(subject_wanted, subject_wanted.title())
 
-                        # Determine entry price
                         entry_price = high_price if draw_high else low_price
 
                         info.update({
@@ -1349,17 +1374,14 @@ def custom_trendline():
                             }
                         })
 
-                    log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (entry_point + full prices recorded)", "SUCCESS")
-  
-
+                    log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (from extreme opposition when available)", "SUCCESS")
 
                 def enrich_candle_details(candles_list, final_teams, final_valid_trends, report_path):
                     """
-                    FINAL ENHANCED VERSION
-                    • Enriches ALL candle number fields (including the previously missing one)
-                    • Enforces STRICT BOOLEAN ORDER (exact same as in validation logic)
-                    • Groups list booleans right after their data field for logical consistency
-                    • Safe: preserves already-enriched dicts, only converts raw ints
+                    FINAL ENHANCED VERSION – NOW ENRICHES ALL POSSIBLE CANDLE FIELDS
+                    • Includes extreme_opposition_candle (new)
+                    • Preserves already-enriched dicts
+                    • Enforces strict boolean order
                     """
                     candle_lookup = {c["candle_number"]: c for c in candles_list}
                     enriched_count = 0
@@ -1416,21 +1438,22 @@ def custom_trendline():
                     for data in final_teams.values():
                         info = data["team"]["trendline_info"]
 
-                        # === SINGLE CANDLES (enrich int → dict) ===
+                        # === SINGLE CANDLES (now includes extreme_opposition_candle) ===
                         single_keys = [
                             "opposition_candle",
+                            "extreme_opposition_candle",          # ← NEW
                             "retest_candle",
                             "target_zone_candle",
                             "extreme_target_reached_candle",
                             "target_zone_mutual_limit",
-                            "extreme_target_reached_limit_candle_cnum",  # ← NOW INCLUDED!
+                            "extreme_target_reached_limit_candle_cnum",
                             "pending_entry_candle",
                             "extreme_horizontal_level_blocker"
                         ]
                         for key in single_keys:
                             enrich_if_needed(info, key)
 
-                        # === LISTS (enrich each item if needed) ===
+                        # === LISTS ===
                         list_keys = [
                             "breakout_sequence_candles",
                             "target_reached_candles",
@@ -1444,7 +1467,6 @@ def custom_trendline():
                             enrich_list_if_needed(info, key)
 
                         # === Special cases ===
-                        # extreme_interceptor_mutual (if exists)
                         mutual = info.get("extreme_interceptor_mutual")
                         if isinstance(mutual, dict) and isinstance(mutual.get("candle_number"), int):
                             cn = mutual["candle_number"]
@@ -1456,7 +1478,6 @@ def custom_trendline():
                                 info["extreme_interceptor_mutual"] = clean
                                 enriched_count += 1
 
-                        # entry_point candle
                         entry = info.get("entry_point")
                         if isinstance(entry, dict) and isinstance(entry.get("candle_number"), int):
                             cn = entry["candle_number"]
@@ -1467,25 +1488,23 @@ def custom_trendline():
                                     entry["candle"][f] = full[f]
                                 enriched_count += 1
 
-                        # === RE-ORDER BOOLEAN FLAGS IN EXACT LOGICAL ORDER (same as validation) ===
+                        # === RE-ORDER BOOLEAN FLAGS IN EXACT LOGICAL ORDER ===
                         boolean_order = [
                             "valid",
                             "adapted",
                             "target_zone_candle_found",
-                            "target_zone_mutuals_found",           # ← list boolean first
-                            "target_zone_mutual_limit_found",      # ← then its boolean
+                            "target_zone_mutuals_found",
+                            "target_zone_mutual_limit_found",
                             "extreme_target_reached_candle_found",
-                            "extreme_target_reached_mutual_candle_found",  # ← list boolean first
-                            "extreme_target_reached_limit_found",         # ← then fourth candle boolean
+                            "extreme_target_reached_mutual_candle_found",
+                            "extreme_target_reached_limit_found",
                         ]
 
-                        # Extract, reorder, and reassign
                         ordered_bools = {}
                         for key in boolean_order:
                             if key in info:
-                                ordered_bools[key] = info.pop(key)  # remove and collect
+                                ordered_bools[key] = info.pop(key)
 
-                        # Put them back in correct order at the end
                         info.update(ordered_bools)
 
                     # === 2. Enrich final_valid_trends (sender/receiver only) ===
@@ -1494,7 +1513,7 @@ def custom_trendline():
                             enrich_if_needed(trend, key)
 
                     log(f"FINAL ENRICHMENT COMPLETE → {enriched_count} fields enriched | Booleans ordered consistently", "SUCCESS")
-
+ 
 
 
 
@@ -1522,7 +1541,7 @@ def custom_trendline():
                     # ==== ENRICH CUSTOM JSON WITH FULL CANDLE DETAILS ====
                     # Now passes ALL required arguments (including final_valid_trends)
                     
-                    #enrich_candle_details(candles, final_teams, final_valid_trends, report_path)
+                    enrich_candle_details(candles, final_teams, final_valid_trends, report_path)
 
                     # Final save after processing all trends
                     cv2.imwrite(output_path, img)
@@ -1773,93 +1792,10 @@ def custom_horizontal_line():
     log("=== CUSTOM HORIZONTAL LINE (STOPS AT TO) COMPLETED ===", "SUCCESS")
 
 
-def reverse_renumber_all_candles():
-    import os
-    import json
-    from datetime import datetime
-    import pytz
-
-    # --- Timezone logging (same as your main function) ---
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-
-    # --- Find developer brokers (exact same logic as your main function) ---
-    developer_brokers = {k: v for k, v in globals().get("brokersdictionary", {}).items() 
-                         if v.get("POSITION", "").lower() == "developer"}
-    
-    if not developer_brokers:
-        log("No developer brokers found! Cannot locate folders.", "ERROR")
-        return
-
-    processed_count = 0
-
-    for broker_raw_name, cfg in developer_brokers.items():
-        base_folder = cfg["BASE_FOLDER"]
-        
-        # Walk through all symbols and timeframes
-        for symbol_folder in os.listdir(base_folder):
-            sym_path = os.path.join(base_folder, symbol_folder)
-            if not os.path.isdir(sym_path):
-                continue
-
-            for tf_folder in os.listdir(sym_path):
-                tf_path = os.path.join(sym_path, tf_folder)
-                if not os.path.isdir(tf_path):
-                    continue
-
-                json_path = os.path.join(tf_path, "all_candles.json")
-                if not os.path.exists(json_path):
-                    continue
-
-                try:
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        candles = json.load(f)
-
-                    if not candles:
-                        log(f"Empty all_candles.json → {symbol_folder}/{tf_folder}", "WARNING")
-                        continue
-
-                    # Sort by candle_number descending (newest first → oldest last)
-                    candles.sort(key=lambda c: c["candle_number"], reverse=True)
-
-                    # Reverse numbering: oldest becomes 1, newest becomes len(candles)
-                    total = len(candles)
-                    for idx, candle in enumerate(candles):
-                        old_num = candle["candle_number"]
-                        candle["candle_number"] = total - idx  # e.g., 200→1, 199→2, ..., 0→200
-
-                    # Optional: Save as new file or overwrite
-                    backup_path = os.path.join(tf_path, "all_candles_original.json")
-                    output_path = json_path  # Overwrite original
-
-                    # Backup first (safety)
-                    if not os.path.exists(backup_path):
-                        import shutil
-                        shutil.copy(json_path, backup_path)
-
-                    with open(output_path, 'w', encoding='utf-8') as f:
-                        json.dump(candles, f, indent=2, ensure_ascii=False)
-
-                    log(f"REVERSED: {symbol_folder}/{tf_folder} | {total} candles renumbered (old 0→{total}, old {total}→1)", "SUCCESS")
-                    processed_count += 1
-
-                except Exception as e:
-                    log(f"Failed on {symbol_folder}/{tf_folder}: {e}", "ERROR")
-
-    log(f"REVERSE RENUMBERING COMPLETE → {processed_count} charts updated (oldest=1, newest=max)", "SUCCESS")
-
 if __name__ == "__main__":
     custom_trendline()
 
-
-                                            
-
-
-                  
-
-                  
+                                   
 
                                                    
 
