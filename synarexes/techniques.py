@@ -1254,7 +1254,6 @@ def custom_trendline():
                                     if abs(pos["x"] - x_check) < 12:
                                         return cnum, "R"
                             elif subject_wanted in {"opposition", "opp"}:
-                                # === NEW: Use extreme opposition candle if available, otherwise fallback to regular opposition ===
                                 cnum = info.get("extreme_opposition_candle") or info.get("opposition_candle")
                                 if cnum and cnum in positions:
                                     return cnum, "EXT-OPP" if info.get("extreme_opposition_candle") else "OPP"
@@ -1276,7 +1275,7 @@ def custom_trendline():
                         if not target_cnum or target_cnum not in positions:
                             continue
 
-                        # For breakout: we need target zone candle to validate logic
+                        # For breakout: require target zone
                         if direction == "breakout":
                             tz_cnum = final_teams.get(line_id, {}).get("team", {}).get("trendline_info", {}).get("target_zone_candle")
                             if tz_cnum is None:
@@ -1328,9 +1327,7 @@ def custom_trendline():
 
                         end_x = extreme_touch_x
 
-                        # ==================================================================
                         # === BREAKOUT VALIDATION RULE ===
-                        # ==================================================================
                         if direction == "breakout" and target_zone_cnum is not None:
                             tz_candle = next((c for c in candles if c["candle_number"] == target_zone_cnum), None)
                             if tz_candle:
@@ -1338,7 +1335,6 @@ def custom_trendline():
                                 tz_low = tz_candle["low"]
 
                                 should_draw = True
-
                                 if "bear" in direction or "down" in direction.lower():
                                     if draw_high and tz_high <= low_price:
                                         should_draw = False
@@ -1365,10 +1361,12 @@ def custom_trendline():
 
                         drawn_levels += 1
 
-                        # === SAVE PERFECT DATA ===
+                        # === SAVE PERFECT DATA (with exit_price and ordered placement) ===
                         if line_id not in final_teams:
                             final_teams[line_id] = {"team": {"trendline_info": {}}}
+
                         info = final_teams[line_id]["team"]["trendline_info"]
+
                         subject_map = {
                             "sender": "Sender", "receiver": "Receiver", "opposition": "Opposition",
                             "extreme": "Extreme", "retest": "Retest", "target_zone": "Target Zone"
@@ -1376,29 +1374,77 @@ def custom_trendline():
                         display_subject = subject_map.get(subject_wanted, subject_wanted.title())
 
                         entry_price = high_price if draw_high else low_price
+                        exit_price = low_price if draw_high else high_price  # Opposite extreme
 
-                        info.update({
-                            "horizontal_level_blockers": touched_candles,
-                            "extreme_horizontal_level_blocker": extreme_touch_cnum,
+                        # Build enhanced pending_entry_point with exit_price
+                        pending_entry_point = {
+                            "pending_entry_high_price": high_price,
+                            "pending_entry_low_price": low_price,
+                            "candle_number": target_cnum,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "type": "high" if draw_high else "low",
+                            "subject": display_subject
+                        }
+
+                        # Preserve all existing data except pending_entry_point (to avoid duplication)
+                        preserved_data = {k: v for k, v in info.items() if k != "pending_entry_point"}
+
+                        # Reconstruct info with desired order: line_id → pending_entry_point → everything else
+                        new_info = {
+                            "line_id": info.get("line_id", line_id),
+                            "pending_entry_point": pending_entry_point,  # Now high in JSON output
+                        }
+                        new_info.update(preserved_data)  # Add back interceptors, etc.
+
+                        # Add the rest of the pending entry fields
+                        new_info.update({
                             "pending_entry_subject": display_subject,
                             "pending_entry_candle": target_cnum,
                             "pending_entry_high_price": high_price,
                             "pending_entry_low_price": low_price,
                             "pending_entry_is_full_extension": extreme_touch_cnum is None,
-                            "pending_entry_point": {
-                                "candle_number": target_cnum,
-                                "entry_price": entry_price,
-                                "type": "high" if draw_high else "low",
-                                "subject": display_subject
-                            }
+                            "horizontal_level_blockers": touched_candles,
+                            "extreme_horizontal_level_blocker": extreme_touch_cnum,
                         })
 
-                    log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (from extreme opposition when available)", "SUCCESS")
+                        # Apply the new structure
+                        info.clear()
+                        info.update(new_info)
 
-                def enrich_candle_details(candles_list, final_teams, final_valid_trends, report_path):
+                    log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (with exit_price in pending_entry_point)", "SUCCESS")
+ 
+                def enrich_candle_details(candles_list, final_teams, final_valid_trends, report_path, technique_path):
+                    import os
+                    import json
+                    
                     candle_lookup = {c["candle_number"]: c for c in candles_list}
                     enriched_count = 0
                     ESSENTIAL_FIELDS = ["open", "high", "low", "close", "time", "timeframe", "symbol"]
+
+                    # === 1. Load technique.json to determine if it's breakout-only ===
+                    is_breakout_strategy = False
+                    try:
+                        with open(technique_path, 'r', encoding='utf-8') as f:
+                            technique_config = json.load(f)
+                        
+                        trendline_configs = technique_config.get("trendline", {})
+                        if isinstance(trendline_configs, dict):
+                            for config in trendline_configs.values():
+                                if isinstance(config, dict):
+                                    direction = config.get("DIRECTION", "").strip().lower()
+                                    if direction == "breakout":
+                                        is_breakout_strategy = True
+                                        break  # One breakout config → treat whole technique as breakout
+                    except Exception as e:
+                        log(f"Failed to load technique JSON for direction check: {e}", "ERROR")
+                        # Fallback: assume continuation if cannot determine
+                        is_breakout_strategy = False
+
+                    if not is_breakout_strategy:
+                        log("Technique is continuation-only → processing as continuation", "INFO")
+                    else:
+                        log("Technique is breakout-configured → processing as breakout", "INFO")
 
                     # === Helpers ===
                     def enrich_if_needed(container, key):
@@ -1449,18 +1495,8 @@ def custom_trendline():
                     for line_id, data in final_teams.items():
                         info = data["team"]["trendline_info"]
 
-                        # === Detect direction ===
-                        is_breakout = False
-                        if ("breakout_extreme_interceptor_candle" in info and info["breakout_extreme_interceptor_candle"] is not None) or \
-                        info.get("breakout_sequence_candles"):
-                            is_breakout = True
-                        elif line_id in final_valid_trends:
-                            base_id = line_id.split("_")[0].lstrip("T")
-                            trend = final_valid_trends.get(base_id)
-                            if trend and trend.get("direction", "").lower() == "breakout":
-                                is_breakout = True
-
-                        direction = "breakout" if is_breakout else "continuation"
+                        # === Direction is now globally determined from technique.json ===
+                        direction = "breakout" if is_breakout_strategy else "continuation"
 
                         # === Determine trendline_connection_type ===
                         trendline_connection_type = "unknown"
@@ -1532,7 +1568,7 @@ def custom_trendline():
                             "extreme_horizontal_level_blocker_found": bool(info.get("extreme_horizontal_level_blocker")),
                         }
 
-                        # === Cleanup by direction ===
+                        # === Keys to remove based on direction ===
                         breakout_only_keys = [
                             "breakout_extreme_interceptor_candle", "breakout_sequence_candles", "retest_candle",
                             "target_zone_candle", "target_reached_candles", "extreme_target_reached_candle",
@@ -1543,7 +1579,7 @@ def custom_trendline():
                         continuation_only_keys = [
                             "continuation_extreme_interceptor_candle",
                             "Continuation_extreme_Interceptor_limit",
-                            "continuation_extreme_interceptor_mutual",   # ← this is the correct single mutual field
+                            "continuation_extreme_interceptor_mutual",
                             "touched_continuation_interceptors",
                             "FROM", "TO",
                         ]
@@ -1554,19 +1590,14 @@ def custom_trendline():
                             "final_sender_level": info.get("final_sender_level"),
                             "final_receiver_level": info.get("final_receiver_level"),
                         }
-
                         active_order = {"reason": "no active order"}
 
                         if direction == "continuation":
-                            # Remove all breakout-specific keys
                             for key in breakout_only_keys:
                                 info.pop(key, None)
 
-                            # Enrich continuation fields
                             enrich_if_needed(info, "continuation_extreme_interceptor_candle")
                             enrich_if_needed(info, "Continuation_extreme_Interceptor_limit")
-
-                            # Enrich the single mutual candle ONLY if it exists
                             if "continuation_extreme_interceptor_mutual" in info:
                                 mutual_data = info["continuation_extreme_interceptor_mutual"]
                                 if isinstance(mutual_data, dict) and isinstance(mutual_data.get("candle_number"), int):
@@ -1578,22 +1609,17 @@ def custom_trendline():
                                             clean[f] = full[f]
                                         info["continuation_extreme_interceptor_mutual"] = clean
                                         enriched_count += 1
-                                # If it doesn't exist or is None → we leave it out completely (will not appear in new_info)
-                            else:
-                                # Explicitly ensure it's removed if somehow present as None
-                                info.pop("continuation_extreme_interceptor_mutual", None)
-
+                                else:
+                                    info.pop("continuation_extreme_interceptor_mutual", None)
                             enrich_list_if_needed(info, "touched_continuation_interceptors")
 
-                            # === CONTINUATION INSTANT ORDER LOGIC ===
+                            # Continuation instant order logic
                             ext_cnum = info.get("continuation_extreme_interceptor_candle")
                             ext_candle = ext_cnum if isinstance(ext_cnum, dict) else candle_lookup.get(ext_cnum) if isinstance(ext_cnum, int) else None
                             ext_open = ext_candle.get("open") if ext_candle else None
-
-                            mutual_candle = info.get("continuation_extreme_interceptor_mutual")  # single dict or missing/None
+                            mutual_candle = info.get("continuation_extreme_interceptor_mutual")
                             has_mutual = bool(mutual_candle)
                             mutual_open = mutual_candle.get("open") if isinstance(mutual_candle, dict) else None
-
                             limit_found = pre_bools["continuation_extreme_interceptor_limit_found"]
                             ext_found = pre_bools["continuation_extreme_interceptor_found"]
 
@@ -1612,10 +1638,7 @@ def custom_trendline():
                                     "order_from": "continuation_extreme_interceptor_mutuals"
                                 }
                             elif limit_found:
-                                active_order = {
-                                    "reason": "no active order",
-                                    "order_from": "none"
-                                }
+                                active_order = {"reason": "no active order", "order_from": "none"}
 
                             new_info.update({
                                 "valid": pre_bools["valid"],
@@ -1626,7 +1649,7 @@ def custom_trendline():
                                 "active_instant_order": active_order
                             })
 
-                        else:  # === BREAKOUT ===
+                        else:  # breakout
                             for key in continuation_only_keys:
                                 info.pop(key, None)
 
@@ -1639,26 +1662,23 @@ def custom_trendline():
                             enrich_list_if_needed(info, "target_zone_mutuals")
                             enrich_list_if_needed(info, "extreme_target_reached_mutual_candle")
 
-                            # Breakout instant order logic (unchanged)
+                            # Breakout instant order logic
                             if (pre_bools["valid"] or pre_bools["adapted"]) and order_type and pre_bools["retest_candle_found"] and pre_bools["target_zone_candle_found"]:
                                 tz_candle = info.get("target_zone_candle")
                                 tz_mutuals = info.get("target_zone_mutuals", [])
                                 ext_candle = info.get("extreme_target_reached_candle")
                                 ext_mutuals = info.get("extreme_target_reached_mutual_candle", [])
                                 tz_open = tz_candle.get("open") if isinstance(tz_candle, dict) else None
-
                                 latest_mutual_open = None
                                 if tz_mutuals:
                                     sorted_mutuals = sorted(tz_mutuals, key=lambda x: x.get("candle_number", 0), reverse=True)
                                     latest_mutual = sorted_mutuals[0]
                                     latest_mutual_open = latest_mutual.get("open")
-
                                 latest_ext_open = None
                                 if ext_mutuals:
                                     sorted_ext = sorted(ext_mutuals, key=lambda x: x.get("candle_number", 0), reverse=True)
                                     latest_ext = sorted_ext[0]
                                     latest_ext_open = latest_ext.get("open")
-
                                 ext_open = ext_candle.get("open") if isinstance(ext_candle, dict) else None
 
                                 if (not pre_bools["target_zone_mutuals_found"] and
@@ -1745,10 +1765,9 @@ def custom_trendline():
                                 "active_instant_order": active_order
                             })
 
-                        # === Copy remaining fields (excluding continuation_extreme_interceptor_mutual if not present) ===
+                        # === Copy remaining fields (safely) ===
                         for k, v in info.items():
                             if k not in new_info and k not in {"final_sender_level", "final_receiver_level", "valid", "adapted"}:
-                                # Only copy continuation_extreme_interceptor_mutual if it actually exists and has data
                                 if k == "continuation_extreme_interceptor_mutual" and direction == "continuation" and v is not None:
                                     new_info[k] = v
                                 elif k != "continuation_extreme_interceptor_mutual":
@@ -1761,177 +1780,321 @@ def custom_trendline():
                         enrich_if_needed(trend, "sender_cnum")
                         enrich_if_needed(trend, "receiver_cnum")
 
-                    log(f"FINAL ENRICHMENT COMPLETE → {enriched_count} fields enriched | "
-                        f"continuation_extreme_interceptor_mutual removed when not present", "SUCCESS")
+                    log(f"FINAL ENRICHMENT COMPLETE → {enriched_count} fields enriched | Direction determined from technique.json (breakout={is_breakout_strategy})", "SUCCESS")                               
 
-                def save_developer_technique(
-                    broker_raw_name,
-                    symbol_folder,
-                    tf_folder,
-                    chart_path,
-                    output_path,
-                    technique_path,
-                    report_path
-                ):
+                def categorize_developer_technique(
+                        broker_raw_name,
+                        symbol_folder,
+                        tf_folder,
+                        chart_path,
+                        output_path,  # This is the FINAL drawn chart (with all annotations)
+                        technique_path,
+                        report_path
+                    ):
                     import os
                     import json
                     import shutil
 
-                    # === 1. Load STRATEGY_NAME and PENDING_ENTRY ===
+                    # === 1. Load configuration from technique.json ===
                     strategy_name = None
                     pending_entry_value = None
+                    target_zone_name = None
+                    target_reached_name = None
+                    continuation_name = None
+                    continuation_extreme_name = None
+                    categories = []
+                    is_breakout_strategy = False
+                    is_continuation_strategy = False
+
                     try:
                         with open(technique_path, 'r', encoding='utf-8') as f:
                             technique_config = json.load(f)
+                        
                         for key, value in technique_config.items():
                             k = key.strip().upper()
                             if k == "STRATEGY_NAME" and isinstance(value, str):
                                 strategy_name = value.strip()
                             elif k == "PENDING_ENTRY" and isinstance(value, str):
                                 pending_entry_value = value.strip()
+                            elif k == "TARGET_ZONE_NAME" and isinstance(value, str):
+                                target_zone_name = value.strip()
+                            elif k == "TARGET_REACHED_NAME" and isinstance(value, str):
+                                target_reached_name = value.strip()
+                            elif k == "CONTINUATION_NAME" and isinstance(value, str):
+                                continuation_name = value.strip()
+                            elif k == "CONTINUATION_EXTREME_NAME" and isinstance(value, str):
+                                continuation_extreme_name = value.strip()
+                            elif k == "CATEGORIES_SPLIT" and isinstance(value, str):
+                                categories = [cat.strip().lower().replace(" ", "_").replace("-", "_") for cat in value.split(",") if cat.strip()]
+                        
+                        trendline_configs = technique_config.get("trendline", {})
+                        if isinstance(trendline_configs, dict):
+                            for config in trendline_configs.values():
+                                if isinstance(config, dict):
+                                    direction = config.get("DIRECTION", "").strip().lower()
+                                    if direction == "breakout":
+                                        is_breakout_strategy = True
+                                    elif direction == "continuation":
+                                        is_continuation_strategy = True
+                        
                         if not strategy_name:
                             strategy_name = os.path.basename(os.path.dirname(technique_path))
+                        if not continuation_name:
+                            continuation_name = f"{strategy_name}_Continuation"  # fallback if not specified
                         if not pending_entry_value:
                             log("No PENDING_ENTRY found → skipping aggregation", "WARNING")
-                            return
                     except Exception as e:
                         log(f"Failed to load technique JSON: {e}", "ERROR")
                         return
 
-                    # === 2. Paths ===
+                    # === Early exit if no pending entry name ===
+                    if not pending_entry_value:
+                        log("No PENDING_ENTRY name → aggregation skipped but chart may still be saved", "WARNING")
+
+                    # === 2. Determine which strategies to process ===
+                    if not (is_breakout_strategy or is_continuation_strategy):
+                        log(f"Technique is neither breakout nor continuation → skipping categorization for {symbol_folder}/{tf_folder}", "INFO")
+                        return
+
                     base_dev_path = r"C:\xampp\htdocs\chronedge\synarex\chart\developers"
                     broker_folder = os.path.join(base_dev_path, broker_raw_name)
-                    strategy_folder = os.path.join(broker_folder, strategy_name)
-                    chart_subfolder = os.path.join(strategy_folder, "chart")
-                    os.makedirs(chart_subfolder, exist_ok=True)
-                    os.makedirs(strategy_folder, exist_ok=True)
 
-                    # Copy chart + report
-                    try:
-                        shutil.copy2(chart_path, os.path.join(chart_subfolder, os.path.basename(chart_path)))
-                        shutil.copy2(report_path, os.path.join(chart_subfolder, os.path.basename(report_path)))
-                        log(f"Chart + report saved → {chart_subfolder}", "INFO")
-                    except Exception as e:
-                        log(f"Copy failed: {e}", "ERROR")
+                    # Safe names
+                    pending_safe = pending_entry_value.strip().replace(" ", "_") if pending_entry_value else None
+                    target_zone_safe = (target_zone_name or "Instant_Orders").strip().replace(" ", "_")
+                    target_reached_safe = (target_reached_name or "Trend_Instant_Orders").strip().replace(" ", "_")
+                    continuation_extreme_safe = (continuation_extreme_name or "Instant_Continuation").strip().replace(" ", "_")
 
-                    # === 3. Create safe filename from current PENDING_ENTRY value (exact casing, spaces → underscores) ===
-                    new_pending_filename_safe = pending_entry_value.strip().replace(" ", "_")   # e.g. "Breakout Entries" → "Breakout_Entries"
-                    new_pending_file = f"{new_pending_filename_safe}.json"
-                    new_no_pending_file = f"no_{new_pending_filename_safe}.json"
+                    safe_symbol = symbol_folder.replace("/", "_").replace("\\", "_").replace(":", "_")
+                    timeframe_filename = f"{tf_folder}.png"
 
-                    pending_full_path = os.path.join(strategy_folder, new_pending_file)
-                    no_pending_full_path = os.path.join(strategy_folder, new_no_pending_file)
+                    include_exit_price_categories = {"co_ords", "coords", "co_op"}
+                    expected_tfs = ["5m", "15m", "30m", "1h", "4h"]
 
-                    # === 4. AUTO-RENAME old files if PENDING_ENTRY name changed ===
-                    for file in os.listdir(strategy_folder):
-                        if file.endswith(".json") and file not in {new_pending_file, new_no_pending_file, "technique.json"}:
-                            old_base = file.replace(".json", "").replace("no_", "")
-                            if old_base.replace(" ", "_") != new_pending_filename_safe:
-                                old_path = os.path.join(strategy_folder, file)
-                                if file.startswith("no_"):
-                                    new_path = no_pending_full_path
-                                else:
-                                    new_path = pending_full_path
-                                try:
-                                    if os.path.exists(old_path):
-                                        os.replace(old_path, new_path)  # atomic rename
-                                        log(f"Renamed old file {file} → {os.path.basename(new_path)}", "INFO")
-                                except Exception as e:
-                                    log(f"Rename failed {file}: {e}", "WARNING")
+                    # === 3. CHART SAVING: Save in respective main folders based on direction ===
+                    def save_chart_to_strategy(main_strategy_name):
+                        if not os.path.exists(output_path):
+                            log(f"Chart not found, skipped copy → {output_path}", "WARNING")
+                            return
 
-                    # === 5. Extract confirmed entries (same as before) ===
+                        strategy_folder = os.path.join(broker_folder, main_strategy_name)
+                        os.makedirs(strategy_folder, exist_ok=True)
+
+                        chart_base_dir = os.path.join(strategy_folder, "chart")
+                        os.makedirs(chart_base_dir, exist_ok=True)
+
+                        market_chart_dir = os.path.join(chart_base_dir, safe_symbol)
+                        os.makedirs(market_chart_dir, exist_ok=True)
+
+                        destination_chart_path = os.path.join(market_chart_dir, timeframe_filename)
+
+                        try:
+                            shutil.copy2(output_path, destination_chart_path)
+                            log(f"Chart saved → {destination_chart_path} ({main_strategy_name})", "INFO")
+                        except Exception as e:
+                            log(f"Failed to copy chart to {main_strategy_name}: {e}", "ERROR")
+
+                    if is_breakout_strategy:
+                        save_chart_to_strategy(strategy_name)
+                    if is_continuation_strategy:
+                        save_chart_to_strategy(continuation_name)
+
+                    # If no pending → stop aggregation but chart already saved
+                    if not pending_entry_value:
+                        return
+
+                    # === 4. Load report JSON ===
                     try:
                         with open(report_path, 'r', encoding='utf-8') as f:
                             custom_data = json.load(f)
                     except Exception as e:
                         log(f"Failed to read custom JSON: {e}", "ERROR")
-                        custom_data = {}
+                        return
 
-                    confirmed_pending_entries = []
+                    # === 5. Extract confirmed pending entries (saved under original strategy_name) ===
+                    base_confirmed_entries = []
                     for line_id, entry in custom_data.items():
                         info = entry.get("team", {}).get("trendline_info", {})
-                        if not info.get("valid", False): continue
+                        if not info.get("valid", False):
+                            continue
                         full_extension = info.get("pending_entry_is_full_extension", False)
                         blocker = info.get("extreme_horizontal_level_blocker")
                         target_zone_found = info.get("target_zone_candle_found", False)
                         if full_extension and blocker is None and target_zone_found:
-                            ep = info.get("pending_entry_point")
-                            if ep and isinstance(ep, dict):
-                                price = ep.get("entry_price")
-                                etype = ep.get("type")
-                                candle = ep.get("candle", {})
-                                if price is not None and etype in {"high", "low"}:
-                                    record = {
-                                        "entry_price": price,
-                                        "order_type": "buy_limit" if etype == "high" else "sell_limit",
-                                        "candle_number": candle.get("candle_number"),
-                                        "time": candle.get("time"),
-                                        "line_id": line_id
-                                    }
-                                    record = {k: v for k, v in record.items() if v not in (None, "", {}, [])}
-                                    confirmed_pending_entries.append(record)
+                            pep = info.get("pending_entry_point")
+                            if not pep or not isinstance(pep, dict):
+                                continue
+                            entry_price = pep.get("entry_price")
+                            exit_price = pep.get("exit_price")
+                            etype = pep.get("type")
+                            candle = pep.get("candle", {})
+                            candle_number = candle.get("candle_number") if isinstance(candle, dict) else pep.get("candle_number")
+                            time = candle.get("time") if isinstance(candle, dict) else None
+                            status = "complete"
+                            if entry_price is None:
+                                status = "missing_entry_price"
+                            elif exit_price is None and any(c in include_exit_price_categories for c in categories):
+                                status = "missing_exit_price"
+                            elif etype not in {"high", "low"}:
+                                status = "invalid_type"
 
-                    has_entries = len(confirmed_pending_entries) > 0
+                            record = {
+                                "entry_price": entry_price,
+                                "exit_price": exit_price,
+                                "order_type": "buy_limit" if etype == "high" else "sell_limit" if etype == "low" else None,
+                                "candle_number": candle_number,
+                                "time": time,
+                                "line_id": line_id,
+                                "status": status
+                            }
+                            if entry_price is not None:
+                                record = {k: v for k, v in record.items() if v not in (None, "", {}, []) or k in ["entry_price", "exit_price", "status"]}
+                                base_confirmed_entries.append(record)
 
-                    # Keys (using exact new name)
-                    markets_with_key = f"{new_pending_filename_safe}_markets"
-                    markets_without_key = f"no_{new_pending_filename_safe}_markets"
-                    total_key = f"total_{new_pending_filename_safe}"
-                    data_key = f"{new_pending_filename_safe}too"
-                    list_without_key = "markets_without_pending"
+                    has_pending_entries = len(base_confirmed_entries) > 0
 
-                    # === 6. HAS entries → main file ===
-                    if has_entries:
-                        aggregate_data = {}
-                        if os.path.exists(pending_full_path):
-                            try:
-                                with open(pending_full_path, 'r', encoding='utf-8') as f:
-                                    aggregate_data = json.load(f)
-                            except:
-                                pass
+                    # === 6. Extract instant orders ===
+                    instant_target_zone_entries = []
+                    instant_target_reached_entries = []
+                    instant_continuation_extreme_entries = []
+                    no_active_order_entries = []
 
-                        if not aggregate_data:
-                            aggregate_data = {markets_with_key: 0, markets_without_key: 0, total_key: 0, data_key: {}}
+                    for line_id, entry in custom_data.items():
+                        info = entry.get("team", {}).get("trendline_info", {})
+                        active_order = info.get("active_instant_order", {})
 
-                        aggregate_data.setdefault(data_key, {})
-                        aggregate_data[data_key].setdefault(symbol_folder, {"5m":[],"15m":[],"30m":[],"1h":[],"4h":[],"1d":[],"1W":[],"1M":[]})
+                        if not isinstance(active_order, dict):
+                            continue
 
-                        # Update current TF with deduplication
-                        current = aggregate_data[data_key][symbol_folder].get(tf_folder, [])
-                        seen = {(e.get("line_id"), e.get("candle_number"), e.get("entry_price")) for e in current}
-                        new_entries = [e for e in confirmed_pending_entries if (e.get("line_id"), e.get("candle_number"), e.get("entry_price")) not in seen]
-                        aggregate_data[data_key][symbol_folder][tf_folder] = current + new_entries
+                        if active_order.get("reason") == "no active order":
+                            no_active_record = {
+                                "line_id": line_id,
+                                "reason": "no active order",
+                                "order_from": active_order.get("order_from", "none")
+                            }
+                            no_active_order_entries.append(no_active_record)
+                            continue
 
-                        # Recalculate totals
-                        total_markets = sum(1 for tfs in aggregate_data[data_key].values() if any(len(v)>0 for v in tfs.values()))
-                        total_entries = sum(len(v) for tfs in aggregate_data[data_key].values() for v in tfs.values())
-                        aggregate_data[markets_with_key] = total_markets
-                        aggregate_data[total_key] = total_entries
+                        instant_price = active_order.get("instant_entry")
+                        order_type = active_order.get("order_type")
+                        order_from = active_order.get("order_from")
 
-                        with open(pending_full_path, 'w', encoding='utf-8') as f:
-                            json.dump(aggregate_data, f, indent=2, ensure_ascii=False)
-                        log(f"Saved {len(confirmed_pending_entries)} entries → {new_pending_file}", "SUCCESS")
+                        if instant_price is None or order_type is None or order_from is None:
+                            continue
 
-                    # === 7. NO entries → no_ file with list ===
-                    else:
-                        no_data = {}
-                        if os.path.exists(no_pending_full_path):
-                            try:
-                                with open(no_pending_full_path, 'r', encoding='utf-8') as f:
-                                    no_data = json.load(f)
-                            except:
-                                pass
+                        record = {
+                            "instant_price": instant_price,
+                            "order_type": "buy" if "buy" in order_type.lower() else "sell",
+                            "line_id": line_id,
+                            "order_from": order_from,
+                            "fact": active_order.get("fact", "")
+                        }
 
-                        no_data.setdefault(markets_without_key, 0)
-                        no_data.setdefault(list_without_key, [])
+                        if order_from in {"target_zone", "target_zone_mutuals"}:
+                            instant_target_zone_entries.append(record)
+                        elif order_from in {"target reached candle", "target reached mutual candle"}:
+                            instant_target_reached_entries.append(record)
+                        elif order_from in {"extreme interceptor", "extreme_interceptor_mutual"}:
+                            instant_continuation_extreme_entries.append(record)
 
-                        if symbol_folder not in no_data[list_without_key]:
-                            no_data[list_without_key].append(symbol_folder)
-                            no_data[markets_without_key] += 1
+                    has_tz_instant = len(instant_target_zone_entries) > 0
+                    has_tr_instant = len(instant_target_reached_entries) > 0
+                    has_cont_ext_instant = len(instant_continuation_extreme_entries) > 0
+                    has_no_active_order = len(no_active_order_entries) > 0
 
-                        with open(no_pending_full_path, 'w', encoding='utf-8') as f:
-                            json.dump(no_data, f, indent=2, ensure_ascii=False)
-                        log(f"Added {symbol_folder} (0 entries) → {new_no_pending_file}", "INFO")
+                    # === 7. Helper: Save aggregation data ===
+                    def save_aggregation(main_strategy_name, subfolder_name, entries_list, has_entries, data_key_suffix, no_active=False):
+                        if not entries_list and not no_active:
+                            return
+
+                        strategy_folder = os.path.join(broker_folder, main_strategy_name)
+                        subfolder = os.path.join(strategy_folder, subfolder_name)
+                        os.makedirs(subfolder, exist_ok=True)
+
+                        for cat in categories:
+                            cat_folder = os.path.join(subfolder, cat)
+                            os.makedirs(cat_folder, exist_ok=True)
+
+                            file_name = f"{subfolder_name}.json"
+                            no_file_name = f"no_{subfolder_name}.json"
+
+                            full_path = os.path.join(cat_folder, file_name)
+                            no_full_path = os.path.join(cat_folder, no_file_name)
+
+                            data_key = f"{subfolder_name}too"
+                            markets_key = f"{subfolder_name}_markets"
+                            no_markets_key = f"no_{subfolder_name}_markets"
+                            total_key = f"total_{subfolder_name}"
+
+                            # Load or init main data
+                            aggregate_data = {markets_key: 0, no_markets_key: 0, total_key: 0, data_key: {}}
+                            if os.path.exists(full_path):
+                                try:
+                                    with open(full_path, 'r', encoding='utf-8') as f:
+                                        aggregate_data = json.load(f)
+                                except:
+                                    pass
+
+                            aggregate_data.setdefault(data_key, {})
+                            if symbol_folder not in aggregate_data[data_key]:
+                                aggregate_data[data_key][symbol_folder] = {tf: [] for tf in expected_tfs}
+
+                            if has_entries:
+                                aggregate_data[data_key][symbol_folder][tf_folder] = entries_list
+                                log(f"Saved {len(entries_list)} entries → {full_path} ({cat})", "SUCCESS")
+                            else:
+                                aggregate_data[data_key][symbol_folder][tf_folder] = []
+
+                            if symbol_folder in aggregate_data[data_key] and all(len(e) == 0 for e in aggregate_data[data_key][symbol_folder].values()):
+                                del aggregate_data[data_key][symbol_folder]
+
+                            total_markets = sum(1 for sym, tfs in aggregate_data[data_key].items() if any(len(e) > 0 for e in tfs.values()))
+                            total_entries = sum(len(e) for sym in aggregate_data[data_key].values() for e in sym.values())
+                            aggregate_data[markets_key] = total_markets
+                            aggregate_data[total_key] = total_entries
+
+                            with open(full_path, 'w', encoding='utf-8') as f:
+                                json.dump(aggregate_data, f, indent=2, ensure_ascii=False)
+
+                            # Update no_ file
+                            no_data = {no_markets_key: 0, "markets_with_no_active_order": []}
+                            if os.path.exists(no_full_path):
+                                try:
+                                    with open(no_full_path, 'r', encoding='utf-8') as f:
+                                        no_data = json.load(f)
+                                except:
+                                    pass
+                            no_data.setdefault("markets_with_no_active_order", [])
+
+                            symbol_has_active = symbol_folder in aggregate_data[data_key] and any(len(e) > 0 for e in aggregate_data[data_key][symbol_folder].values())
+                            if symbol_has_active:
+                                if symbol_folder in no_data["markets_with_no_active_order"]:
+                                    no_data["markets_with_no_active_order"].remove(symbol_folder)
+                            elif has_no_active_order:
+                                if symbol_folder not in no_data["markets_with_no_active_order"]:
+                                    no_data["markets_with_no_active_order"].append(symbol_folder)
+
+                            no_data[no_markets_key] = len(no_data["markets_with_no_active_order"])
+                            with open(no_full_path, 'w', encoding='utf-8') as f:
+                                json.dump(no_data, f, indent=2, ensure_ascii=False)
+
+                    # === 8. Save Pending Entries (under original strategy_name) ===
+                    if pending_safe:
+                        save_aggregation(strategy_name, pending_safe, base_confirmed_entries, has_pending_entries, pending_safe)
+
+                    # === 9. Breakout: Target Zone & Target Reached ===
+                    if is_breakout_strategy:
+                        save_aggregation(strategy_name, target_zone_safe, instant_target_zone_entries, has_tz_instant, target_zone_safe, no_active=True)
+                        save_aggregation(strategy_name, target_reached_safe, instant_target_reached_entries, has_tr_instant, target_reached_safe, no_active=True)
+
+                    # === 10. Continuation: Extreme Interceptor Instant Orders ===
+                    if is_continuation_strategy:
+                        save_aggregation(continuation_name, continuation_extreme_safe, instant_continuation_extreme_entries, has_cont_ext_instant, continuation_extreme_safe, no_active=True)
+
+                    log(f"Categorization complete for {symbol_folder}/{tf_folder} | "
+                        f"Pending: {len(base_confirmed_entries)} | "
+                        f"TZ: {len(instant_target_zone_entries)} | TR: {len(instant_target_reached_entries)} | "
+                        f"Cont Ext: {len(instant_continuation_extreme_entries)} | No Active: {len(no_active_order_entries)}", "SUCCESS")
 
                 def trend_direction():
                     # 1. Initialize the central data store
@@ -1949,7 +2112,7 @@ def custom_trendline():
                     DRAW_ALL_POINTS_LEVELS(final_valid_trends)
 
                     # ==== ENRICH CUSTOM JSON WITH FULL CANDLE DETAILS ====
-                    enrich_candle_details(candles, final_teams, final_valid_trends, report_path)
+                    enrich_candle_details(candles, final_teams, final_valid_trends, report_path, technique_path)
 
                     # Final save after processing all trends (local)
                     cv2.imwrite(output_path, img)
@@ -1960,7 +2123,7 @@ def custom_trendline():
                     # ===== NEW: SAVE TO CENTRAL DEVELOPER STRATEGY FOLDER =====
                     # We need broker_raw_name and the technique_path from outer scope
                     # These variables are available in the main loop context
-                    save_developer_technique(
+                    categorize_developer_technique(
                         broker_raw_name=broker_raw_name,
                         symbol_folder=symbol_folder,
                         tf_folder=tf_folder,
@@ -2217,6 +2380,4 @@ if __name__ == "__main__":
     custom_trendline()
 
 
-
-                     
 

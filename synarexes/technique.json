@@ -1,8 +1,11 @@
 {
     "STRATEGY_NAME":"BREAKOUT",
     "PENDING_ENTRY":"Limit_Orders",
-    "TARGET_ZONE_TRUE":"Instant_Orders",
-    "TARGET_REACHED_TRUE":"Trend_Instant_Orders",
+    "TARGET_ZONE_NAME":"Instant_Orders",
+    "TARGET_REACHED_NAME":"Trend_Instant_Orders",
+    "CONTINUATION_NAME":"CONTINUATION",
+    "CONTINUATION_EXTREME_NAME":"Instant_Continuation",
+    "categories_split":"short_term, long_term, co-ords",
     "BARS": 201,
     "SUBJECT": "custom",
     "drawings_switch":{
