@@ -1,0 +1,67 @@
+{
+  "forex": {
+    "limited": true,
+    "allowed": [
+        {"symbol": "USDJPY", "volume": 0.01, "risk": 4},
+        {"symbol": "USDCAD", "volume": 0.02, "risk": 4},
+        {"symbol": "USDCHF", "volume": 0.01, "risk": 4},
+        {"symbol": "GBPUSD", "volume": 0.01, "risk": 4},
+        {"symbol": "EURGBP", "volume": 0.01, "risk": 4},
+        {"symbol": "GBPAUD", "volume": 0.01, "risk": 8},
+        {"symbol": "AUDNZD", "volume": 0.01, "risk": 1}
+    ]
+  },
+  "synthetics": {
+    "limited": false,
+    "allowed": []
+  },
+  "crypto": {
+    "limited": true,
+    "allowed": [
+        {"symbol": "BTCUSD", "volume": 0.01, "risk": 4},
+        {"symbol": "ETHUSD", "volume": 0.02, "risk": 4}
+    ]
+  },
+  "basketindices": {
+    "limited": true,
+    "allowed": [
+        {"symbol": "AUD Basket", "volume": 0.01, "risk": 4},
+        {"symbol": "GPB Basket", "volume": 0.01, "risk": 4},
+        {"symbol": "USD Basket", "volume": 0.01, "risk": 4},
+        {"symbol": "Gold Basket", "volume": 0.01, "risk": 4}
+    ]
+  },
+  "indices": {
+    "limited": true,
+    "allowed": [
+        {"symbol": "wall street 30", "volume": 0.1, "risk": 16},
+        {"symbol": "us tech 100", "volume": 0.1, "risk": 16},
+        {"symbol": "DJ30", "volume": 0.1, "risk": 16},
+        {"symbol": "US30m", "volume": 0.1, "risk": 16},
+        {"symbol": "NAS100", "volume": 0.1, "risk": 16},
+        {"symbol": "USTECm", "volume": 0.1, "risk": 16}
+    ]
+  },
+  "metals": {
+    "limited": true,
+    "allowed": [
+        {"symbol": "xauusd", "volume": 0.01, "risk": 16}
+    ]
+  },
+  "etfs": {
+    "limited": false,
+    "allowed": []
+  },
+  "equities": {
+    "limited": false,
+    "allowed": []
+  },
+  "energies": {
+    "limited": false,
+    "allowed": []
+  },
+  "commodities": {
+    "limited": false,
+    "allowed": []
+  }
+}

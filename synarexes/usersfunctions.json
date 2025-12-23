@@ -1,0 +1,12 @@
+{
+  "deriv6": [
+    "developer: deriv6",
+    "filename: techniques.py",
+    "orders_jsonfile: Limit_Orders",
+    "orders_jsonfile: instant_orders",
+    "orders_jsonfile: trend_instant_orders",
+    "orders_jsonfile: instant_continuation",
+    "module_function: custom_breakout",
+    "module_function: custom_continuation"
+  ]
+}

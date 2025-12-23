@@ -1,0 +1,11 @@
+{
+  "BARS": 201,
+  "parenthighsandlows": {
+    "NEIGHBOR_LEFT": 10,
+    "NEIGHBOR_RIGHT": 15
+  },
+  "childhighsandlows": {
+    "NEIGHBOR_LEFT": 5,
+    "NEIGHBOR_RIGHT": 7
+  }
+}

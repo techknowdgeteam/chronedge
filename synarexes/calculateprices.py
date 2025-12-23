@@ -437,22 +437,6 @@ def clean_5m_timeframes():
     return True
 
 def delete_all_calculated_risk_jsons():
-    """
-    Deletes ALL calculated price JSON files AND categorized strategy JSONs in every broker's risk folders.
-    
-    This includes:
-        - forexcalculatedprices.json, syntheticscalculatedprices.json, etc.
-        - hightolow.json
-        - lowtohigh.json
-    
-    across all risk levels (0.5, 1, 2, ..., 16 USD).
-
-    Useful for resetting calculations before re-running SL/TP, filtering, or re-categorizing strategies.
-
-    Returns:
-        True if all deletions succeeded or no files were found.
-        False if critical path error occurs (e.g. permission denied on directory).
-    """
     from pathlib import Path
     import json
     from collections import defaultdict
