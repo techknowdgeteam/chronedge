@@ -1,3 +1,13 @@
 {
-    "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+    "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+    "settings":{
+        "calculate_stoploss":"yes",
+        "calculate_takeprofit":"yes",
+        "calculation_type":"default",
+        "record_orders_from":"all",
+        "orders_per_symbol":"all",
+        "order_timeframes":["15m","30m","45m","1h","4h"],
+        "risk_reward_ratio": 3,
+        "disable_orders": "allordertype"
+    }
 }

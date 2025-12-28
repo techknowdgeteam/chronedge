@@ -1,0 +1,44 @@
+{
+    "OPEN_POSITIONS":{
+        "GBPNZD": {
+            "market_name": "GBPNZD",
+            "limit_order": "buy_limit",
+            "entry_price": 1.14547,
+            "sl_price": 1.14375,
+            "tp_price": 1.15062,
+            "volume": 0.02,
+            "riskusd_amount": 2.0,
+            "rr_ratio": 3.0,
+            "broker": "deriv6",
+            "condition": "3 days old pending"
+        }
+    },
+    "PENDING_POSITIONS":{
+        "GBPNZD": {
+            "market_name": "GBPNZD",
+            "limit_order": "buy_limit",
+            "entry_price": 1.14547,
+            "sl_price": 1.14375,
+            "tp_price": 1.15062,
+            "volume": 0.02,
+            "riskusd_amount": 2.0,
+            "rr_ratio": 3.0,
+            "broker": "deriv6",
+            "condition": "3 days old pending"
+        }
+    },
+    "HISTORY_ORDERS":{
+        "GBPNZD": {
+            "market_name": "GBPNZD",
+            "limit_order": "buy_limit",
+            "entry_price": 1.14547,
+            "sl_price": 1.14375,
+            "tp_price": 1.15062,
+            "volume": 0.02,
+            "riskusd_amount": 2.0,
+            "rr_ratio": 3.0,
+            "broker": "deriv6",
+            "condition": "3 days old pending"
+        }
+    }
+}
