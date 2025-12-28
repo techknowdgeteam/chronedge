@@ -92,9 +92,9 @@
         "PROFITANDLOSS_HISTORY": "",
         "BROKER_BALANCE_HISTORY": "",
         "EXECUTION_DATES_HISTORY": "",
-        "CONTRACT_DAYS_LEFT": 5,
+        "CONTRACT_DAYS_LEFT": 0,
         "TRADES": "14:Trades, 1:Won, 13:Lost, symbolsthatlost:(GBPUSD:-7.97, BNBUSD:-4.06, TONUSD:-4.06, DOTUSD:-4.01, NERUSD:-4.00, DEX 1500 DOWN Index:-4.00, LTCUSD:-3.99, USDCHF:-3.96, ETCUSD:-3.83, ADAUSD:-3.77, BATUSD:-2.91, Volatility 75 (1s) Index:-0.01), symbolsthatwon:(DEX 1500 DOWN Index:11.50)",
         "MOVED_REASON": "Contract Expired (≤5 days left)",
-        "MOVED_TIMESTAMP": "2025-12-23 13:22:44"
+        "MOVED_TIMESTAMP": "2025-12-28 12:06:41"
     }
 }

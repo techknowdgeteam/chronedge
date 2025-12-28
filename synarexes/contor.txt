@@ -1,292 +1,156 @@
-def collect_ob_none_oi_data(symbol, symbol_folder, broker_name, base_folder, all_symbols):
-        """Collect and convert ob_none_oi_data.json from each timeframe for a symbol, save to market folder as alltimeframes_ob_none_oi_data.json, 
-        update allmarkets_limitorders.json and allnoordermarkets.json."""
-        
-        error_log = []
-        all_timeframes_data = {tf: [] for tf in TIMEFRAME_MAP.keys()}
-        allmarkets_json_path = os.path.join(base_folder, "allmarkets_limitorders.json")
-        allnoordermarkets_json_path = os.path.join(base_folder, "allnoordermarkets.json")
-
-        # Initialize or load existing allmarkets_limitorders.json
-        if os.path.exists(allmarkets_json_path):
-            try:
-                with open(allmarkets_json_path, 'r') as f:
-                    allmarkets_data = json.load(f)
-                markets_limitorders_count = allmarkets_data.get("markets_limitorders", 0)
-                markets_nolimitorders_count = allmarkets_data.get("markets_nolimitorders", 0)
-                limitorders = allmarkets_data.get("limitorders", {})
-            except Exception as e:
-                error_log.append({
-                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                    "error": f"Failed to load {allmarkets_json_path} for {broker_name}: {str(e)}",
-                    "broker": broker_name
-                })
-                log_and_print(f"Failed to load {allmarkets_json_path} for {broker_name}: {str(e)}", "ERROR")
-                markets_limitorders_count = 0
-                markets_nolimitorders_count = 0
-                limitorders = {}
-        else:
-            markets_limitorders_count = 0
-            markets_nolimitorders_count = 0
-            limitorders = {}
-
-        # Initialize or load existing allnoordermarkets.json
-        if os.path.exists(allnoordermarkets_json_path):
-            try:
-                with open(allnoordermarkets_json_path, 'r') as f:
-                    allnoordermarkets_data = json.load(f)
-                noorder_markets = allnoordermarkets_data.get("noorder_markets", [])
-            except Exception as e:
-                error_log.append({
-                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                    "error": f"Failed to load {allnoordermarkets_json_path} for {broker_name}: {str(e)}",
-                    "broker": broker_name
-                })
-                log_and_print(f"Failed to load {allnoordermarkets_json_path} for {broker_name}: {str(e)}", "ERROR")
-                noorder_markets = []
-        else:
-            noorder_markets = []
-
-        # Process the current symbol's timeframes
-        symbol_limitorders = {tf: [] for tf in TIMEFRAME_MAP.keys()}
-        has_limit_orders = False
-
-        # Get current bid price for the symbol
-        current_bid_price = None
-        try:
-            config = brokersdictionary.get(broker_name)
-            if not config:
-                raise Exception(f"No configuration found for broker {broker_name}")
-            success, init_errors = initialize_mt5(
-                config["TERMINAL_PATH"],
-                config["LOGIN_ID"],
-                config["PASSWORD"],
-                config["SERVER"]
-            )
-            error_log.extend(init_errors)
-            if not success:
-                raise Exception(f"MT5 initialization failed for {broker_name}")
-            
-            tick = mt5.symbol_info_tick(symbol)
-            if tick is None:
-                raise Exception(f"Failed to retrieve tick data for {symbol}")
-            current_bid_price = tick.bid
-            log_and_print(f"Retrieved current bid price {current_bid_price} for {symbol} ({broker_name})", "INFO")
-            
-            mt5.shutdown()
-        except Exception as e:
-            error_log.append({
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"Failed to retrieve current bid price for {symbol} ({broker_name}): {str(e)}",
-                "broker": broker_name
-            })
-            log_and_print(f"Failed to retrieve current bid price for {symbol} ({broker_name}): {str(e)}", "ERROR")
-            current_bid_price = None
-
-        try:
-            for timeframe_str in TIMEFRAME_MAP.keys():
-                timeframe_folder = os.path.join(symbol_folder, timeframe_str)
-                ob_none_oi_json_path = os.path.join(timeframe_folder, "ob_none_oi_data.json")
-                
-                if os.path.exists(ob_none_oi_json_path):
-                    try:
-                        with open(ob_none_oi_json_path, 'r') as f:
-                            data = json.load(f)
-                            converted_data = []
-                            for item in data:
-                                for team_key, team_data in item.items():
-                                    converted_team = {
-                                        "timestamp": team_data["timestamp"],
-                                        "limit_order": "",
-                                        "entry_price": 0.0
-                                    }
-                                    if team_data["team_type"] == "PH-to-PH":
-                                        converted_team["limit_order"] = "buy_limit"
-                                        converted_team["entry_price"] = team_data["none_oi_x_OB_high_price"]
-                                    elif team_data["team_type"] == "PL-to-PL":
-                                        converted_team["limit_order"] = "sell_limit"
-                                        converted_team["entry_price"] = team_data["none_oi_x_OB_low_price"]
-                                    else:
-                                        error_log.append({
-                                            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                                            "error": f"Unknown team_type '{team_data['team_type']}' in ob_none_oi_data for {symbol} ({timeframe_str})",
-                                            "broker": broker_name
-                                        })
-                                        log_and_print(f"Unknown team_type '{team_data['team_type']}' in ob_none_oi_data for {symbol} ({timeframe_str})", "ERROR")
-                                        continue
-                                    
-                                    # Filter based on current bid price
-                                    if current_bid_price is not None:
-                                        if converted_team["limit_order"] == "sell_limit" and current_bid_price >= converted_team["entry_price"]:
-                                            log_and_print(
-                                                f"Skipped sell limit order for {symbol} ({timeframe_str}) at entry_price {converted_team['entry_price']} "
-                                                f"as current bid price {current_bid_price} is >= entry price",
-                                                "INFO"
-                                            )
-                                            continue
-                                        if converted_team["limit_order"] == "buy_limit" and current_bid_price <= converted_team["entry_price"]:
-                                            log_and_print(
-                                                f"Skipped buy limit order for {symbol} ({timeframe_str}) at entry_price {converted_team['entry_price']} "
-                                                f"as current bid price {current_bid_price} is <= entry price",
-                                                "INFO"
-                                            )
-                                            continue
-                                    
-                                    converted_data.append({"team1": converted_team})
-                            
-                            all_timeframes_data[timeframe_str] = converted_data
-                            if converted_data:
-                                symbol_limitorders[timeframe_str] = converted_data
-                                has_limit_orders = True
-                        log_and_print(f"Collected and converted ob_none_oi_data for {symbol} ({timeframe_str}) from {ob_none_oi_json_path}", "INFO")
-                    except Exception as e:
-                        error_log.append({
-                            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                            "error": f"Failed to read ob_none_oi_data.json for {symbol} ({timeframe_str}): {str(e)}",
-                            "broker": broker_name
-                        })
-                        log_and_print(f"Failed to read ob_none_oi_data.json for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
-                else:
-                    error_log.append({
-                        "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                        "error": f"ob_none_oi_data.json not found for {symbol} ({timeframe_str}) at {ob_none_oi_json_path}",
-                        "broker": broker_name
-                    })
-                    log_and_print(f"ob_none_oi_data.json not found for {symbol} ({timeframe_str})", "WARNING")
-
-            # Save alltimeframes_ob_none_oi_data.json for the current symbol
-            output_json_path = os.path.join(symbol_folder, "alltimeframes_ob_none_oi_data.json")
-            output_data = {
-                "market": symbol,
-                **all_timeframes_data
-            }
-            try:
-                with open(output_json_path, 'w') as f:
-                    json.dump(output_data, f, indent=4)
-                log_and_print(f"Saved all timeframes ob_none_oi_data for {symbol} to {output_json_path}", "SUCCESS")
-            except Exception as e:
-                error_log.append({
-                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                    "error": f"Failed to save alltimeframes_ob_none_oi_data.json for {symbol}: {str(e)}",
-                    "broker": broker_name
-                })
-                log_and_print(f"Failed to save alltimeframes_ob_none_oi_data.json for {symbol}: {str(e)}", "ERROR")
-
-            # Update counts and limitorders structure for allmarkets_limitorders.json
-            if has_limit_orders:
-                markets_limitorders_count += 1
-                limitorders[symbol] = symbol_limitorders
-                # Remove from noorder_markets if present
-                if symbol in noorder_markets:
-                    noorder_markets.remove(symbol)
-            else:
-                markets_nolimitorders_count += 1
-                # Add to noorder_markets if not already present
-                if symbol not in noorder_markets:
-                    noorder_markets.append(symbol)
-
-            # Save updated allmarkets_limitorders.json
-            allmarkets_output_data = {
-                "markets_limitorders": markets_limitorders_count,
-                "markets_nolimitorders": markets_nolimitorders_count,
-                "limitorders": limitorders
-            }
-            try:
-                with open(allmarkets_json_path, 'w') as f:
-                    json.dump(allmarkets_output_data, f, indent=4)
-                log_and_print(
-                    f"Updated allmarkets_limitorders.json for {broker_name} at {allmarkets_json_path} "
-                    f"after processing {symbol} (markets_limitorders={markets_limitorders_count}, "
-                    f"markets_nolimitorders={markets_nolimitorders_count})",
-                    "SUCCESS"
-                )
-            except Exception as e:
-                error_log.append({
-                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                    "error": f"Failed to save allmarkets_limitorders.json for {broker_name}: {str(e)}",
-                    "broker": broker_name
-                })
-                log_and_print(f"Failed to save allmarkets_limitorders.json for {broker_name}: {str(e)}", "ERROR")
-
-            # Save updated allnoordermarkets.json
-            allnoordermarkets_output_data = {
-                "markets_nolimitorders": markets_nolimitorders_count,
-                "noorder_markets": noorder_markets
-            }
-            try:
-                with open(allnoordermarkets_json_path, 'w') as f:
-                    json.dump(allnoordermarkets_output_data, f, indent=4)
-                log_and_print(
-                    f"Updated allnoordermarkets.json for {broker_name} at {allnoordermarkets_json_path} "
-                    f"after processing {symbol} (markets_nolimitorders={markets_nolimitorders_count}, "
-                    f"noorder_markets={len(noorder_markets)})",
-                    "SUCCESS"
-                )
-            except Exception as e:
-                error_log.append({
-                    "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                    "error": f"Failed to save allnoordermarkets.json for {broker_name}: {str(e)}",
-                    "broker": broker_name
-                })
-                log_and_print(f"Failed to save allnoordermarkets.json for {broker_name}: {str(e)}", "ERROR")
-
-        except Exception as e:
-            error_log.append({
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"Unexpected error in collect_ob_none_oi_data for {symbol} ({broker_name}): {str(e)}",
-                "broker": broker_name
-            })
-            log_and_print(f"Unexpected error in collect_ob_none_oi_data for {symbol} ({broker_name}): {str(e)}", "ERROR")
-
-        if error_log:
-            save_errors(error_log)
-        return error_log  
-     
-
-    this function processes and writes the entry price the limit order type which can be sell_limit or by_limit, so i want you to provide a new function that calculates the market this function produces immediately by reading this C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\allsymbolsvolumesandrisk.json with records of 
-    {
-      "risk_0.5usd_markets": [
-        {"symbol": "AAL", "volume": 1},
-        {"symbol": "AGG.US", "volume": 1},
-       ..... other symbols
-      ],
-      "risk_1usd_markets": [
-        {"symbol": "AAL", "volume": 2},
-        {"symbol": "AALG", "volume": 2},
-        .... other symbols
-      ],
-      "risk_2usd_markets": [
-        {"symbol": "AAL", "volume": 4},
-        {"symbol": "AALG", "volume": 4},
-      ...other symbols
-      ],
-      "risk_3usd_markets": [
-        {"symbol": "AAL", "volume": 6},
-    .....
-      ],
-      "risk_4usd_markets": [
-        {"symbol": "AAL", "volume": 8},
-        {"symbol": "AALG", "volume": 8},
-      ],
-      "risk_8usd_markets": [
-        {"symbol": "AAL", "volume": 16},
-        {"symbol": "AALG", "volume": 16},
-      ],
-        "risk_16usd_markets": [
-        {"symbol": "AAVEUSDm", "volume": 1},
-        {"symbol": "AAVUSD", "volume": 1},
-
-    the symbols involved in this json are the ones i provided earlie but i want you to provide a new  function that uses the entry the collect function produces immediately for the market and save it accordingly
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\0.5centorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\1usdorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\2usdorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\3usdorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\4usdorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\8usdorders.json
-    C:\xampp\htdocs\CIPHER\cipher i\chart\cipher i\symbols_volumes_points\16usdorders.json
-    it should go through each risk_xusd_markets so it calculates market or symbol under it and save it to its respective json with the new fields, stoploss , profit price and lotsize, the profit must be *3 , 1:3 orders, also it should then  add new field of stoploss and profit price but no lotsize field to the allmarkets and alltimeframes json the collect ob... function produces
-
-    i hope you understand, provide the new function to calculate the pairs as you explained so it can get accurate stop and profit prices depending on the limit order type, also provide the full collect ob none oi data so as to call the new function immediately to calculate for the market processed
-
-    provide the hardcode and complex
-    
+{
+    "STRATEGY_NAME":"BREAKOUT",
+    "PENDING_ENTRY":"Limit_Orders",
+    "TARGET_ZONE_NAME":"Instant_Orders",
+    "TARGET_REACHED_NAME":"Trend_Instant_Orders",
+    "CONTINUATION_NAME":"CONTINUATION",
+    "CONTINUATION_EXTREME_NAME":"Instant_Continuation",
+    "categories_split":"short_term, long_term, co-ords",
+    "BARS": 201,
+    "SUBJECT": "custom",
+    "drawings_switch":{
+        "trendline":"yes",
+        "horizontal_line":"no"
+    },
+    "parenthighsandlows": {
+        "NEIGHBOR_LEFT": 10,
+        "NEIGHBOR_RIGHT": 15
+    },
+    "childhighsandlows": {
+        "NEIGHBOR_LEFT": 5,
+        "NEIGHBOR_RIGHT": 7
+    },
+    "trendline": {
+        "1":{
+            "TREND": "bearish",
+            "FROM": "ph",
+            "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bearish",
+                    "receiver_candle":"bearish",
+                    "breakout_extreme_interceptor":"bearish",
+                    "target_zone":"bearish",
+                    "opposition_candle":"bullish",
+                    "retest_candle":"bearish"
+                },
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle",
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"high_price"
+                } 
+            },
+            "TO": "ph",
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "continuation"
+        },
+        "2":{
+            "TREND": "bullish",
+            "FROM": "pl",
+            "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bullish",
+                    "receiver_candle":"bullish",
+                    "opposition_candle":"bearish",
+                    "retest_candle":"bullish",
+                    "breakout_extreme_interceptor":"bullish",
+                    "target_zone":"bullish"
+                },
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle",
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"low_price"
+                } 
+            },
+            "TO": "pl",
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "continuation"
+        },
+        "3":{
+            "TREND": "bearish",
+            "FROM": "ch",
+            "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bearish",
+                    "receiver_candle":"bearish",
+                    "opposition_candle":"bullish",
+                    "retest_candle":"bearish",
+                    "breakout_extreme_interceptor":"bearish",
+                    "continuation_extreme_interceptor":"bearish",
+                    "target_zone":"bearish"
+                },
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle",
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"high_price"
+                } 
+            },
+            "TO": "ch",
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "continuation"
+        },
+        "4":{
+            "TREND": "bullish",
+            "FROM": "cl",
+            "rules":{
+                "define_trend_points":{
+                    "sender_candle":"bullish",
+                    "receiver_candle":"bullish",
+                    "opposition_candle":"bearish",
+                    "retest_candle":"bullish",
+                    "breakout_extreme_interceptor":"bullish",
+                    "target_zone":"bullish"
+                },
+                "sender_condition":"beyond",
+                "extreme_intruder":"new_from",
+                "breakout_condition":"3_sequence_candle",
+                "continuation_condition":"3_sequence_candle",
+                "HORIZONTAL_LINE_SUBJECT":{
+                    "subject":"opposition",
+                    "entry":"low_price"
+                } 
+            },
+            "TO": "cl",
+            "INTERCEPTOR": "yes",
+            "DIRECTION": "continuation"
+        }
+    },
+    "horizontal_line": {
+        "1":{
+            "FROM": "ph",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "ph"
+        },
+        "2":{
+            "FROM": "pl",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "pl"
+        },
+        "3":{
+            "FROM": "ch",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "ch"
+        },
+        "4":{
+            "FROM": "cl",
+            "rules":{
+                "extreme_intruder":"new_from"
+            },
+            "TO": "cl"
+        }
+    }
+}

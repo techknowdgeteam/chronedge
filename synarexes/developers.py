@@ -475,12 +475,12 @@ def locate_developer_order_jsons():
 
         # === STEP 2: CHECK REQUIRED CONFIGURATION FILES ===
         allowed_file_path = os.path.join(developer_folder, "allowedsymbolsandvolumes.json")
-        tradeslimit_file_path = os.path.join(developer_folder, "tradeslimit.json")
+        tradeslimit_file_path = os.path.join(developer_folder, "disabledorders.json")
         accountmanagement_file_path = os.path.join(developer_folder, "accountmanagement.json")
 
         required_files = [
             (allowed_file_path, "allowedsymbolsandvolumes.json"),
-            (tradeslimit_file_path, "tradeslimit.json"),
+            (tradeslimit_file_path, "disabledorders.json"),
             (accountmanagement_file_path, "accountmanagement.json")
         ]
 
@@ -885,12 +885,12 @@ def developers_functions():
 
         # Required config paths (root level)
         allowed_file_path = os.path.join(developer_folder, "allowedsymbolsandvolumes.json")
-        tradeslimit_file_path = os.path.join(developer_folder, "tradeslimit.json")
+        tradeslimit_file_path = os.path.join(developer_folder, "disabledorders.json")
         accountmanagement_file_path = os.path.join(developer_folder, "accountmanagement.json")
 
         required_files = [
             (allowed_file_path, "allowedsymbolsandvolumes.json"),
-            (tradeslimit_file_path, "tradeslimit.json"),
+            (tradeslimit_file_path, "disabledorders.json"),
             (accountmanagement_file_path, "accountmanagement.json")
         ]
 
@@ -1078,7 +1078,7 @@ def developers_functions():
 
         required_files = [
             "allowedsymbolsandvolumes.json",
-            "tradeslimit.json",
+            "disabledorders.json",
             "accountmanagement.json"
         ]
         missing = [f for f in required_files if not os.path.exists(os.path.join(developer_folder, f))]

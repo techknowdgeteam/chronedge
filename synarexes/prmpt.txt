@@ -1,10 +1,1 @@
-if __name__ == "__main__":
-    success = fetch_charts_all_brokers(
-        bars=201,
-        neighborcandles_left=10,
-        neighborcandles_right=15
-    )
-    if success:
-        log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
-    else:
-        log_and_print("Process failed. Check error log for details.", "ERROR")
+now the new field def sender to receiver with condition field means def from to To or def from to extreme intruder or def new from to new to   so it works for the sender to receiver, where the trendline starts to the collector, thats what it means   now the condition field should listen to 'beyond', 'not_beyond', or 'none'     if beyond: means for cl,pl, bullish the receiver ("to", "extreme_candle" or new_to or any receiver that later receives the trendline) low price must not be lower than the sender's ("from or the extreme_candle, wherever or whichever candle hold the sender or is the starter of the trendline) low price it must always be above, for ch, ph, bearish the receiver's high price must not be above the sender's high price it must always be below, that means the sender's price must always be equal or beyond the receiver's price it must(for cl,pl, bullish sender must be lowest or equal and receiver above it, for ch,ph bearish sender must be above highest or equal and receivers below).   if not_beyond: means for for cl, pl, or bullish the sender's low price must be above receivers low price , and for ch,ph or bearish the sender's high price must be below the receivers high price   and it it is none then do nothing.     bullish must be family with cl,pl bearish must be family with ch,ph in the whole function   this new condition must work for the extreme candle values (new_from, new_to, skip, continue) too it must work in general accross the function afterall    this new feature or activity must not affect the existing activities, it musn't they should just use it, cause it affects 'new_to' , protect it not to affect any of it when changes is made   add the condition check function and provide the full function
