@@ -10,7 +10,7 @@ init()
 
 OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdictionary.json"
 MT5_TEMPLATE_SOURCE_DIR = r"C:\xampp\htdocs\chronedge\mt5\MetaTrader 5"
-BROKERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+BROKERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
 
 # --- HELPER FUNCTIONS ---
 
@@ -490,12 +490,12 @@ def requirements():
     finally:
         log_and_print("===== Requirements Fetch Complete =====", "TITLE")    
         
-def move_verifiedusers_to_brokersdictionary(): 
+def move_verifiedusers_to_developersdictionary(): 
 
     def validdetails_verified():
         """
         Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
-        from usersdictionary.json into both brokersdictionary.json and updatedusersdictionary.json.
+        from usersdictionary.json into both developersdictionary.json and updatedusersdictionary.json.
         
         The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
         the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
@@ -519,7 +519,7 @@ def move_verifiedusers_to_brokersdictionary():
             log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
             return
 
-        # 2. Load Target Dictionaries (brokersdictionary.json & updatedusersdictionary.json)
+        # 2. Load Target Dictionaries (developersdictionary.json & updatedusersdictionary.json)
         
         # Load Brokers Dictionary
         brokers_dict = {}
@@ -600,9 +600,9 @@ def move_verifiedusers_to_brokersdictionary():
             os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
             with open(BROKERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
                 json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
-            log_and_print(f"Saved brokersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
+            log_and_print(f"Saved developersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
         except Exception as e:
-            log_and_print(f"FAILED to save brokersdictionary.json: {e}", "CRITICAL")
+            log_and_print(f"FAILED to save developersdictionary.json: {e}", "CRITICAL")
 
         # Save Updated Users Dictionary
         try:
@@ -615,7 +615,7 @@ def move_verifiedusers_to_brokersdictionary():
         
         log_and_print("--- Status Sync Complete ---", "TITLE")
 
-    def copy_verified_users_to_brokers_dictionary():
+    def copy_verified_users_to_developers_dictionary():
         """
         Reads the main user dictionary, filters users where:
         1. ACCOUNT_VERIFICATION is 'verified'
@@ -628,7 +628,7 @@ def move_verifiedusers_to_brokersdictionary():
         
         # --- 1. Load existing data (Source only) ---
         users_dictionary = {}
-        brokers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
+        developers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
         
         try:
             # Load the main users dictionary (source)
@@ -653,7 +653,7 @@ def move_verifiedusers_to_brokersdictionary():
             
             if account_verified and loyalty_check:
                 # 🔔 Action: Copy user data to the brokers dictionary
-                brokers_dictionary[key] = user_data.copy()
+                developers_dictionary[key] = user_data.copy()
                 copied_count += 1
                 log_and_print(f"Copying user {key} (Loyalty: {loyalty_status}) to brokers dictionary.", "INFO")
                 
@@ -663,8 +663,8 @@ def move_verifiedusers_to_brokersdictionary():
             try:
                 os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
                 with open(BROKERS_OUTPUT_FILE_PATH, 'w') as f:
-                    json.dump(brokers_dictionary, f, indent=4) 
-                log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(brokers_dictionary)}.", "SUCCESS")
+                    json.dump(developers_dictionary, f, indent=4) 
+                log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(developers_dictionary)}.", "SUCCESS")
             except IOError as file_error:
                 log_and_print(f"ERROR: Failed to write brokers JSON file: {file_error}", "ERROR")
         else:
@@ -743,10 +743,10 @@ def move_verifiedusers_to_brokersdictionary():
         log_and_print(f"Updated: {updated} | Skipped: {skipped}", "INFO")
 
     validdetails_verified()
-    copy_verified_users_to_brokers_dictionary()
+    copy_verified_users_to_developers_dictionary()
     update_application_status_in_database()
 
 if __name__ == "__main__":
     #fetch_insiders_server_rows()
     #login the users broker and set account verification to 'verified' if valid
-    move_verifiedusers_to_brokersdictionary()
+    move_verifiedusers_to_developersdictionary()

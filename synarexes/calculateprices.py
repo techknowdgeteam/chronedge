@@ -2647,20 +2647,20 @@ def get_chosen_broker() -> Optional[Dict[str, Any]]:
     Finds the real chosen broker and syncs all same-type brokers perfectly.
     """
     BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    BROKERS_DICT_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json")
+    BROKERS_DICT_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json")
 
     if not BASE_DIR.is_dir():
         print(f"[get_chosen_broker] Base directory missing: {BASE_DIR}")
         return None
     if not BROKERS_DICT_PATH.is_file():
-        print(f"[get_chosen_broker] brokersdictionary.json missing: {BROKERS_DICT_PATH}")
+        print(f"[get_chosen_broker] developersdictionary.json missing: {BROKERS_DICT_PATH}")
         return None
 
     # Load dictionary
     try:
         brokers_dict = json.loads(BROKERS_DICT_PATH.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"[get_chosen_broker] Failed to read brokersdictionary.json: {e}")
+        print(f"[get_chosen_broker] Failed to read developersdictionary.json: {e}")
         return None
 
     chosen_broker = None
@@ -2997,10 +2997,229 @@ def main():
     return True
 
 
+def calculate_forex_sl_tp_market():
+    import os
+    import json
+    from pathlib import Path
+    from datetime import datetime
+    from collections import defaultdict
 
+    # === Shared paths ===
+    BASE_ROOT = r"C:\xampp\htdocs\chronedge\synarex\chart"
+    DICTATOR_PATH = os.path.join(BASE_ROOT, "symbolscategory", "symbolscategory.json")
+    DEVELOPER_ROOT = os.path.join(BASE_ROOT, "..", "developers")  # Parent of chart, where developer folders live
+
+    if not os.path.exists(DEVELOPER_ROOT):
+        print(f"[ERROR] Developer root not found: {DEVELOPER_ROOT}")
+        return False
+
+    # === Load global dictator data (same as in developers_functions) ===
+    def normalize_symbol(s):
+        if not s:
+            return ""
+        return " ".join(s.replace("_", " ").split()).upper()
+
+    def load_global_data():
+        all_dictator_symbols = set()
+        symbol_to_category = {}
+
+        if not os.path.exists(DICTATOR_PATH):
+            print("[ERROR] symbolscategory.json not found.")
+            return all_dictator_symbols, symbol_to_category
+
+        try:
+            with open(DICTATOR_PATH, 'r', encoding='utf-8') as f:
+                dictator = json.load(f)
+            for cat, sym_list in dictator.items():
+                for s in sym_list:
+                    norm_s = normalize_symbol(s)
+                    all_dictator_symbols.add(norm_s)
+                    if norm_s not in symbol_to_category:
+                        symbol_to_category[norm_s] = cat
+        except Exception as e:
+            print(f"[ERROR] Failed to load symbolscategory.json: {e}")
+
+        return all_dictator_symbols, symbol_to_category
+
+    all_dictator_symbols, symbol_to_category = load_global_data()
+
+    # Detect Forex category
+    common_forex = {"EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "EURGBP"}
+    forex_category = None
+    for sym in common_forex:
+        norm_sym = normalize_symbol(sym)
+        cat = symbol_to_category.get(norm_sym)
+        if cat:
+            forex_category = cat
+            break
+
+    if not forex_category:
+        print("[ERROR] Could not determine Forex category.")
+        return False
+
+    print(f"[INFO] Detected Forex category: '{forex_category}'")
+
+    total_processed = 0
+    total_saved = 0
+    processed_brokers = 0
+
+    # Walk through all developer folders
+    for root, dirs, files in os.walk(DEVELOPER_ROOT):
+        # Look for restructured _temp.json files from forexvolumesandrisk
+        temp_files = [f for f in files if f.lower() == "forexvolumesandrisk_temp.json"]
+        if not temp_files:
+            continue
+
+        temp_path = os.path.join(root, temp_files[0])
+        base_name = "forexvolumesandrisk"  # base name without _temp
+        output_filename = f"{base_name}_{forex_category.lower()}.json"  # e.g. forexvolumesandrisk_forex.json
+
+        print(f"\n[PROCESSING] Found restructured file: {temp_path}")
+        print(f"            Developer folder: {root}")
+
+        # Load the restructured orders
+        try:
+            with open(temp_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[ERROR] Failed to read {temp_path}: {e}")
+            continue
+
+        # Load dynamic risks from prefixed accountmanagement
+        am_path = os.path.join(root, f"{base_name}_accountmanagement.json")
+        if not os.path.exists(am_path):
+            print(f"[WARNING] Missing {base_name}_accountmanagement.json — skipping this broker")
+            continue
+
+        try:
+            with open(am_path, 'r', encoding='utf-8') as f:
+                am_data = json.load(f)
+            raw_risks = am_data.get("RISKS", [])
+            risk_list = []
+            for r in raw_risks:
+                try:
+                    risk_list.append(float(r))
+                except:
+                    continue
+            if not risk_list:
+                print(f"[WARNING] No valid RISKS found in accountmanagement")
+                continue
+            print(f"[INFO] Loaded {len(risk_list)} risk levels: {risk_list}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load accountmanagement: {e}")
+            continue
+
+        # Extract orders from restructured format
+        orders_dict = data.get("orders", {})
+        markets = {k: v for k, v in orders_dict.items() if isinstance(v, dict) and k != "total_orders" and k != "total_markets"}
+
+        results_by_risk = defaultdict(list)
+
+        for market_name, market_data in markets.items():
+            norm_market = normalize_symbol(market_name)
+            if norm_market not in all_dictator_symbols:
+                continue
+            if symbol_to_category.get(norm_market) != forex_category:
+                continue  # Only Forex
+
+            # Flatten orders across all timeframes
+            timeframe_orders = []
+            for tf, orders in market_data.items():
+                if tf in {"broker", "category", "tick_size", "tick_value"}:
+                    continue
+                if isinstance(orders, list):
+                    timeframe_orders.extend(orders)
+
+            for order in timeframe_orders:
+                if not isinstance(order, dict):
+                    continue
+
+                limit_type = order.get("limit_order")
+                if limit_type not in ["buy_limit", "sell_limit"]:
+                    continue
+
+                required = ["entry_price", "volume", "tick_value"]
+                if not all(k in order for k in required):
+                    continue
+
+                try:
+                    entry_price = float(order["entry_price"])
+                    volume = float(order["volume"])
+                    tick_value = float(order["tick_value"])
+                    tick_size = float(order.get("tick_size", 0.00001))
+                except:
+                    continue
+
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                for risk_usd in risk_list:
+                    sl_pips = risk_usd / pip_value_usd
+                    tp_pips = sl_pips * 3
+
+                    if limit_type == "buy_limit":
+                        sl_price = entry_price - (sl_pips * pip_size)
+                        tp_price = entry_price + (tp_pips * pip_size)
+                    else:
+                        sl_price = entry_price + (sl_pips * pip_size)
+                        tp_price = entry_price - (tp_pips * pip_size)
+
+                    digits = 5 if tick_size <= 0.00001 else 3
+                    sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_entry = {
+                        "market": market_name,
+                        "limit_order": limit_type,
+                        "timeframe": order.get("timeframe", ""),
+                        "entry_price": entry_price,
+                        "volume": volume,
+                        "riskusd_amount": risk_usd,
+                        "sl_price": sl_price,
+                        "sl_pips": round(sl_pips, 2),
+                        "tp_price": tp_price,
+                        "tp_pips": round(tp_pips, 2),
+                        "rr_ratio": 3.0,
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": market_data.get("broker", "unknown")
+                    }
+
+                    results_by_risk[risk_usd].append(calc_entry)
+                    total_processed += 1
+
+        # === Save inside the developer folder, in risk subfolders ===
+        for risk_usd, calc_list in results_by_risk.items():
+            if not calc_list:
+                continue
+
+            risk_folder_name = f"risk_{str(risk_usd).replace('.', '_')}"
+            risk_dir = Path(root) / risk_folder_name
+            risk_dir.mkdir(parents=True, exist_ok=True)
+
+            output_file = risk_dir / output_filename
+
+            try:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump(calc_list, f, indent=2, ensure_ascii=False)
+                saved_count = len(calc_list)
+                total_saved += saved_count
+                print(f"[SAVED] → {output_file} ({saved_count} entries for risk ${risk_usd})")
+            except Exception as e:
+                print(f"[ERROR] Failed to save {output_file}: {e}")
+
+        processed_brokers += 1
+
+    print(f"\n[COMPLETED] Forex SL/TP calculation finished.")
+    print(f"   Processed brokers/developers: {processed_brokers}")
+    print(f"   Total order calculations: {total_processed}")
+    print(f"   Total saved entries: {total_saved}")
+    print(f"   Files saved as: forexvolumesandrisk_forex.json inside each risk_X folder in developer directories")
+    return True
 
 if __name__ == "__main__":
-     main()
+     calculate_forex_sl_tp_market()
      
     
    

@@ -25,8 +25,8 @@ import insiders_server
 import timeorders
 
 
-def load_brokers_dictionary():
-    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+def load_developers_dictionary():
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
     """Load brokers config from JSON file with error handling and fallback."""
     if not os.path.exists(BROKERS_JSON_PATH):
         print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND! Using empty config.", "CRITICAL")
@@ -37,7 +37,7 @@ def load_brokers_dictionary():
             data = json.load(f)
         
         # Optional: Convert numeric strings back to int where needed
-        for broker_name, cfg in data.items():
+        for user_brokerid, cfg in data.items():
             if "LOGIN_ID" in cfg and isinstance(cfg["LOGIN_ID"], str):
                 cfg["LOGIN_ID"] = cfg["LOGIN_ID"].strip()
             if "RISKREWARD" in cfg and isinstance(cfg["RISKREWARD"], (str, float)):
@@ -47,12 +47,12 @@ def load_brokers_dictionary():
         return data
 
     except json.JSONDecodeError as e:
-        print(f"Invalid JSON in brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Invalid JSON in developersdictionary.json: {e}", "CRITICAL")
         return {}
     except Exception as e:
-        print(f"Failed to load brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load developersdictionary.json: {e}", "CRITICAL")
         return {}
-brokersdictionary = load_brokers_dictionary()
+developersdictionary = load_developers_dictionary()
 
 
 BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\synarex\chart\debugs"
@@ -851,21 +851,29 @@ def generate_and_save_newest_oldest_chart(df, symbol, timeframe_str, timeframe_f
         log_and_print(f"Failed to save charts for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
         return chart_path if os.path.exists(chart_path) else None, error_log, [], []
 
-def ticks_value(symbol, symbol_folder, broker_name, base_folder, all_symbols):
+def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     error_log = []
     
-    # Output file path
-    output_json_path = os.path.join(symbol_folder, "ticksvalue.json")
+    # Strip numbers from broker ID (e.g., "deriv6" -> "deriv")
+    cleaned_broker = ''.join([char for char in user_brokerid if not char.isdigit()])
     
-    # Default values in case of failure
+    # Individual file path
+    safe_symbol = symbol.replace('/', '_').replace(' ', '_').upper()  # Safer: also handle spaces
+    output_json_filename = f"{safe_symbol}_ticks.json"
+    output_json_path = os.path.join(symbol_folder, output_json_filename)
+    
+    # Combined file path
+    combined_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbolstick\symbolstick.json"
+    
+    # Default values
     tick_size = None
     tick_value = None
     
     try:
         # Get broker config and initialize MT5
-        config = brokersdictionary.get(broker_name)
+        config = developersdictionary.get(user_brokerid)
         if not config:
-            raise Exception(f"No configuration found for broker '{broker_name}' in brokersdictionary")
+            raise Exception(f"No configuration found for broker '{user_brokerid}' in developersdictionary")
         
         success, init_errors = initialize_mt5(
             config["TERMINAL_PATH"],
@@ -883,11 +891,11 @@ def ticks_value(symbol, symbol_folder, broker_name, base_folder, all_symbols):
         if sym_info is None:
             raise Exception(f"Symbol '{symbol}' not found or not available in MT5 terminal")
         
-        tick_size = sym_info.point               # Minimum price increment (e.g., 0.00001 for EURUSD)
+        tick_size = sym_info.point               # Minimum price increment
         tick_value = sym_info.trade_tick_value   # Value of one tick per standard lot
         
         log_and_print(
-            f"[{broker_name}] Retrieved for {symbol}: tick_size={tick_size}, tick_value={tick_value}",
+            f"[{user_brokerid}] Retrieved for {symbol}: tick_size={tick_size}, tick_value={tick_value}",
             "SUCCESS"
         )
         
@@ -895,24 +903,23 @@ def ticks_value(symbol, symbol_folder, broker_name, base_folder, all_symbols):
         mt5.shutdown()
         
     except Exception as e:
-        error_msg = f"Failed to retrieve tick info for {symbol} ({broker_name}): {str(e)}"
+        error_msg = f"Failed to retrieve tick info for {symbol} ({user_brokerid}): {str(e)}"
         error_log.append({
             "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
             "error": error_msg,
-            "broker": broker_name
+            "broker": user_brokerid
         })
         log_and_print(error_msg, "ERROR")
-        # tick_size and tick_value remain None
     
-    # Prepare data to save
+    # Data to save - using cleaned broker name (e.g., "deriv" instead of "deriv6")
     output_data = {
         "market": symbol,
-        "broker": broker_name,
+        "broker": cleaned_broker,        # <-- Cleaned version here
         "tick_size": tick_size,
         "tick_value": tick_value
     }
     
-    # Save to alltimeframes_ob_none_oi_data.json
+    # 1. Save individual symbol JSON
     try:
         with open(output_json_path, 'w', encoding='utf-8') as f:
             json.dump(output_data, f, indent=4)
@@ -921,16 +928,64 @@ def ticks_value(symbol, symbol_folder, broker_name, base_folder, all_symbols):
         error_log.append({
             "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
             "error": f"Failed to write {output_json_path}: {str(e)}",
-            "broker": broker_name
+            "broker": user_brokerid
         })
-        log_and_print(f"Failed to save tick info JSON: {str(e)}", "ERROR")
+        log_and_print(f"Failed to save individual JSON: {str(e)}", "ERROR")
     
-    # Save errors if any
+    # 2. Update the combined symbolstick.json
+    combined_data = {}
+    file_exists = os.path.exists(combined_path)
+    
+    if file_exists:
+        try:
+            with open(combined_path, 'r', encoding='utf-8') as f:
+                combined_data = json.load(f)
+        except Exception as e:
+            error_log.append({
+                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                "error": f"Failed to read combined JSON: {str(e)}",
+                "broker": user_brokerid
+            })
+            log_and_print(f"Failed to read combined JSON: {str(e)}", "ERROR")
+            combined_data = {}
+    
+    # Create the new entry with cleaned broker
+    entry = {
+        "market": symbol,
+        "broker": cleaned_broker,
+        "tick_size": tick_size,
+        "tick_value": tick_value
+    }
+    
+    previous_entry = combined_data.get(safe_symbol)
+    
+    # Only write if new symbol or values have changed
+    if previous_entry != entry:
+        combined_data[safe_symbol] = entry
+        
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(combined_path), exist_ok=True)
+            
+            with open(combined_path, 'w', encoding='utf-8') as f:
+                json.dump(combined_data, f, indent=4)
+            
+            action = "Updated" if previous_entry is not None else "Added"
+            log_and_print(f"{action} {safe_symbol} (broker: {cleaned_broker}) in combined symbolstick.json", "SUCCESS")
+        except Exception as e:
+            error_log.append({
+                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+                "error": f"Failed to write combined JSON: {str(e)}",
+                "broker": user_brokerid
+            })
+            log_and_print(f"Failed to save combined JSON: {str(e)}", "ERROR")
+    
+    # Save any errors
     if error_log:
         save_errors(error_log)
     
     return error_log
-    
+
 def delete_all_category_jsons():
     """
     Delete (empty) every market-type JSON file that ticks_value writes to.
@@ -1094,7 +1149,7 @@ def delete_issue_jsons():
         if not broker_dir.is_dir():
             continue
 
-        broker_name = broker_dir.name
+        user_brokerid = broker_dir.name
         deleted_files = []
         risk_folders = [p.name for p in broker_dir.iterdir()
                         if p.is_dir() and p.name.startswith("risk_")]
@@ -1112,7 +1167,7 @@ def delete_issue_jsons():
                     except Exception as e:
                         print(f"[CLEAN] Failed to delete {file_path}: {e}")
 
-        deleted_summary[broker_name] = deleted_files or "No issue/report files found"
+        deleted_summary[user_brokerid] = deleted_files or "No issue/report files found"
 
     # --------------------------------------------------------------
     # 2. Delete the global schedule file (if it exists)
@@ -1134,9 +1189,9 @@ def delete_issue_jsons():
     print(f"[CLEAN] Pre-order cleanup complete – {total_deleted} file(s) removed.")
     return deleted_summary
 
-def backup_brokers_dictionary():
-    main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json")
-    backup_path = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionarybackup.json")
+def backup_developers_dictionary():
+    main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json")
+    backup_path = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionarybackup.json")
     
     main_path.parent.mkdir(parents=True, exist_ok=True)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1187,7 +1242,7 @@ def backup_brokers_dictionary():
     empty_dict = {}
     write_json(main_path, empty_dict)
     write_json(backup_path, empty_dict)
-    print("Created fresh empty brokersdictionary.json and backup") 
+    print("Created fresh empty developersdictionary.json and backup") 
 
 def placeallorders():
     """Run the updateorders script for M5 timeframe."""
@@ -1284,15 +1339,15 @@ def delete_news_sensitive_orders_during_news():
 
     total_deleted = 0
 
-    for broker_name, cfg in brokersdictionary.items():
-        log_and_print(f"Connecting to {broker_name.upper()} for news protection...", "INFO")
+    for user_brokerid, cfg in developersdictionary.items():
+        log_and_print(f"Connecting to {user_brokerid.upper()} for news protection...", "INFO")
 
         if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
                               password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
-            log_and_print(f"{broker_name}: init failed", "ERROR")
+            log_and_print(f"{user_brokerid}: init failed", "ERROR")
             continue
         if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
-            log_and_print(f"{broker_name}: login failed", "ERROR")
+            log_and_print(f"{user_brokerid}: login failed", "ERROR")
             mt5.shutdown()
             continue
 
@@ -1301,7 +1356,7 @@ def delete_news_sensitive_orders_during_news():
 
         # Log positions
         if positions:
-            log_and_print(f"{broker_name} — OPEN POSITIONS:", "INFO")
+            log_and_print(f"{user_brokerid} — OPEN POSITIONS:", "INFO")
             for p in positions:
                 cat = symbol_to_category.get(p.symbol, "unknown")
                 sensitive = "NEWS-SENSITIVE" if cat in NEWS_SENSITIVE_CATEGORIES else "safe"
@@ -1310,7 +1365,7 @@ def delete_news_sensitive_orders_during_news():
 
         # Log pending orders
         if pending:
-            log_and_print(f"{broker_name} — PENDING ORDERS:", "INFO")
+            log_and_print(f"{user_brokerid} — PENDING ORDERS:", "INFO")
             order_types = ["BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP","BUY_STOP_LIMIT","SELL_STOP_LIMIT"]
             for o in pending:
                 if o.type > 5: continue
@@ -1348,10 +1403,10 @@ def delete_news_sensitive_orders_during_news():
             }
             result = mt5.order_send(request)
             if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                log_and_print(f"{broker_name}: CLOSED {p.symbol} ({cat}) - News Protection", "WARNING")
+                log_and_print(f"{user_brokerid}: CLOSED {p.symbol} ({cat}) - News Protection", "WARNING")
                 deleted += 1
             else:
-                log_and_print(f"{broker_name}: FAILED to close {p.symbol} | Retcode: {result.retcode if result else 'None'}", "ERROR")
+                log_and_print(f"{user_brokerid}: FAILED to close {p.symbol} | Retcode: {result.retcode if result else 'None'}", "ERROR")
 
         # === Cancel sensitive pending orders ===
         for o in pending:
@@ -1367,19 +1422,19 @@ def delete_news_sensitive_orders_during_news():
             }
             result = mt5.order_send(request)
             if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                log_and_print(f"{broker_name}: CANCELED pending {o.symbol} ({cat}) #{o.ticket}", "WARNING")
+                log_and_print(f"{user_brokerid}: CANCELED pending {o.symbol} ({cat}) #{o.ticket}", "WARNING")
                 deleted += 1
             else:
-                log_and_print(f"{broker_name}: FAILED to cancel order {o.ticket} | Retcode: {result.retcode if result else 'None'}", "ERROR")
+                log_and_print(f"{user_brokerid}: FAILED to cancel order {o.ticket} | Retcode: {result.retcode if result else 'None'}", "ERROR")
 
         total_deleted += deleted
-        log_and_print(f"{broker_name}: {deleted} sensitive trades removed", "SUCCESS" if deleted > 0 else "INFO")
+        log_and_print(f"{user_brokerid}: {deleted} sensitive trades removed", "SUCCESS" if deleted > 0 else "INFO")
         mt5.shutdown()
 
     log_and_print(f"NEWS PROTECTION COMPLETE → {total_deleted} sensitive trades deleted", "CRITICAL")
 
 def BreakevenRunningPositions():
-    backup_brokers_dictionary()
+    backup_developers_dictionary()
     delete_news_sensitive_orders_during_news()
     BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     BREAKEVEN_REPORT = "breakeven_report.json"
@@ -1461,18 +1516,18 @@ def BreakevenRunningPositions():
             return False
 
     # ------------------------------------------------------------------ #
-    for broker_name, cfg in brokersdictionary.items():
+    for user_brokerid, cfg in developersdictionary.items():
         # ---- MT5 Connection ------------------------------------------------
         if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
                               password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
-            log_and_print(f"{broker_name}: MT5 init failed", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 init failed", "ERROR")
             continue
         if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
-            log_and_print(f"{broker_name}: MT5 login failed", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 login failed", "ERROR")
             mt5.shutdown()
             continue
 
-        broker_dir = Path(BASE_INPUT_DIR) / broker_name
+        broker_dir = Path(BASE_INPUT_DIR) / user_brokerid
         report_path = broker_dir / BREAKEVEN_REPORT
         issues_path = broker_dir / ISSUES_FILE
 
@@ -1483,7 +1538,7 @@ def BreakevenRunningPositions():
                 with report_path.open("r", encoding="utf-8") as f:
                     existing_report = json.load(f)
             except Exception as e:
-                log_and_print(f"{broker_name}: Failed to load breakeven_report.json – {e}", "WARNING")
+                log_and_print(f"{user_brokerid}: Failed to load breakeven_report.json – {e}", "WARNING")
 
         issues = []
         now = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z")
@@ -1530,7 +1585,7 @@ def BreakevenRunningPositions():
 
             # Base block
             block = [
-                f"┌─ {broker_name} ─ {sym} ─ {typ} (ticket {pos.ticket})",
+                f"┌─ {user_brokerid} ─ {sym} ─ {typ} (ticket {pos.ticket})",
                 f"│ Entry : {pos.price_open:.{info.digits}f}   SL : {pos.sl:.{info.digits}f}   TP : {pos.tp:.{info.digits}f}",
                 f"│ Now   : {cur_price:.{info.digits}f}"
             ]
@@ -1600,7 +1655,7 @@ def BreakevenRunningPositions():
                 be_050   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_2, is_buy)
 
                 block = [
-                    f"┌─ {broker_name} ─ {sym} ─ PENDING {typ}",
+                    f"┌─ {user_brokerid} ─ {sym} ─ PENDING {typ}",
                     f"│ Entry : {o['price']:.{info.digits}f}   SL : {o['sl']:.{info.digits}f}   TP : {o['tp']:.{info.digits}f}",
                     f"│ Target 1 → {r1_price:.{info.digits}f}  |  BE @ 0.25 → {be_025:.{info.digits}f}",
                     f"│ Target 2 → {r2_price:.{info.digits}f}  |  BE @ 0.50 → {be_050:.{info.digits}f}",
@@ -1619,7 +1674,7 @@ def BreakevenRunningPositions():
 
         mt5.shutdown()
         log_and_print(
-            f"{broker_name}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
+            f"{user_brokerid}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
             "SUCCESS"
         )
 
@@ -1627,7 +1682,7 @@ def BreakevenRunningPositions():
     
 def verifying_brokers():
     # --- CONFIGURATION ---
-    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
     USERS_JSON   = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
     REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\synarex\requirements.json"
 
@@ -1695,7 +1750,7 @@ def verifying_brokers():
         return None
 
     # --- PHASE 1: Check contract time & mark for move if ≤5 days left ---
-    for broker_name, cfg in list(brokers_dict.items()):
+    for user_brokerid, cfg in list(brokers_dict.items()):
         current_start_str = cfg.get("EXECUTION_START_DATE")
         current_start_dt = parse_start_date(current_start_str)
 
@@ -1708,7 +1763,7 @@ def verifying_brokers():
                 if restored:
                     current_start_dt = restored
                     cfg["EXECUTION_START_DATE"] = restored.strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"**{broker_name}**: Start date restored from history", "INFO")
+                    print(f"**{user_brokerid}**: Start date restored from history", "INFO")
                     updated_any = True
 
         # Calculate days left with precision
@@ -1729,18 +1784,18 @@ def verifying_brokers():
         # If 5 or fewer days remain → EXPIRE & MOVE
         if days_left_int <= 5:
             reason = "Contract Expired (≤5 days left)"
-            print(f"**{broker_name}**: {reason} → {days_left_int} days remaining → Will MOVE", "WARNING")
-            move_list.append((broker_name, reason))
+            print(f"**{user_brokerid}**: {reason} → {days_left_int} days remaining → Will MOVE", "WARNING")
+            move_list.append((user_brokerid, reason))
 
     # --- PHASE 2: MT5 Live Update (only for brokers NOT being moved yet) ---
     brokers_to_remove_due_to_balance = []
 
-    for broker_name, cfg in list(brokers_dict.items()):
+    for user_brokerid, cfg in list(brokers_dict.items()):
         # Skip if already marked for move due to time
-        if any(broker_name == b[0] for b in move_list):
+        if any(user_brokerid == b[0] for b in move_list):
             continue
 
-        print(f"**{broker_name}**: Connecting to MT5 for live update...", "INFO")
+        print(f"**{user_brokerid}**: Connecting to MT5 for live update...", "INFO")
 
         terminal_path = cfg.get("TERMINAL_PATH")
         login_id = cfg.get("LOGIN_ID")
@@ -1748,27 +1803,27 @@ def verifying_brokers():
         server = cfg.get("SERVER")
 
         if not all([terminal_path, login_id, password, server]):
-            print(f"**{broker_name}**: Missing credentials → Will move", "ERROR")
-            move_list.append((broker_name, "Missing credentials"))
+            print(f"**{user_brokerid}**: Missing credentials → Will move", "ERROR")
+            move_list.append((user_brokerid, "Missing credentials"))
             continue
 
         try:
             if not mt5.initialize(path=terminal_path, timeout=30000):
-                print(f"**{broker_name}**: MT5 init failed → Will move", "ERROR")
-                move_list.append((broker_name, "MT5 init failed"))
+                print(f"**{user_brokerid}**: MT5 init failed → Will move", "ERROR")
+                move_list.append((user_brokerid, "MT5 init failed"))
                 continue
 
             if not mt5.login(int(login_id), password=password, server=server):
-                print(f"**{broker_name}**: Login failed → Will move", "ERROR")
+                print(f"**{user_brokerid}**: Login failed → Will move", "ERROR")
                 mt5.shutdown()
-                move_list.append((broker_name, "Login failed"))
+                move_list.append((user_brokerid, "Login failed"))
                 continue
 
             account_info = mt5.account_info()
             if not account_info:
-                print(f"**{broker_name}**: No account info → Will move", "ERROR")
+                print(f"**{user_brokerid}**: No account info → Will move", "ERROR")
                 mt5.shutdown()
-                move_list.append((broker_name, "No account info"))
+                move_list.append((user_brokerid, "No account info"))
                 continue
 
             current_balance = round(account_info.balance, 2)
@@ -1814,19 +1869,19 @@ def verifying_brokers():
             cfg["PROFITANDLOSS"] = realized_pnl
             cfg["TRADES"] = trades_summary
 
-            print(f"**{broker_name}**: Live → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
+            print(f"**{user_brokerid}**: Live → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
 
             # Check minimum balance
             if current_balance < BALANCE_REQUIRED:
-                print(f"**{broker_name}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Will move", "CRITICAL")
-                brokers_to_remove_due_to_balance.append(broker_name)
+                print(f"**{user_brokerid}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Will move", "CRITICAL")
+                brokers_to_remove_due_to_balance.append(user_brokerid)
 
             mt5.shutdown()
             updated_any = True
 
         except Exception as e:
-            print(f"**{broker_name}**: MT5 error: {e} → Will move", "ERROR")
-            move_list.append((broker_name, "MT5 error"))
+            print(f"**{user_brokerid}**: MT5 error: {e} → Will move", "ERROR")
+            move_list.append((user_brokerid, "MT5 error"))
             if 'mt5' in locals():
                 mt5.shutdown()
             continue
@@ -1838,10 +1893,10 @@ def verifying_brokers():
 
     # --- PHASE 3: MOVE all flagged brokers ---
     moved_count = 0
-    for broker_name, reason in move_list:
-        if broker_name not in brokers_dict:
+    for user_brokerid, reason in move_list:
+        if user_brokerid not in brokers_dict:
             continue
-        broker_data = brokers_dict.pop(broker_name)
+        broker_data = brokers_dict.pop(user_brokerid)
 
         # Clean sensitive data
         for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
@@ -1850,8 +1905,8 @@ def verifying_brokers():
         broker_data["MOVED_REASON"] = reason
         broker_data["MOVED_TIMESTAMP"] = now_str
 
-        users_dict[broker_name] = broker_data
-        print(f"**{broker_name}**: MOVED → {reason} | Final Bal: ${broker_data.get('BROKER_BALANCE', 0):.2f}", "SUCCESS")
+        users_dict[user_brokerid] = broker_data
+        print(f"**{user_brokerid}**: MOVED → {reason} | Final Bal: ${broker_data.get('BROKER_BALANCE', 0):.2f}", "SUCCESS")
         moved_count += 1
         updated_any = True
 
@@ -1869,7 +1924,7 @@ def verifying_brokers():
         with open(BROKERS_JSON, "w", encoding="utf-8") as f:
             json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print("brokersdictionary.json → Saved (only active)", "SUCCESS")
+        print("developersdictionary.json → Saved (only active)", "SUCCESS")
 
         with open(USERS_JSON, "w", encoding="utf-8") as f:
             json.dump(users_dict, f, indent=4, ensure_ascii=False)
@@ -1958,8 +2013,8 @@ def clear_unknown_broker():
         print(f"ERROR: Base directory does not exist:\n    {base_path}")
         return
     
-    if not brokersdictionary:
-        print("No brokers found in brokersdictionary.")
+    if not developersdictionary:
+        print("No brokers found in developersdictionary.")
         return
 
     print("Configured Brokers & Folder Check (Human-readable folders):")
@@ -1971,7 +2026,7 @@ def clear_unknown_broker():
     existing = 0
     missing = 0
     
-    def format_broker_name(name):
+    def format_user_brokerid(name):
         name = name.strip()
         match = re.match(r"([a-zA-Z_]+)(\d*)$", name, re.IGNORECASE)
         if not match:
@@ -1985,9 +2040,9 @@ def clear_unknown_broker():
         return base_clean
 
     # ——— Scan configured brokers ———
-    for broker_name in brokersdictionary.keys():
-        original = broker_name.strip()
-        display_name = format_broker_name(original)
+    for user_brokerid in developersdictionary.keys():
+        original = user_brokerid.strip()
+        display_name = format_user_brokerid(original)
         lower_display = display_name.lower()
         
         configured_displays.add(lower_display)
@@ -2013,7 +2068,7 @@ def clear_unknown_broker():
         else: missing += 1
     
     print("=" * 90)
-    print(f"Total configured: {len(brokersdictionary)} broker(s) | {existing} folder(s) exist | {missing} missing")
+    print(f"Total configured: {len(developersdictionary)} broker(s) | {existing} folder(s) exist | {missing} missing")
 
     # ——— Unique broker types ———
     print("\nUnique Configured Broker Types:")
@@ -2078,7 +2133,7 @@ def fetch_charts_all_brokers(
     # ------------------------------------------------------------------
     # PATHS
     # ------------------------------------------------------------------
-    backup_brokers_dictionary()
+    backup_developers_dictionary()
     delete_all_category_jsons()
     delete_all_calculated_risk_jsons()
     delete_issue_jsons()
@@ -2140,7 +2195,7 @@ def fetch_charts_all_brokers(
                 log_and_print(f"FAILED to delete {item_path}: {e}", "ERROR")
         log_and_print(f"CLEANED {deleted} non-blocked symbol folders in {base_folder}", "SUCCESS")
 
-    def mark_chosen_broker(original_broker_key: str, broker_name: str, balance: float):
+    def mark_chosen_broker(original_broker_key: str, user_brokerid: str, balance: float):
         """Create chosenbroker.json in symbols_calculated_prices\<original_key>\chosenbroker.json"""
         target_dir = fr"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices\{original_broker_key}"
         os.makedirs(target_dir, exist_ok=True)
@@ -2148,7 +2203,7 @@ def fetch_charts_all_brokers(
         
         chosen_data = {
             "chosen": True,
-            "broker_display_name": broker_name,
+            "broker_display_name": user_brokerid,
             "original_key": original_broker_key,
             "balance": round(balance, 2),
             "selected_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -2222,9 +2277,9 @@ def fetch_charts_all_brokers(
             # ------------------------------------------------------------------
             selected_brokers = {}  # normalized_key -> (original_name, config, balance, original_dict_key)
 
-            for original_key, cfg in brokersdictionary.items():  # original_key = "deriv2", "bybit10", etc.
-                broker_name = cfg.get("original_name", original_key)  # fallback if not set
-                norm_key = normalize_broker_key(broker_name)
+            for original_key, cfg in developersdictionary.items():  # original_key = "deriv2", "bybit10", etc.
+                user_brokerid = cfg.get("original_name", original_key)  # fallback if not set
+                norm_key = normalize_broker_key(user_brokerid)
 
                 balance = 0.0
                 ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
@@ -2242,14 +2297,14 @@ def fetch_charts_all_brokers(
                 if current is None or balance > current[2]:
                     cfg_copy = cfg.copy()
                     cfg_copy["balance"] = balance
-                    cfg_copy["original_name"] = broker_name
-                    selected_brokers[norm_key] = (broker_name, cfg_copy, balance, original_key)
+                    cfg_copy["original_name"] = user_brokerid
+                    selected_brokers[norm_key] = (user_brokerid, cfg_copy, balance, original_key)
 
             # Now mark all selected brokers as "chosen" with their original dictionary key
             unique_brokers = {}
-            for norm_key, (broker_name, cfg, balance, original_key) in selected_brokers.items():
-                unique_brokers[broker_name] = cfg
-                mark_chosen_broker(original_key, broker_name, balance)  # <-- THIS IS THE NEW FEATURE
+            for norm_key, (user_brokerid, cfg, balance, original_key) in selected_brokers.items():
+                unique_brokers[user_brokerid] = cfg
+                mark_chosen_broker(original_key, user_brokerid, balance)  # <-- THIS IS THE NEW FEATURE
 
             log_and_print(f"Selected & MARKED {len(unique_brokers)} unique brokers (highest balance): {list(unique_brokers.keys())}", "SUCCESS")
 
@@ -2315,10 +2370,10 @@ def fetch_charts_all_brokers(
             candidates = {}
             total_to_do = 0
 
-            for broker_name, cfg in unique_brokers.items():
-                norm_key = normalize_broker_key(broker_name)
+            for user_brokerid, cfg in unique_brokers.items():
+                norm_key = normalize_broker_key(user_brokerid)
                 blocked = normalized_blocked_symbols.get(norm_key, set())
-                candidates[broker_name] = {c: [] for c in all_cats}
+                candidates[user_brokerid] = {c: [] for c in all_cats}
 
                 broker_symbols_raw = cfg.get("SYMBOLS", "").strip()
                 broker_allowed_symbols = None
@@ -2365,12 +2420,12 @@ def fetch_charts_all_brokers(
 
                         if symbol_needs_processing(sym_mt5, cfg["BASE_FOLDER"]):
                             delete_symbol_folder(sym_mt5, cfg["BASE_FOLDER"], "(pre-process cleanup)")
-                            candidates[broker_name][cat].append(sym_mt5)
+                            candidates[user_brokerid][cat].append(sym_mt5)
 
                 for cat in all_cats:
-                    cnt = len(candidates[broker_name][cat])
+                    cnt = len(candidates[user_brokerid][cat])
                     if cnt:
-                        log_and_print(f"{broker_name.upper()} → {cat.upper():10} : {cnt:3} queued", "INFO")
+                        log_and_print(f"{user_brokerid.upper()} → {cat.upper():10} : {cnt:3} queued", "INFO")
                         total_to_do += cnt
 
             if total_to_do == 0:

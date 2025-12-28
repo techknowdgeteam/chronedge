@@ -10,7 +10,7 @@ init()
 
 OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdictionary.json"
 MT5_TEMPLATE_SOURCE_DIR = r"C:\xampp\htdocs\chronedge\synarex\mt5\MetaTrader 5"
-BROKERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+BROKERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
 
 # --- HELPER FUNCTIONS ---
 
@@ -82,21 +82,21 @@ def update_history_string(current_history, new_value):
     return f"{current_history_str},{new_value_str}"
 
 
-def recordsfrom_brokersdictionary():
+def recordsfrom_developersdictionary():
     """
-    Copies/Updates ALL broker records from brokersdictionary.json
+    Copies/Updates ALL broker records from developersdictionary.json
     → into updatedusersdictionary.json
 
     - If the broker name (key) already exists in updatedusersdictionary.json → UPDATE it
     - If it doesn't exist → ADD it (append)
-    - brokersdictionary.json is treated as the SOURCE OF TRUTH (latest data)
+    - developersdictionary.json is treated as the SOURCE OF TRUTH (latest data)
     - Safe, idempotent, can be run anytime (e.g. every hour or after updatebrokerrecords())
     """
 
-    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
     USERS_JSON   = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
 
-    # Load brokersdictionary.json (source of truth)
+    # Load developersdictionary.json (source of truth)
     if not os.path.exists(BROKERS_JSON):
         print(f"CRITICAL: {BROKERS_JSON} not found! Cannot sync.", "CRITICAL")
         return
@@ -105,10 +105,10 @@ def recordsfrom_brokersdictionary():
         with open(BROKERS_JSON, "r", encoding="utf-8") as f:
             brokers_dict = json.load(f)
         if not isinstance(brokers_dict, dict):
-            print("brokersdictionary.json is not a valid dictionary", "ERROR")
+            print("developersdictionary.json is not a valid dictionary", "ERROR")
             return
     except Exception as e:
-        print(f"Failed to read brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to read developersdictionary.json: {e}", "CRITICAL")
         return
 
     # Load updatedusersdictionary.json (target)
@@ -128,7 +128,7 @@ def recordsfrom_brokersdictionary():
     updated_count = 0
     added_count = 0
 
-    for broker_name, broker_data in brokers_dict.items():
+    for user_brokerid, broker_data in brokers_dict.items():
         # Clean copy: remove fields that shouldn't go into users dictionary
         clean_data = broker_data.copy()
 
@@ -142,18 +142,18 @@ def recordsfrom_brokersdictionary():
         for field in fields_to_exclude:
             clean_data.pop(field, None)
 
-        if broker_name in users_dict:
+        if user_brokerid in users_dict:
             # Update existing record
-            old_balance = users_dict[broker_name].get("BROKER_BALANCE")
+            old_balance = users_dict[user_brokerid].get("BROKER_BALANCE")
             new_balance = clean_data.get("BROKER_BALANCE")
-            users_dict[broker_name] = clean_data
-            print(f"{broker_name}: UPDATED in updatedusersdictionary.json "
+            users_dict[user_brokerid] = clean_data
+            print(f"{user_brokerid}: UPDATED in updatedusersdictionary.json "
                   f"(Balance: {old_balance} → {new_balance})", "INFO")
             updated_count += 1
         else:
             # Add new record
-            users_dict[broker_name] = clean_data
-            print(f"{broker_name}: ADDED to updatedusersdictionary.json "
+            users_dict[user_brokerid] = clean_data
+            print(f"{user_brokerid}: ADDED to updatedusersdictionary.json "
                   f"(Balance: {clean_data.get('BROKER_BALANCE', 0.0)})", "SUCCESS")
             added_count += 1
 
@@ -453,7 +453,7 @@ def fetch_insiders_rows():
 def validdetails_verified():
     """
     Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
-    from usersdictionary.json into both brokersdictionary.json and updatedusersdictionary.json.
+    from usersdictionary.json into both developersdictionary.json and updatedusersdictionary.json.
     
     The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
     the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
@@ -477,7 +477,7 @@ def validdetails_verified():
         log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
         return
 
-    # 2. Load Target Dictionaries (brokersdictionary.json & updatedusersdictionary.json)
+    # 2. Load Target Dictionaries (developersdictionary.json & updatedusersdictionary.json)
     
     # Load Brokers Dictionary
     brokers_dict = {}
@@ -558,9 +558,9 @@ def validdetails_verified():
         os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
         with open(BROKERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
             json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
-        log_and_print(f"Saved brokersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
+        log_and_print(f"Saved developersdictionary.json. Updated {brokers_updated_count} records.", "SUCCESS")
     except Exception as e:
-        log_and_print(f"FAILED to save brokersdictionary.json: {e}", "CRITICAL")
+        log_and_print(f"FAILED to save developersdictionary.json: {e}", "CRITICAL")
 
     # Save Updated Users Dictionary
     try:
@@ -573,7 +573,7 @@ def validdetails_verified():
     
     log_and_print("--- Status Sync Complete ---", "TITLE")
 
-def copy_verified_users_to_brokers_dictionary():
+def copy_verified_users_to_developers_dictionary():
     """
     Reads the main user dictionary, filters users where:
     1. ACCOUNT_VERIFICATION is 'verified'
@@ -586,7 +586,7 @@ def copy_verified_users_to_brokers_dictionary():
     
     # --- 1. Load existing data (Source only) ---
     users_dictionary = {}
-    brokers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
+    developers_dictionary = {} # **Starts as an empty dictionary to ensure a complete overwrite**
     
     try:
         # Load the main users dictionary (source)
@@ -611,7 +611,7 @@ def copy_verified_users_to_brokers_dictionary():
         
         if account_verified and loyalty_check:
             # 🔔 Action: Copy user data to the brokers dictionary
-            brokers_dictionary[key] = user_data.copy()
+            developers_dictionary[key] = user_data.copy()
             copied_count += 1
             log_and_print(f"Copying user {key} (Loyalty: {loyalty_status}) to brokers dictionary.", "INFO")
             
@@ -621,8 +621,8 @@ def copy_verified_users_to_brokers_dictionary():
         try:
             os.makedirs(os.path.dirname(BROKERS_OUTPUT_FILE_PATH), exist_ok=True)
             with open(BROKERS_OUTPUT_FILE_PATH, 'w') as f:
-                json.dump(brokers_dictionary, f, indent=4) 
-            log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(brokers_dictionary)}.", "SUCCESS")
+                json.dump(developers_dictionary, f, indent=4) 
+            log_and_print(f"Successfully **copied** {copied_count} user(s) and **completely OVERWROTE** the brokers JSON file. Total brokers: {len(developers_dictionary)}.", "SUCCESS")
         except IOError as file_error:
             log_and_print(f"ERROR: Failed to write brokers JSON file: {file_error}", "ERROR")
     else:
@@ -702,12 +702,12 @@ def update_application_status_in_database():
 
 
 
-def move_verifiedusers_to_brokersdictionary():  
+def move_verifiedusers_to_developersdictionary():  
     validdetails_verified()
-    copy_verified_users_to_brokers_dictionary()
+    copy_verified_users_to_developers_dictionary()
     update_application_status_in_database()
 
 if __name__ == "__main__":
     fetch_insiders_rows()
     #login the users broker and set account verification to 'verified' if valid
-    move_verifiedusers_to_brokersdictionary()
+    move_verifiedusers_to_developersdictionary()

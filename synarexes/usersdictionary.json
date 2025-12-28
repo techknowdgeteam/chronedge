@@ -19,10 +19,10 @@
         "BROKER_BALANCE_HISTORY": "0.00,11.43",
         "EXECUTION_DATES_HISTORY": "none",
         "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "none",
-        "CONTRACT_DAYS_LEFT": 27,
+        "CONTRACT_DAYS_LEFT": 25,
         "TRADES": "1:Trades, 0:Won, 1:Lost, symbolsthatlost:(US Oil:-2.02), symbolsthatwon:(None)",
         "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\synarex\\chart\\Deriv 2",
-        "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\mt5\\MetaTrader 5 Deriv 2\\terminal64.exe"
+        "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\synarex\\mt5\\MetaTrader 5 Deriv 2\\terminal64.exe"
     },
     "deriv3": {
         "LOGIN_ID": "140357859",
@@ -47,7 +47,7 @@
         "CONTRACT_DAYS_LEFT": 28,
         "TRADES": "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)",
         "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\synarex\\chart\\Deriv 3",
-        "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\mt5\\MetaTrader 5 Deriv 3\\terminal64.exe"
+        "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\synarex\\mt5\\MetaTrader 5 Deriv 3\\terminal64.exe"
     },
     "bybit4": {
         "LOGIN_ID": "4836528",
@@ -103,8 +103,8 @@
         "LOGIN_ID": "101347351",
         "PASSWORD": "@Techknowdge12#",
         "SERVER": "DerivSVG-Server-02",
-        "EXECUTION_START_DATE": "2025-11-01",
-        "BROKER_BALANCE": 100.0,
+        "EXECUTION_START_DATE": "2025-11-29",
+        "BROKER_BALANCE": 47.12,
         "PROFITANDLOSS": 0.0,
         "ACCOUNT": "real",
         "STRATEGY": "hightolow",
@@ -114,12 +114,12 @@
         "MARTINGALE_MARKETS": "neth25, usdjpy",
         "ACCOUNT_VERIFICATION": "verified",
         "DB_APPLICATION_STATUS": "approved",
-        "LOYALTIES": "re-enrolled",
-        "PROFITANDLOSS_HISTORY": "None,0.0",
-        "BROKER_BALANCE_HISTORY": "None,0.0",
-        "EXECUTION_DATES_HISTORY": "None, 2025-11-24 19:49:32",
+        "LOYALTIES": "justjoined",
+        "PROFITANDLOSS_HISTORY": "",
+        "BROKER_BALANCE_HISTORY": "",
+        "EXECUTION_DATES_HISTORY": "",
         "RESET_EXECUTION_DATE_AND_BROKER_BALANCE": "none",
-        "CONTRACT_DAYS_LEFT": 6,
+        "CONTRACT_DAYS_LEFT": 28,
         "TRADES": "0:Trades, 0:Won, 0:Lost, symbolsthatlost:(None), symbolsthatwon:(None)",
         "BASE_FOLDER": "C:\\xampp\\htdocs\\chronedge\\synarex\\chart\\Deriv 6",
         "TERMINAL_PATH": "C:\\xampp\\htdocs\\chronedge\\synarex\\mt5\\MetaTrader 5 Deriv 6\\terminal64.exe"

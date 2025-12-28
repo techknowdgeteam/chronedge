@@ -1,0 +1,126 @@
+{
+  "broker": "deriv6",
+  "scan_timestamp": "2025-12-22T12:30:06.525584Z",
+  "logs": [
+    {
+      "timestamp": "2025-12-22T12:30:06.526914Z",
+      "level": "INFO",
+      "message": "Starting scan for order JSON files"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.543955Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Limit_Orders\\co_ords\\Limit_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.545969Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Limit_Orders\\co_ords\\Limit_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.545969Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Limit_Orders\\long_term\\Limit_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.545969Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Limit_Orders\\long_term\\Limit_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.545969Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Limit_Orders\\short_term\\Limit_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.545969Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Limit_Orders\\short_term\\Limit_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.560622Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Instant_Orders\\long_term\\Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.560622Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Instant_Orders\\long_term\\Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.560622Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Instant_Orders\\short_term\\Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.560622Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Instant_Orders\\short_term\\Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.562996Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\long_term\\Trend_Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.562996Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\long_term\\Trend_Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.562996Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\short_term\\Trend_Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.562996Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\short_term\\Trend_Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\long_term\\Trend_Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\long_term\\Trend_Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "VALIDATION",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\short_term\\Trend_Instant_Orders.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "CONFIG",
+      "message": "BREAKOUT\\Trend_Instant_Orders\\short_term\\Trend_Instant_Orders.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "VALIDATION",
+      "message": "CONTINUATION\\Instant_Continuation\\long_term\\Instant_Continuation.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "CONFIG",
+      "message": "CONTINUATION\\Instant_Continuation\\long_term\\Instant_Continuation.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "VALIDATION",
+      "message": "CONTINUATION\\Instant_Continuation\\short_term\\Instant_Continuation.json: VALID"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "CONFIG",
+      "message": "CONTINUATION\\Instant_Continuation\\short_term\\Instant_Continuation.json → Created/updated: allowedsymbolsandvolumes.json"
+    },
+    {
+      "timestamp": "2025-12-22T12:30:06.573332Z",
+      "level": "SUMMARY",
+      "message": "Scan complete: Found 11 order JSON file(s) (11 valid, 0 invalid)"
+    }
+  ]
+}

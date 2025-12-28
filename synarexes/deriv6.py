@@ -1,33 +1,98 @@
 import os
-import MetaTrader5 as mt5
-import pandas as pd
-import mplfinance as mpf
+import json
+import cv2
+import numpy as np
+import os
+import json
 from datetime import datetime
 import pytz
-import json
-from PIL import Image
-import numpy as np
-import matplotlib.pyplot as plt
-import cv2
-from pathlib import Path
-from datetime import datetime
-import calculateprices
-import time
-import threading
-import traceback
-from datetime import timedelta
-import traceback
-import shutil
-from datetime import datetime
 import re
-import placeorders
-import insiders_server
-import timeorders
-from collections import defaultdict
-import multiprocessing
-import multiprocessing
-from typing import List
-import synarex.developers as developers
+import shutil
+
+def login_to_my_account():
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
+    base_dev_path = r"C:\xampp\htdocs\chronedge\synarex\chart\developers"
+
+    # Load developersdictionary.json
+    if not os.path.exists(BROKERS_JSON_PATH):
+        print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND!", "CRITICAL")
+        return {}
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            all_brokers_data = json.load(f)
+    except Exception as e:
+        print(f"Failed to read developersdictionary.json: {e}", "CRITICAL")
+        return {}
+
+    # Find session.json in any developer folder
+    session_data = None
+    matched_folder_name = None  # The actual folder name on disk (e.g., "Deriv 6")
+    broker_key_in_json = None   # The key in developersdictionary.json (e.g., "deriv6")
+
+    if not os.path.exists(base_dev_path):
+        print(f"Developers base path not found: {base_dev_path}", "CRITICAL")
+        return {}
+
+    for folder_name in os.listdir(base_dev_path):
+        folder_path = os.path.join(base_dev_path, folder_name)
+        if not os.path.isdir(folder_path):
+            continue
+
+        session_path = os.path.join(folder_path, "session.json")
+        if os.path.exists(session_path):
+            try:
+                with open(session_path, 'r', encoding='utf-8') as f:
+                    session_data = json.load(f)
+                matched_folder_name = folder_name
+                break
+            except Exception as e:
+                print(f"Failed to read session.json in '{folder_name}': {e}", "WARNING")
+                continue
+
+    if session_data is None:
+        print("No session.json found in any developer broker folder.", "WARNING")
+        return {}
+
+    email = session_data.get("email", "").strip()
+    password = session_data.get("password", "").strip()
+
+    if not email or not password:
+        print("session.json is missing email or password.", "WARNING")
+        return {}
+
+    # Match credentials against any broker in the dictionary
+    matched_cfg = None
+    for broker_key, cfg in all_brokers_data.items():
+        if (cfg.get("ACCOUNT_EMAIL") == email and
+            cfg.get("ACCOUNT_PASSWORD") == password):
+            matched_cfg = cfg
+            broker_key_in_json = broker_key
+            break
+
+    if not matched_cfg:
+        print("Credentials in session.json do not match any broker in developersdictionary.json", "WARNING")
+        return {}
+
+    # Success! Use the broker key from JSON (e.g., "deriv6")
+    print(f"Login successful! Broker '{broker_key_in_json}' authenticated via session.json "
+          f"(folder: '{matched_folder_name}')", "SUCCESS")
+
+    # Optional: Check allowed symbols file — only warn, do NOT fail login
+    if matched_folder_name:
+        allowed_file_path = os.path.join(base_dev_path, matched_folder_name, "allowedsymbolsandvolumes.json")
+        if not os.path.exists(allowed_file_path):
+            print(f"Warning: allowedsymbolsandvolumes.json missing in folder '{matched_folder_name}'", "WARNING")
+        else:
+            print(f"allowedsymbolsandvolumes.json found.", "INFO")
+
+    # Return exactly what custom_breakout() expects: { "deriv6": { ...config... } }
+    return {broker_key_in_json: matched_cfg}
+# === USAGE ===
+session = login_to_my_account()
+
+
+
 
 def custom_horizontal_line():
     import cv2
@@ -97,13 +162,9 @@ def custom_horizontal_line():
     # MAIN LOOP
     # ------------------------------------------------------------------
     developer_brokers = {
-        k: v for k, v in developersdictionary.items()
+        k: v for k, v in session.items()
         if v.get("POSITION", "").lower() == "developer"
     }
-
-    if not developer_brokers:
-        log("No developer brokers found!", "ERROR")
-        return
 
     for broker_raw_name, cfg in developer_brokers.items():
         base_folder = cfg["BASE_FOLDER"]
@@ -150,7 +211,7 @@ def custom_horizontal_line():
                 if not os.path.isdir(tf_path): continue
 
                 chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_candles.json")
+                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
                 output_path = os.path.join(tf_path, "chart_custom.png")
 
                 if not os.path.exists(chart_path) or not os.path.exists(json_path):
@@ -265,45 +326,8 @@ def custom_horizontal_line():
 
     log("=== CUSTOM HORIZONTAL LINE (STOPS AT TO) COMPLETED ===", "SUCCESS")
 
-def load_developers_dictionary():
-    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
-    """Load brokers config from JSON file with error handling and fallback."""
-    if not os.path.exists(BROKERS_JSON_PATH):
-        print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND! Using empty config.", "CRITICAL")
-        return {}
-
-    try:
-        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # Optional: Convert numeric strings back to int where needed
-        for user_brokerid, cfg in data.items():
-            if "LOGIN_ID" in cfg and isinstance(cfg["LOGIN_ID"], str):
-                cfg["LOGIN_ID"] = cfg["LOGIN_ID"].strip()
-            if "RISKREWARD" in cfg and isinstance(cfg["RISKREWARD"], (str, float)):
-                cfg["RISKREWARD"] = int(cfg["RISKREWARD"])
-        
-        print(f"Brokers config loaded successfully → {len(data)} broker(s)", "SUCCESS")
-        return data
-
-    except json.JSONDecodeError as e:
-        print(f"Invalid JSON in developersdictionary.json: {e}", "CRITICAL")
-        return {}
-    except Exception as e:
-        print(f"Failed to load developersdictionary.json: {e}", "CRITICAL")
-        return {}
-developersdictionary = load_developers_dictionary()
-
-          
 
 def custom_breakout():
-    import cv2
-    import numpy as np
-    import os
-    import json
-    from datetime import datetime
-    import pytz
-    import re
 
     # --- INITIAL SETUP ---
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -457,10 +481,7 @@ def custom_breakout():
     # ------------------------------------------------------------------
     # MAIN LOOP (with dynamic family and key loading)
     # ------------------------------------------------------------------
-    developer_brokers = {k: v for k, v in globals().get("developersdictionary", {}).items() if v.get("POSITION", "").lower() == "developer"}
-    if not developer_brokers:
-        log("No developer brokers found!", "ERROR")
-        return
+    developer_brokers = {k: v for k, v in globals().get("session", {}).items() if v.get("POSITION", "").lower() == "developer"}
     
     global_tech_data = {}
     
@@ -545,7 +566,7 @@ def custom_breakout():
                 tf_path = os.path.join(sym_path, tf_folder)
                 if not os.path.isdir(tf_path): continue
                 chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_candles.json")
+                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
                 output_path = os.path.join(tf_path, "chart_custom.png")
                 report_path = os.path.join(tf_path, "custom_levels.json")
                 if not all(os.path.exists(p) for p in [chart_path, json_path]):
@@ -2021,7 +2042,7 @@ def custom_breakout():
 
                     log(f"FINAL ENRICHMENT COMPLETE → {enriched_count} fields enriched | Direction determined from breakout.json (breakout={is_breakout_strategy})", "SUCCESS")                               
 
-                def categorize_developer_technique(
+                def categorize_developer_techniqueq(
                         broker_raw_name,
                         symbol_folder,
                         tf_folder,
@@ -2030,11 +2051,8 @@ def custom_breakout():
                         technique_path,
                         report_path
                     ):
-                    import os
-                    import json
-                    import shutil
 
-                    # === 1. Load configuration from breakout.json ===
+                    # === 1. Load configuration from continuation.json ===
                     strategy_name = None
                     pending_entry_value = None
                     target_zone_name = None
@@ -2047,9 +2065,9 @@ def custom_breakout():
 
                     try:
                         with open(technique_path, 'r', encoding='utf-8') as f:
-                            technique_config = json.load(f)
+                            technique_conf_2ig = json.load(f)
                         
-                        for key, value in technique_config.items():
+                        for key, value in technique_conf_2ig.items():
                             k = key.strip().upper()
                             if k == "STRATEGY_NAME" and isinstance(value, str):
                                 strategy_name = value.strip()
@@ -2066,11 +2084,11 @@ def custom_breakout():
                             elif k == "CATEGORIES_SPLIT" and isinstance(value, str):
                                 categories = [cat.strip().lower().replace(" ", "_").replace("-", "_") for cat in value.split(",") if cat.strip()]
                         
-                        trendline_configs = technique_config.get("trendline", {})
-                        if isinstance(trendline_configs, dict):
-                            for config in trendline_configs.values():
-                                if isinstance(config, dict):
-                                    direction = config.get("DIRECTION", "").strip().lower()
+                        trendline_conf_2igs = technique_conf_2ig.get("trendline", {})
+                        if isinstance(trendline_conf_2igs, dict):
+                            for conf_2ig in trendline_conf_2igs.values():
+                                if isinstance(conf_2ig, dict):
+                                    direction = conf_2ig.get("DIRECTION", "").strip().lower()
                                     if direction == "breakout":
                                         is_breakout_strategy = True
                                     elif direction == "continuation":
@@ -2107,7 +2125,6 @@ def custom_breakout():
                     safe_symbol = symbol_folder.replace("/", "_").replace("\\", "_").replace(":", "_")
                     timeframe_filename = f"{tf_folder}.png"
 
-                    include_exit_price_categories = {"co_ords", "coords", "co_op"}
                     expected_tfs = ["5m", "15m", "30m", "1h", "4h"]
 
                     # === 3. CHART SAVING: Save in respective main folders based on direction ===
@@ -2150,7 +2167,7 @@ def custom_breakout():
                         log(f"Failed to read custom JSON: {e}", "ERROR")
                         return
 
-                    # === 5. Extract confirmed pending entries (saved under original strategy_name) ===
+                    # === 5. Extract confirmed pending entries → new structure ===
                     base_confirmed_entries = []
                     for line_id, entry in custom_data.items():
                         info = entry.get("team", {}).get("trendline_info", {})
@@ -2169,30 +2186,30 @@ def custom_breakout():
                             candle = pep.get("candle", {})
                             candle_number = candle.get("candle_number") if isinstance(candle, dict) else pep.get("candle_number")
                             time = candle.get("time") if isinstance(candle, dict) else None
-                            status = "complete"
-                            if entry_price is None:
-                                status = "missing_entry_price"
-                            elif exit_price is None and any(c in include_exit_price_categories for c in categories):
-                                status = "missing_exit_price"
-                            elif etype not in {"high", "low"}:
-                                status = "invalid_type"
 
-                            record = {
+                            if entry_price is None:
+                                continue
+
+                            order_type = "buy_limit" if etype == "high" else "sell_limit" if etype == "low" else None
+                            if order_type is None:
+                                continue
+
+                            order_record = {
+                                "market_name": symbol_folder,
+                                "timeframe": tf_folder,
                                 "entry_price": entry_price,
-                                "exit_price": exit_price,
-                                "order_type": "buy_limit" if etype == "high" else "sell_limit" if etype == "low" else None,
+                                "order_type": order_type,
                                 "candle_number": candle_number,
-                                "time": time,
-                                "line_id": line_id,
-                                "status": status
+                                "candletimestamp": time
                             }
-                            if entry_price is not None:
-                                record = {k: v for k, v in record.items() if v not in (None, "", {}, []) or k in ["entry_price", "exit_price", "status"]}
-                                base_confirmed_entries.append(record)
+                            if exit_price is not None:
+                                order_record["exit_price"] = exit_price
+
+                            base_confirmed_entries.append(order_record)
 
                     has_pending_entries = len(base_confirmed_entries) > 0
 
-                    # === 6. Extract instant orders ===
+                    # === 6. Extract instant orders → new structure ===
                     instant_target_zone_entries = []
                     instant_target_reached_entries = []
                     instant_continuation_extreme_entries = []
@@ -2206,26 +2223,30 @@ def custom_breakout():
                             continue
 
                         if active_order.get("reason") == "no active order":
-                            no_active_record = {
-                                "line_id": line_id,
+                            no_active_order_entries.append({
+                                "market_name": symbol_folder,
+                                "timeframe": tf_folder,
                                 "reason": "no active order",
                                 "order_from": active_order.get("order_from", "none")
-                            }
-                            no_active_order_entries.append(no_active_record)
+                            })
                             continue
 
                         instant_price = active_order.get("instant_entry")
-                        order_type = active_order.get("order_type")
+                        order_type_str = active_order.get("order_type")
                         order_from = active_order.get("order_from")
 
-                        if instant_price is None or order_type is None or order_from is None:
+                        if instant_price is None or order_type_str is None or order_from is None:
                             continue
 
+                        order_type = "buy" if "buy" in order_type_str.lower() else "sell"
+
                         record = {
-                            "instant_price": instant_price,
-                            "order_type": "buy" if "buy" in order_type.lower() else "sell",
-                            "line_id": line_id,
-                            "order_from": order_from,
+                            "market_name": symbol_folder,
+                            "timeframe": tf_folder,
+                            "entry_price": instant_price,
+                            "order_type": order_type,
+                            "candle_number": None,  # instant orders usually don't have candle number
+                            "candletimestamp": None,
                             "fact": active_order.get("fact", "")
                         }
 
@@ -2241,9 +2262,9 @@ def custom_breakout():
                     has_cont_ext_instant = len(instant_continuation_extreme_entries) > 0
                     has_no_active_order = len(no_active_order_entries) > 0
 
-                    # === 7. Helper: Save aggregation data ===
-                    def save_aggregation(main_strategy_name, subfolder_name, entries_list, has_entries, data_key_suffix, no_active=False):
-                        if not entries_list and not no_active:
+                    # === 7. Helper: Save aggregation data (updated structure) ===
+                    def save_aggregation(main_strategy_name, subfolder_name, entries_list, has_entries, no_active_list=None):
+                        if not entries_list and not no_active_list:
                             return
 
                         strategy_folder = os.path.join(broker_folder, main_strategy_name)
@@ -2260,13 +2281,12 @@ def custom_breakout():
                             full_path = os.path.join(cat_folder, file_name)
                             no_full_path = os.path.join(cat_folder, no_file_name)
 
-                            data_key = f"{subfolder_name}too"
+                            data_key = f"{subfolder_name}_orders"
                             markets_key = f"{subfolder_name}_markets"
-                            no_markets_key = f"no_{subfolder_name}_markets"
                             total_key = f"total_{subfolder_name}"
 
                             # Load or init main data
-                            aggregate_data = {markets_key: 0, no_markets_key: 0, total_key: 0, data_key: {}}
+                            aggregate_data = {markets_key: 0, total_key: 0, data_key: {}}
                             if os.path.exists(full_path):
                                 try:
                                     with open(full_path, 'r', encoding='utf-8') as f:
@@ -2280,13 +2300,15 @@ def custom_breakout():
 
                             if has_entries:
                                 aggregate_data[data_key][symbol_folder][tf_folder] = entries_list
-                                log(f"Saved {len(entries_list)} entries → {full_path} ({cat})", "SUCCESS")
+                                log(f"Saved {len(entries_list)} orders → {full_path} ({cat})", "SUCCESS")
                             else:
                                 aggregate_data[data_key][symbol_folder][tf_folder] = []
 
+                            # Clean up empty symbols
                             if symbol_folder in aggregate_data[data_key] and all(len(e) == 0 for e in aggregate_data[data_key][symbol_folder].values()):
                                 del aggregate_data[data_key][symbol_folder]
 
+                            # Update counts
                             total_markets = sum(1 for sym, tfs in aggregate_data[data_key].items() if any(len(e) > 0 for e in tfs.values()))
                             total_entries = sum(len(e) for sym in aggregate_data[data_key].values() for e in sym.values())
                             aggregate_data[markets_key] = total_markets
@@ -2295,45 +2317,261 @@ def custom_breakout():
                             with open(full_path, 'w', encoding='utf-8') as f:
                                 json.dump(aggregate_data, f, indent=2, ensure_ascii=False)
 
-                            # Update no_ file
-                            no_data = {no_markets_key: 0, "markets_with_no_active_order": []}
-                            if os.path.exists(no_full_path):
-                                try:
-                                    with open(no_full_path, 'r', encoding='utf-8') as f:
-                                        no_data = json.load(f)
-                                except:
-                                    pass
-                            no_data.setdefault("markets_with_no_active_order", [])
+                            # Handle no-active-order tracking
+                            if no_active_list:
+                                no_data = {"markets_with_no_active_order": [], "count": 0}
+                                if os.path.exists(no_full_path):
+                                    try:
+                                        with open(no_full_path, 'r', encoding='utf-8') as f:
+                                            no_data = json.load(f)
+                                    except:
+                                        pass
+                                no_data.setdefault("markets_with_no_active_order", [])
 
-                            symbol_has_active = symbol_folder in aggregate_data[data_key] and any(len(e) > 0 for e in aggregate_data[data_key][symbol_folder].values())
-                            if symbol_has_active:
-                                if symbol_folder in no_data["markets_with_no_active_order"]:
-                                    no_data["markets_with_no_active_order"].remove(symbol_folder)
-                            elif has_no_active_order:
-                                if symbol_folder not in no_data["markets_with_no_active_order"]:
-                                    no_data["markets_with_no_active_order"].append(symbol_folder)
+                                symbol_has_orders = symbol_folder in aggregate_data[data_key] and any(len(e) > 0 for e in aggregate_data[data_key][symbol_folder].values())
+                                if symbol_has_orders:
+                                    if symbol_folder in no_data["markets_with_no_active_order"]:
+                                        no_data["markets_with_no_active_order"].remove(symbol_folder)
+                                else:
+                                    if symbol_folder not in no_data["markets_with_no_active_order"]:
+                                        no_data["markets_with_no_active_order"].append(symbol_folder)
 
-                            no_data[no_markets_key] = len(no_data["markets_with_no_active_order"])
-                            with open(no_full_path, 'w', encoding='utf-8') as f:
-                                json.dump(no_data, f, indent=2, ensure_ascii=False)
+                                no_data["count"] = len(no_data["markets_with_no_active_order"])
+                                with open(no_full_path, 'w', encoding='utf-8') as f:
+                                    json.dump(no_data, f, indent=2, ensure_ascii=False)
 
-                    # === 8. Save Pending Entries (under original strategy_name) ===
+                    # === 8. Save Pending Entries ===
                     if pending_safe:
-                        save_aggregation(strategy_name, pending_safe, base_confirmed_entries, has_pending_entries, pending_safe)
+                        save_aggregation(strategy_name, pending_safe, base_confirmed_entries, has_pending_entries)
 
-                    # === 9. Breakout: Target Zone & Target Reached ===
+                    # === 9. Breakout: Target Zone & Target Reached Instant Orders ===
                     if is_breakout_strategy:
-                        save_aggregation(strategy_name, target_zone_safe, instant_target_zone_entries, has_tz_instant, target_zone_safe, no_active=True)
-                        save_aggregation(strategy_name, target_reached_safe, instant_target_reached_entries, has_tr_instant, target_reached_safe, no_active=True)
+                        save_aggregation(strategy_name, target_zone_safe, instant_target_zone_entries, has_tz_instant, no_active_list=no_active_order_entries if has_no_active_order else None)
+                        save_aggregation(strategy_name, target_reached_safe, instant_target_reached_entries, has_tr_instant, no_active_list=no_active_order_entries if has_no_active_order else None)
 
                     # === 10. Continuation: Extreme Interceptor Instant Orders ===
                     if is_continuation_strategy:
-                        save_aggregation(continuation_name, continuation_extreme_safe, instant_continuation_extreme_entries, has_cont_ext_instant, continuation_extreme_safe, no_active=True)
+                        save_aggregation(continuation_name, continuation_extreme_safe, instant_continuation_extreme_entries, has_cont_ext_instant, no_active_list=no_active_order_entries if has_no_active_order else None)
 
                     log(f"Categorization complete for {symbol_folder}/{tf_folder} | "
                         f"Pending: {len(base_confirmed_entries)} | "
                         f"TZ: {len(instant_target_zone_entries)} | TR: {len(instant_target_reached_entries)} | "
                         f"Cont Ext: {len(instant_continuation_extreme_entries)} | No Active: {len(no_active_order_entries)}", "SUCCESS")
+
+                def categorize_developer_technique(
+                    broker_raw_name,
+                    symbol_folder,
+                    tf_folder,
+                    chart_path,
+                    output_path,
+                    technique_path,
+                    report_path
+                ):
+                    import os
+                    import json
+                    import shutil
+                    # Assuming log is already defined elsewhere
+
+                    # === 1. Load configuration ===
+                    strategy_name = None
+                    pending_entry_value = None
+                    target_zone_name = None
+                    target_reached_name = None
+                    categories = []
+                    is_breakout_strategy = False
+
+                    try:
+                        with open(technique_path, 'r', encoding='utf-8') as f:
+                            technique_conf = json.load(f)
+                        
+                        for key, value in technique_conf.items():
+                            k = key.strip().upper()
+                            if k == "STRATEGY_NAME" and isinstance(value, str):
+                                strategy_name = value.strip()
+                            elif k == "PENDING_ENTRY" and isinstance(value, str):
+                                pending_entry_value = value.strip()
+                            elif k == "TARGET_ZONE_NAME" and isinstance(value, str):
+                                target_zone_name = value.strip()
+                            elif k == "TARGET_REACHED_NAME" and isinstance(value, str):
+                                target_reached_name = value.strip()
+                            elif k == "CATEGORIES_SPLIT" and isinstance(value, str):
+                                categories = [cat.strip().lower().replace(" ", "_").replace("-", "_") 
+                                            for cat in value.split(",") if cat.strip()]
+
+                        # Check trendline directions
+                        trendline_conf = technique_conf.get("trendline", {})
+                        if isinstance(trendline_conf, dict):
+                            for conf in trendline_conf.values():
+                                if isinstance(conf, dict):
+                                    direction = conf.get("DIRECTION", "").strip().lower()
+                                    if direction == "breakout":
+                                        is_breakout_strategy = True
+
+                        # Fallback
+                        if not strategy_name:
+                            strategy_name = os.path.basename(os.path.dirname(technique_path))
+
+                    except Exception as e:
+                        log(f"Failed to load technique JSON: {e}", "ERROR")
+                        return
+
+                    # Skip if not breakout
+                    if not is_breakout_strategy:
+                        log(f"Technique is not a breakout strategy → skipping categorization", "INFO")
+                        return
+
+                    base_dev_path = r"C:\xampp\htdocs\chronedge\synarex\chart\developers"
+                    broker_folder = os.path.join(base_dev_path, broker_raw_name)
+
+                    # Safe names for folders
+                    pending_safe = pending_entry_value.strip().replace(" ", "_") if pending_entry_value else None
+                    target_zone_safe = (target_zone_name or "Instant_Orders").strip().replace(" ", "_")
+                    target_reached_safe = (target_reached_name or "Trend_Instant_Orders").strip().replace(" ", "_")
+
+                    safe_symbol = symbol_folder.replace("/", "_").replace("\\", "_").replace(":", "_")
+                    timeframe_filename = f"{tf_folder}.png"
+
+                    # === Chart saving ===
+                    def save_chart_to_strategy(main_strategy_name):
+                        if not os.path.exists(output_path):
+                            log(f"Chart not found, skipped copy → {output_path}", "WARNING")
+                            return
+                        strategy_folder = os.path.join(broker_folder, main_strategy_name)
+                        os.makedirs(strategy_folder, exist_ok=True)
+                        chart_base_dir = os.path.join(strategy_folder, "chart")
+                        os.makedirs(chart_base_dir, exist_ok=True)
+                        market_chart_dir = os.path.join(chart_base_dir, safe_symbol)
+                        os.makedirs(market_chart_dir, exist_ok=True)
+                        destination_chart_path = os.path.join(market_chart_dir, timeframe_filename)
+                        try:
+                            shutil.copy2(output_path, destination_chart_path)
+                            log(f"Chart saved → {destination_chart_path} ({main_strategy_name})", "INFO")
+                        except Exception as e:
+                            log(f"Failed to copy chart to {main_strategy_name}: {e}", "ERROR")
+
+                    save_chart_to_strategy(strategy_name)
+
+                    # === Load report JSON ===
+                    try:
+                        with open(report_path, 'r', encoding='utf-8') as f:
+                            custom_data = json.load(f)
+                    except Exception as e:
+                        log(f"Failed to read custom JSON: {e}", "ERROR")
+                        return
+
+                    # === Extract real orders ===
+                    base_confirmed_entries = []             # Pending (Limit Orders)
+                    instant_target_zone_entries = []        # Instant from target zone
+                    instant_target_reached_entries = []     # Instant from target reached
+
+                    for line_id, entry in custom_data.items():
+                        info = entry.get("team", {}).get("trendline_info", {})
+                        if not info.get("valid", False):
+                            continue
+
+                        # Pending Logic
+                        if (info.get("pending_entry_is_full_extension") and 
+                            info.get("extreme_horizontal_level_blocker") is None and 
+                            info.get("target_zone_candle_found")):
+                            
+                            pep = info.get("pending_entry_point")
+                            if pep and isinstance(pep, dict):
+                                base_confirmed_entries.append({
+                                    "market_name": symbol_folder,
+                                    "timeframe": tf_folder,
+                                    "entry_price": pep.get("entry_price"),
+                                    "exit_price": pep.get("exit_price"),
+                                    "order_type": "buy_limit" if pep.get("type") == "high" else "sell_limit" if pep.get("type") == "low" else None,
+                                    "candle_number": pep.get("candle", {}).get("candle_number") if isinstance(pep.get("candle"), dict) else pep.get("candle_number"),
+                                    "candletimestamp": pep.get("candle", {}).get("time") if isinstance(pep.get("candle"), dict) else None
+                                })
+
+                        # Instant Logic
+                        active_order = info.get("active_instant_order", {})
+                        if isinstance(active_order, dict) and active_order.get("reason") != "no active order":
+                            order_from = active_order.get("order_from")
+                            record = {
+                                "market_name": symbol_folder,
+                                "timeframe": tf_folder,
+                                "entry_price": active_order.get("instant_entry"),
+                                "exit_price": active_order.get("exit_price"),
+                                "order_type": "buy" if "buy" in str(active_order.get("order_type")).lower() else "sell",
+                                "candle_number": None,
+                                "candletimestamp": None,
+                                "fact": active_order.get("fact", "")
+                            }
+                            if order_from in {"target_zone", "target_zone_mutuals"}:
+                                instant_target_zone_entries.append(record)
+                            elif order_from in {"target reached candle", "target reached mutual candle"}:
+                                instant_target_reached_entries.append(record)
+
+                    # === Save aggregation helper ===
+                    def save_aggregation(main_strategy_name, subfolder_name, new_entries, allow_coords=True):
+                        strategy_folder = os.path.join(broker_folder, main_strategy_name)
+                        subfolder = os.path.join(strategy_folder, subfolder_name)
+                        os.makedirs(subfolder, exist_ok=True)
+
+                        for cat in categories:
+                            if cat == "co_ords" and not allow_coords:
+                                continue
+
+                            cat_folder = os.path.join(subfolder, cat)
+                            os.makedirs(cat_folder, exist_ok=True)
+                            full_path = os.path.join(cat_folder, f"{subfolder_name}.json")
+
+                            try:
+                                if os.path.exists(full_path):
+                                    with open(full_path, 'r', encoding='utf-8') as f:
+                                        data = json.load(f)
+                                        orders = data.get("orders", [])
+                                else:
+                                    orders = []
+                            except:
+                                orders = []
+
+                            orders = [o for o in orders if not (o.get("market_name") == symbol_folder and o.get("timeframe") == tf_folder)]
+                            orders = [o for o in orders if o.get("market_name") != "none"]
+
+                            processed_new_entries = []
+                            for entry in new_entries:
+                                entry_copy = entry.copy()
+                                if cat != "co_ords":
+                                    entry_copy.pop("exit_price", None)
+                                processed_new_entries.append(entry_copy)
+
+                            orders.extend(processed_new_entries)
+
+                            real_orders = [o for o in orders if o.get("market_name") not in {"none", None}]
+                            result = {
+                                "total_orders": len(real_orders),
+                                "total_markets": len({o["market_name"] for o in real_orders}),
+                                "orders": orders
+                            }
+
+                            with open(full_path, 'w', encoding='utf-8') as f:
+                                json.dump(result, f, indent=2, ensure_ascii=False)
+
+                    # === Execution (breakout only) ===
+                    if pending_safe:
+                        save_aggregation(strategy_name, pending_safe, base_confirmed_entries, allow_coords=True)
+                    save_aggregation(strategy_name, target_zone_safe, instant_target_zone_entries, allow_coords=False)
+                    save_aggregation(strategy_name, target_reached_safe, instant_target_reached_entries, allow_coords=False)
+
+                    # === Final Placeholder Logic ===
+                    total_real = len(base_confirmed_entries) + len(instant_target_zone_entries) + len(instant_target_reached_entries)
+
+                    placeholder = [{
+                        "market_name": "none", "timeframe": "none", "entry_price": None,
+                        "order_type": "none", "candle_number": None, "candletimestamp": None, "exit_price": None
+                    }]
+
+                    if total_real == 0:
+                        if pending_safe:
+                            save_aggregation(strategy_name, pending_safe, placeholder, allow_coords=True)
+                        save_aggregation(strategy_name, target_zone_safe, placeholder, allow_coords=False)
+                        save_aggregation(strategy_name, target_reached_safe, placeholder, allow_coords=False)
+
+                    log(f"Breakout categorization complete for {symbol_folder}/{tf_folder}", "SUCCESS")                          
 
                 def trend_direction():
                     # 1. Initialize the central data store
@@ -2378,14 +2616,6 @@ def custom_breakout():
     log("=== INSTITUTIONAL TRENDLINE ENGINE v10.1 — DYNAMIC CONFIGURATION & TARGET ZONE ADDED ===", "SUCCESS")
 
 def custom_continuation():
-    import cv2
-    import numpy as np
-    import os
-    import json
-    from datetime import datetime
-    import pytz
-    import re
-
     # --- INITIAL SETUP ---
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
@@ -2538,10 +2768,7 @@ def custom_continuation():
     # ------------------------------------------------------------------
     # MAIN LOOP (with dynamic family and key loading)
     # ------------------------------------------------------------------
-    developer_brokers = {k: v for k, v in globals().get("developersdictionary", {}).items() if v.get("POSITION", "").lower() == "developer"}
-    if not developer_brokers:
-        log("No developer brokers found!", "ERROR")
-        return
+    developer_brokers = {k: v for k, v in globals().get("session", {}).items() if v.get("POSITION", "").lower() == "developer"}
     
     global_tech_data = {}
     
@@ -2626,7 +2853,7 @@ def custom_continuation():
                 tf_path = os.path.join(sym_path, tf_folder)
                 if not os.path.isdir(tf_path): continue
                 chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_candles.json")
+                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
                 output_path = os.path.join(tf_path, "chart_custom.png")
                 report_path = os.path.join(tf_path, "custom_levels.json")
                 if not all(os.path.exists(p) for p in [chart_path, json_path]):
@@ -4103,127 +4330,91 @@ def custom_continuation():
                     log(f"FINAL ENRICHMENT COMPLETE → {enriched_count} fields enriched | Direction determined from continuation.json (breakout={is_breakout_strategy})", "SUCCESS")                               
 
                 def categorize_developer_technique(
-                        broker_raw_name,
-                        symbol_folder,
-                        tf_folder,
-                        chart_path,
-                        output_path,  # This is the FINAL drawn chart (with all annotations)
-                        technique_path_2,
-                        report_path
-                    ):
+                    broker_raw_name,
+                    symbol_folder,
+                    tf_folder,
+                    chart_path,
+                    output_path,
+                    technique_path_2,
+                    report_path
+                ):
                     import os
                     import json
                     import shutil
+                    # Assuming log is already defined elsewhere
 
-                    # === 1. Load conf_2iguration from continuation.json ===
+                    # === 1. Load configuration ===
                     strategy_name = None
-                    pending_entry_value = None
-                    target_zone_name = None
-                    target_reached_name = None
-                    continuation_name = None
                     continuation_extreme_name = None
                     categories = []
-                    is_breakout_strategy = False
                     is_continuation_strategy = False
 
                     try:
                         with open(technique_path_2, 'r', encoding='utf-8') as f:
-                            technique_conf_2ig = json.load(f)
+                            technique_conf = json.load(f)
                         
-                        for key, value in technique_conf_2ig.items():
+                        for key, value in technique_conf.items():
                             k = key.strip().upper()
                             if k == "STRATEGY_NAME" and isinstance(value, str):
                                 strategy_name = value.strip()
-                            elif k == "PENDING_ENTRY" and isinstance(value, str):
-                                pending_entry_value = value.strip()
-                            elif k == "TARGET_ZONE_NAME" and isinstance(value, str):
-                                target_zone_name = value.strip()
-                            elif k == "TARGET_REACHED_NAME" and isinstance(value, str):
-                                target_reached_name = value.strip()
-                            elif k == "CONTINUATION_NAME" and isinstance(value, str):
-                                continuation_name = value.strip()
                             elif k == "CONTINUATION_EXTREME_NAME" and isinstance(value, str):
                                 continuation_extreme_name = value.strip()
                             elif k == "CATEGORIES_SPLIT" and isinstance(value, str):
-                                categories = [cat.strip().lower().replace(" ", "_").replace("-", "_") for cat in value.split(",") if cat.strip()]
-                        
-                        trendline_conf_2igs = technique_conf_2ig.get("trendline", {})
-                        if isinstance(trendline_conf_2igs, dict):
-                            for conf_2ig in trendline_conf_2igs.values():
-                                if isinstance(conf_2ig, dict):
-                                    direction = conf_2ig.get("DIRECTION", "").strip().lower()
-                                    if direction == "breakout":
-                                        is_breakout_strategy = True
-                                    elif direction == "continuation":
+                                categories = [cat.strip().lower().replace(" ", "_").replace("-", "_") 
+                                            for cat in value.split(",") if cat.strip()]
+
+                        # Check trendline directions
+                        trendline_conf = technique_conf.get("trendline", {})
+                        if isinstance(trendline_conf, dict):
+                            for conf in trendline_conf.values():
+                                if isinstance(conf, dict):
+                                    direction = conf.get("DIRECTION", "").strip().lower()
+                                    if direction == "continuation":
                                         is_continuation_strategy = True
-                        
+
+                        # Fallback
                         if not strategy_name:
                             strategy_name = os.path.basename(os.path.dirname(technique_path_2))
-                        if not continuation_name:
-                            continuation_name = f"{strategy_name}_Continuation"  # fallback if not specified
-                        if not pending_entry_value:
-                            log("No PENDING_ENTRY found → skipping aggregation", "WARNING")
+
                     except Exception as e:
                         log(f"Failed to load technique JSON: {e}", "ERROR")
                         return
 
-                    # === Early exit if no pending entry name ===
-                    if not pending_entry_value:
-                        log("No PENDING_ENTRY name → aggregation skipped but chart may still be saved", "WARNING")
-
-                    # === 2. Determine which strategies to process ===
-                    if not (is_breakout_strategy or is_continuation_strategy):
-                        log(f"Technique is neither breakout nor continuation → skipping categorization for {symbol_folder}/{tf_folder}", "INFO")
+                    # Skip if not continuation
+                    if not is_continuation_strategy:
+                        log(f"Technique is not a continuation strategy → skipping categorization", "INFO")
                         return
 
                     base_dev_path = r"C:\xampp\htdocs\chronedge\synarex\chart\developers"
                     broker_folder = os.path.join(base_dev_path, broker_raw_name)
 
-                    # Safe names
-                    pending_safe = pending_entry_value.strip().replace(" ", "_") if pending_entry_value else None
-                    target_zone_safe = (target_zone_name or "Instant_Orders").strip().replace(" ", "_")
-                    target_reached_safe = (target_reached_name or "Trend_Instant_Orders").strip().replace(" ", "_")
+                    # Safe names for folders
                     continuation_extreme_safe = (continuation_extreme_name or "Instant_Continuation").strip().replace(" ", "_")
 
                     safe_symbol = symbol_folder.replace("/", "_").replace("\\", "_").replace(":", "_")
                     timeframe_filename = f"{tf_folder}.png"
 
-                    include_exit_price_categories = {"co_ords", "coords", "co_op"}
-                    expected_tfs = ["5m", "15m", "30m", "1h", "4h"]
-
-                    # === 3. CHART SAVING: Save in respective main folders based on direction ===
+                    # === Chart saving ===
                     def save_chart_to_strategy(main_strategy_name):
                         if not os.path.exists(output_path):
                             log(f"Chart not found, skipped copy → {output_path}", "WARNING")
                             return
-
                         strategy_folder = os.path.join(broker_folder, main_strategy_name)
                         os.makedirs(strategy_folder, exist_ok=True)
-
                         chart_base_dir = os.path.join(strategy_folder, "chart")
                         os.makedirs(chart_base_dir, exist_ok=True)
-
                         market_chart_dir = os.path.join(chart_base_dir, safe_symbol)
                         os.makedirs(market_chart_dir, exist_ok=True)
-
                         destination_chart_path = os.path.join(market_chart_dir, timeframe_filename)
-
                         try:
                             shutil.copy2(output_path, destination_chart_path)
                             log(f"Chart saved → {destination_chart_path} ({main_strategy_name})", "INFO")
                         except Exception as e:
                             log(f"Failed to copy chart to {main_strategy_name}: {e}", "ERROR")
 
-                    if is_breakout_strategy:
-                        save_chart_to_strategy(strategy_name)
-                    if is_continuation_strategy:
-                        save_chart_to_strategy(continuation_name)
+                    save_chart_to_strategy(strategy_name)
 
-                    # If no pending → stop aggregation but chart already saved
-                    if not pending_entry_value:
-                        return
-
-                    # === 4. Load report JSON ===
+                    # === Load report JSON ===
                     try:
                         with open(report_path, 'r', encoding='utf-8') as f:
                             custom_data = json.load(f)
@@ -4231,190 +4422,93 @@ def custom_continuation():
                         log(f"Failed to read custom JSON: {e}", "ERROR")
                         return
 
-                    # === 5. Extract conf_2irmed pending entries (saved under original strategy_name) ===
-                    base_conf_2irmed_entries = []
+                    # === Extract real orders ===
+                    instant_continuation_extreme_entries = []  # Instant extreme (continuation)
+
                     for line_id, entry in custom_data.items():
                         info = entry.get("team", {}).get("trendline_info", {})
                         if not info.get("valid", False):
                             continue
-                        full_extension = info.get("pending_entry_is_full_extension", False)
-                        blocker = info.get("extreme_horizontal_level_blocker")
-                        target_zone_found = info.get("target_zone_candle_found", False)
-                        if full_extension and blocker is None and target_zone_found:
-                            pep = info.get("pending_entry_point")
-                            if not pep or not isinstance(pep, dict):
-                                continue
-                            entry_price = pep.get("entry_price")
-                            exit_price = pep.get("exit_price")
-                            etype = pep.get("type")
-                            candle = pep.get("candle", {})
-                            candle_number = candle.get("candle_number") if isinstance(candle, dict) else pep.get("candle_number")
-                            time = candle.get("time") if isinstance(candle, dict) else None
-                            status = "complete"
-                            if entry_price is None:
-                                status = "missing_entry_price"
-                            elif exit_price is None and any(c in include_exit_price_categories for c in categories):
-                                status = "missing_exit_price"
-                            elif etype not in {"high", "low"}:
-                                status = "invalid_type"
 
-                            record = {
-                                "entry_price": entry_price,
-                                "exit_price": exit_price,
-                                "order_type": "buy_limit" if etype == "high" else "sell_limit" if etype == "low" else None,
-                                "candle_number": candle_number,
-                                "time": time,
-                                "line_id": line_id,
-                                "status": status
-                            }
-                            if entry_price is not None:
-                                record = {k: v for k, v in record.items() if v not in (None, "", {}, []) or k in ["entry_price", "exit_price", "status"]}
-                                base_conf_2irmed_entries.append(record)
-
-                    has_pending_entries = len(base_conf_2irmed_entries) > 0
-
-                    # === 6. Extract instant orders ===
-                    instant_target_zone_entries = []
-                    instant_target_reached_entries = []
-                    instant_continuation_extreme_entries = []
-                    no_active_order_entries = []
-
-                    for line_id, entry in custom_data.items():
-                        info = entry.get("team", {}).get("trendline_info", {})
+                        # Instant Logic — only collect extreme for continuation
                         active_order = info.get("active_instant_order", {})
-
-                        if not isinstance(active_order, dict):
-                            continue
-
-                        if active_order.get("reason") == "no active order":
-                            no_active_record = {
-                                "line_id": line_id,
-                                "reason": "no active order",
-                                "order_from": active_order.get("order_from", "none")
+                        if isinstance(active_order, dict) and active_order.get("reason") != "no active order":
+                            order_from = active_order.get("order_from")
+                            record = {
+                                "market_name": symbol_folder,
+                                "timeframe": tf_folder,
+                                "entry_price": active_order.get("instant_entry"),
+                                "order_type": "buy" if "buy" in str(active_order.get("order_type")).lower() else "sell",
+                                "candle_number": None,
+                                "candletimestamp": None,
+                                "fact": active_order.get("fact", ""),
+                                "exit_price": active_order.get("exit_price")
                             }
-                            no_active_order_entries.append(no_active_record)
-                            continue
+                            if order_from in {"extreme interceptor", "extreme_interceptor_mutual"}:
+                                instant_continuation_extreme_entries.append(record)
 
-                        instant_price = active_order.get("instant_entry")
-                        order_type = active_order.get("order_type")
-                        order_from = active_order.get("order_from")
-
-                        if instant_price is None or order_type is None or order_from is None:
-                            continue
-
-                        record = {
-                            "instant_price": instant_price,
-                            "order_type": "buy" if "buy" in order_type.lower() else "sell",
-                            "line_id": line_id,
-                            "order_from": order_from,
-                            "fact": active_order.get("fact", "")
-                        }
-
-                        if order_from in {"target_zone", "target_zone_mutuals"}:
-                            instant_target_zone_entries.append(record)
-                        elif order_from in {"target reached candle", "target reached mutual candle"}:
-                            instant_target_reached_entries.append(record)
-                        elif order_from in {"extreme interceptor", "extreme_interceptor_mutual"}:
-                            instant_continuation_extreme_entries.append(record)
-
-                    has_tz_instant = len(instant_target_zone_entries) > 0
-                    has_tr_instant = len(instant_target_reached_entries) > 0
-                    has_cont_ext_instant = len(instant_continuation_extreme_entries) > 0
-                    has_no_active_order = len(no_active_order_entries) > 0
-
-                    # === 7. Helper: Save aggregation data ===
-                    def save_aggregation(main_strategy_name, subfolder_name, entries_list, has_entries, data_key_suffix, no_active=False):
-                        if not entries_list and not no_active:
-                            return
-
+                    # === Save aggregation helper ===
+                    def save_aggregation(main_strategy_name, subfolder_name, new_entries, allow_coords=True):
                         strategy_folder = os.path.join(broker_folder, main_strategy_name)
                         subfolder = os.path.join(strategy_folder, subfolder_name)
                         os.makedirs(subfolder, exist_ok=True)
 
                         for cat in categories:
+                            if cat == "co_ords" and not allow_coords:
+                                continue
+
                             cat_folder = os.path.join(subfolder, cat)
                             os.makedirs(cat_folder, exist_ok=True)
+                            full_path = os.path.join(cat_folder, f"{subfolder_name}.json")
 
-                            file_name = f"{subfolder_name}.json"
-                            no_file_name = f"no_{subfolder_name}.json"
-
-                            full_path = os.path.join(cat_folder, file_name)
-                            no_full_path = os.path.join(cat_folder, no_file_name)
-
-                            data_key = f"{subfolder_name}too"
-                            markets_key = f"{subfolder_name}_markets"
-                            no_markets_key = f"no_{subfolder_name}_markets"
-                            total_key = f"total_{subfolder_name}"
-
-                            # Load or init main data
-                            aggregate_data = {markets_key: 0, no_markets_key: 0, total_key: 0, data_key: {}}
-                            if os.path.exists(full_path):
-                                try:
+                            try:
+                                if os.path.exists(full_path):
                                     with open(full_path, 'r', encoding='utf-8') as f:
-                                        aggregate_data = json.load(f)
-                                except:
-                                    pass
+                                        data = json.load(f)
+                                        orders = data.get("orders", [])
+                                else:
+                                    orders = []
+                            except:
+                                orders = []
 
-                            aggregate_data.setdefault(data_key, {})
-                            if symbol_folder not in aggregate_data[data_key]:
-                                aggregate_data[data_key][symbol_folder] = {tf: [] for tf in expected_tfs}
+                            orders = [o for o in orders if not (o.get("market_name") == symbol_folder and o.get("timeframe") == tf_folder)]
+                            orders = [o for o in orders if o.get("market_name") != "none"]
 
-                            if has_entries:
-                                aggregate_data[data_key][symbol_folder][tf_folder] = entries_list
-                                log(f"Saved {len(entries_list)} entries → {full_path} ({cat})", "SUCCESS")
-                            else:
-                                aggregate_data[data_key][symbol_folder][tf_folder] = []
+                            processed_new_entries = []
+                            for entry in new_entries:
+                                entry_copy = entry.copy()
+                                if cat != "co_ords":
+                                    entry_copy.pop("exit_price", None)
+                                processed_new_entries.append(entry_copy)
 
-                            if symbol_folder in aggregate_data[data_key] and all(len(e) == 0 for e in aggregate_data[data_key][symbol_folder].values()):
-                                del aggregate_data[data_key][symbol_folder]
+                            orders.extend(processed_new_entries)
 
-                            total_markets = sum(1 for sym, tfs in aggregate_data[data_key].items() if any(len(e) > 0 for e in tfs.values()))
-                            total_entries = sum(len(e) for sym in aggregate_data[data_key].values() for e in sym.values())
-                            aggregate_data[markets_key] = total_markets
-                            aggregate_data[total_key] = total_entries
+                            real_orders = [o for o in orders if o.get("market_name") not in {"none", None}]
+                            result = {
+                                "total_orders": len(real_orders),
+                                "total_markets": len({o["market_name"] for o in real_orders}),
+                                "orders": orders
+                            }
 
                             with open(full_path, 'w', encoding='utf-8') as f:
-                                json.dump(aggregate_data, f, indent=2, ensure_ascii=False)
+                                json.dump(result, f, indent=2, ensure_ascii=False)
 
-                            # Update no_ file
-                            no_data = {no_markets_key: 0, "markets_with_no_active_order": []}
-                            if os.path.exists(no_full_path):
-                                try:
-                                    with open(no_full_path, 'r', encoding='utf-8') as f:
-                                        no_data = json.load(f)
-                                except:
-                                    pass
-                            no_data.setdefault("markets_with_no_active_order", [])
+                    # === Execution (continuation only) ===
+                    save_aggregation(strategy_name, continuation_extreme_safe, instant_continuation_extreme_entries, allow_coords=False)
 
-                            symbol_has_active = symbol_folder in aggregate_data[data_key] and any(len(e) > 0 for e in aggregate_data[data_key][symbol_folder].values())
-                            if symbol_has_active:
-                                if symbol_folder in no_data["markets_with_no_active_order"]:
-                                    no_data["markets_with_no_active_order"].remove(symbol_folder)
-                            elif has_no_active_order:
-                                if symbol_folder not in no_data["markets_with_no_active_order"]:
-                                    no_data["markets_with_no_active_order"].append(symbol_folder)
+                    # === Final Placeholder Logic ===
+                    total_real = len(instant_continuation_extreme_entries)
 
-                            no_data[no_markets_key] = len(no_data["markets_with_no_active_order"])
-                            with open(no_full_path, 'w', encoding='utf-8') as f:
-                                json.dump(no_data, f, indent=2, ensure_ascii=False)
+                    placeholder = [{
+                        "market_name": "none", "timeframe": "none", "entry_price": None,
+                        "order_type": "none", "candle_number": None, "candletimestamp": None, "exit_price": None
+                    }]
 
-                    # === 8. Save Pending Entries (under original strategy_name) ===
-                    if pending_safe:
-                        save_aggregation(strategy_name, pending_safe, base_conf_2irmed_entries, has_pending_entries, pending_safe)
+                    if total_real == 0:
+                        save_aggregation(strategy_name, continuation_extreme_safe, placeholder, allow_coords=False)
 
-                    # === 9. Breakout: Target Zone & Target Reached ===
-                    if is_breakout_strategy:
-                        save_aggregation(strategy_name, target_zone_safe, instant_target_zone_entries, has_tz_instant, target_zone_safe, no_active=True)
-                        save_aggregation(strategy_name, target_reached_safe, instant_target_reached_entries, has_tr_instant, target_reached_safe, no_active=True)
-
-                    # === 10. Continuation: Extreme Interceptor Instant Orders ===
-                    if is_continuation_strategy:
-                        save_aggregation(continuation_name, continuation_extreme_safe, instant_continuation_extreme_entries, has_cont_ext_instant, continuation_extreme_safe, no_active=True)
-
-                    log(f"Categorization complete for {symbol_folder}/{tf_folder} | "
-                        f"Pending: {len(base_conf_2irmed_entries)} | "
-                        f"TZ: {len(instant_target_zone_entries)} | TR: {len(instant_target_reached_entries)} | "
-                        f"Cont Ext: {len(instant_continuation_extreme_entries)} | No Active: {len(no_active_order_entries)}", "SUCCESS")
+                    log(f"Continuation categorization complete for {symbol_folder}/{tf_folder}", "SUCCESS")
+  
 
                 def trend_direction():
                     # 1. Initialize the central data store
@@ -4463,13 +4557,5 @@ def custom_continuation():
 
 
 
-if __name__ == "__main__":
-    custom_breakout()
-    custom_continuation()
-
-
-
-
-                
 
 

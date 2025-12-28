@@ -23,8 +23,8 @@ import re
 
 
 
-def load_brokers_dictionary():
-    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json"
+def load_developers_dictionary():
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
     """Load brokers config from JSON file with error handling and fallback."""
     if not os.path.exists(BROKERS_JSON_PATH):
         print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND! Using empty config.", "CRITICAL")
@@ -35,7 +35,7 @@ def load_brokers_dictionary():
             data = json.load(f)
         
         # Optional: Convert numeric strings back to int where needed
-        for broker_name, cfg in data.items():
+        for user_brokerid, cfg in data.items():
             if "LOGIN_ID" in cfg and isinstance(cfg["LOGIN_ID"], str):
                 cfg["LOGIN_ID"] = cfg["LOGIN_ID"].strip()
             if "RISKREWARD" in cfg and isinstance(cfg["RISKREWARD"], (str, float)):
@@ -45,12 +45,12 @@ def load_brokers_dictionary():
         return data
 
     except json.JSONDecodeError as e:
-        print(f"Invalid JSON in brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Invalid JSON in developersdictionary.json: {e}", "CRITICAL")
         return {}
     except Exception as e:
-        print(f"Failed to load brokersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load developersdictionary.json: {e}", "CRITICAL")
         return {}
-brokersdictionary = load_brokers_dictionary()
+developersdictionary = load_developers_dictionary()
 
 
 def log_and_print(message, level="INFO"):
@@ -76,14 +76,14 @@ def _0_50_4_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -111,7 +111,7 @@ def _0_50_4_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_0_50cent_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_0_50cent_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -227,7 +227,7 @@ def _0_50_4_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -257,7 +257,7 @@ def _0_50_4_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $0.60) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -271,13 +271,13 @@ def _0_50_4_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -334,7 +334,7 @@ def _0_50_4_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -497,7 +497,7 @@ def _0_50_4_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -523,14 +523,14 @@ def _0_50_4_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -764,12 +764,12 @@ def _0_50_4_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_0_50cent_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_0_50cent_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -812,7 +812,7 @@ def _0_50_4_orders():
         log_and_print("0_50cent_usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -829,10 +829,10 @@ def _0_50_4_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -1012,7 +1012,7 @@ def _0_50_4_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -1045,14 +1045,14 @@ def _4_8_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -1080,7 +1080,7 @@ def _4_8_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_1_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_1_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -1196,7 +1196,7 @@ def _4_8_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -1226,7 +1226,7 @@ def _4_8_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $1.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -1240,13 +1240,13 @@ def _4_8_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -1291,7 +1291,7 @@ def _4_8_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -1454,7 +1454,7 @@ def _4_8_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -1480,14 +1480,14 @@ def _4_8_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -1721,12 +1721,12 @@ def _4_8_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_1_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_1_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -1769,7 +1769,7 @@ def _4_8_orders():
         log_and_print("1usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -1786,10 +1786,10 @@ def _4_8_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -1969,7 +1969,7 @@ def _4_8_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -2002,14 +2002,14 @@ def _8_12_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -2037,7 +2037,7 @@ def _8_12_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_2_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_2_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -2153,7 +2153,7 @@ def _8_12_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -2183,7 +2183,7 @@ def _8_12_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $2.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -2197,13 +2197,13 @@ def _8_12_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -2245,7 +2245,7 @@ def _8_12_orders():
 
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -2408,7 +2408,7 @@ def _8_12_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -2434,14 +2434,14 @@ def _8_12_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -2675,12 +2675,12 @@ def _8_12_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_2_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_2_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -2723,7 +2723,7 @@ def _8_12_orders():
         log_and_print("2usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -2740,10 +2740,10 @@ def _8_12_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -2923,7 +2923,7 @@ def _8_12_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -2956,14 +2956,14 @@ def _12_20_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -2991,7 +2991,7 @@ def _12_20_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_3_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_3_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -3107,7 +3107,7 @@ def _12_20_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -3137,7 +3137,7 @@ def _12_20_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $3.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -3151,13 +3151,13 @@ def _12_20_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -3203,7 +3203,7 @@ def _12_20_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -3366,7 +3366,7 @@ def _12_20_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -3392,14 +3392,14 @@ def _12_20_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -3633,12 +3633,12 @@ def _12_20_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_3_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_3_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -3681,7 +3681,7 @@ def _12_20_orders():
         log_and_print("3USD RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -3698,10 +3698,10 @@ def _12_20_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -3881,7 +3881,7 @@ def _12_20_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -3914,14 +3914,14 @@ def _20_80_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -3949,7 +3949,7 @@ def _20_80_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_4_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_4_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -4065,7 +4065,7 @@ def _20_80_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -4095,7 +4095,7 @@ def _20_80_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $4.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -4109,13 +4109,13 @@ def _20_80_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -4159,7 +4159,7 @@ def _20_80_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -4322,7 +4322,7 @@ def _20_80_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -4348,14 +4348,14 @@ def _20_80_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -4589,12 +4589,12 @@ def _20_80_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_4_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_4_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -4637,7 +4637,7 @@ def _20_80_orders():
         log_and_print("4usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -4654,10 +4654,10 @@ def _20_80_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -4837,7 +4837,7 @@ def _20_80_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -4870,14 +4870,14 @@ def _80_160_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -4905,7 +4905,7 @@ def _80_160_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_8_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_8_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -5021,7 +5021,7 @@ def _80_160_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -5051,7 +5051,7 @@ def _80_160_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $8.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -5065,13 +5065,13 @@ def _80_160_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -5115,7 +5115,7 @@ def _80_160_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -5278,7 +5278,7 @@ def _80_160_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -5304,14 +5304,14 @@ def _80_160_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -5545,12 +5545,12 @@ def _80_160_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_8_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_8_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -5593,7 +5593,7 @@ def _80_160_orders():
         log_and_print("8usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -5610,10 +5610,10 @@ def _80_160_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -5793,7 +5793,7 @@ def _80_160_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -5827,14 +5827,14 @@ def _160_320_orders():
         INPUT_FILE = "hightolow.json"
         OUTPUT_FILE = "live_risk_profit_all.json"
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID = cfg["LOGIN_ID"]
             PASSWORD = cfg["PASSWORD"]
             SERVER = cfg["SERVER"]
 
             log_and_print(f"\n{'='*60}", "INFO")
-            log_and_print(f"PROCESSING BROKER: {broker_name.upper()}", "INFO")
+            log_and_print(f"PROCESSING BROKER: {user_brokerid.upper()}", "INFO")
             log_and_print(f"{'='*60}", "INFO")
 
             # ------------------- CONNECT TO MT5 -------------------
@@ -5862,7 +5862,7 @@ def _160_320_orders():
             log_and_print(f"Connected → Balance: ${balance:.2f} {currency}", "INFO")
 
             # ------------------- LOAD JSON -------------------
-            json_path = Path(BASE_DIR) / broker_name / "risk_16_usd" / INPUT_FILE
+            json_path = Path(BASE_DIR) / user_brokerid / "risk_16_usd" / INPUT_FILE
             if not json_path.exists():
                 log_and_print(f"JSON not found: {json_path}", "ERROR")
                 mt5.shutdown()
@@ -5978,7 +5978,7 @@ def _160_320_orders():
             # ------------------- SAVE OUTPUT: live_risk_profit_all.json -------------------
             out_path = json_path.parent / OUTPUT_FILE
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "account_currency": currency,
                 "generated_at": datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z"),
                 "source_file": str(json_path),
@@ -6008,7 +6008,7 @@ def _160_320_orders():
                 log_and_print(f"Failed to overwrite input JSON: {e}", "ERROR")
 
             mt5.shutdown()
-            log_and_print(f"FINISHED {broker_name} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
+            log_and_print(f"FINISHED {user_brokerid} → {kept}/{total} valid orders in BOTH files", "SUCCESS")
 
         log_and_print("\nALL DONE – BAD ORDERS (> $16.10) DELETED FROM INPUT & OUTPUT!", "SUCCESS")
         return True
@@ -6022,13 +6022,13 @@ def _160_320_orders():
         REPORT_SUFFIX = "forex_order_report.json"
         ISSUES_FILE = "ordersissues.json"
 
-        for broker_name, broker_cfg in brokersdictionary.items():
+        for user_brokerid, broker_cfg in developersdictionary.items():
             TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
             LOGIN_ID = broker_cfg["LOGIN_ID"]
             PASSWORD = broker_cfg["PASSWORD"]
             SERVER = broker_cfg["SERVER"]
 
-            log_and_print(f"Processing broker: {broker_name} (Balance $12–$20 mode)", "INFO")
+            log_and_print(f"Processing broker: {user_brokerid} (Balance $12–$20 mode)", "INFO")
 
             # === MT5 Init ===
             if not os.path.exists(TERMINAL_PATH):
@@ -6072,7 +6072,7 @@ def _160_320_orders():
             log_and_print(f"Balance: ${balance:.2f} → Using {RISK_FOLDER} + {STRATEGY_FILE}", "INFO")
 
             # === Load hightolow.json ===
-            file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+            file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
             if not file_path.exists():
                 log_and_print(f"File not found: {file_path}", "WARNING")
                 mt5.shutdown()
@@ -6235,7 +6235,7 @@ def _160_320_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
+                f"{user_brokerid} DONE → Placed: {placed}, Failed: {failed}, Skipped: {skipped}",
                 "SUCCESS"
             )
 
@@ -6261,14 +6261,14 @@ def _160_320_orders():
 
         five_days_ago = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg["TERMINAL_PATH"]
             LOGIN_ID     = cfg["LOGIN_ID"]
             PASSWORD     = cfg["PASSWORD"]
             SERVER       = cfg["SERVER"]
 
             log_and_print(f"\n{'='*80}", "INFO")
-            log_and_print(f"BROKER: {broker_name.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
+            log_and_print(f"BROKER: {user_brokerid.upper()} | FULL DUPLICATE + RISK GUARD", "INFO")
             log_and_print(f"{'='*80}", "INFO")
 
             # ---------- MT5 Init ----------
@@ -6502,12 +6502,12 @@ def _160_320_orders():
                         f"PEND DUP: {cancelled_pend_dup} | POS DUP: {cancelled_pos_dup} | SKIPPED: {skipped}", "WARNING")
 
             # === SAVE REPORT ===
-            out_dir = Path(BASE_DIR) / broker_name / "risk_16_usd"
+            out_dir = Path(BASE_DIR) / user_brokerid / "risk_16_usd"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / REPORT_NAME
 
             report = {
-                "broker": broker_name,
+                "broker": user_brokerid,
                 "checked_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "max_risk_usd": MAX_RISK_USD,
                 "lookback_days": LOOKBACK_DAYS,
@@ -6550,7 +6550,7 @@ def _160_320_orders():
         log_and_print("16usd RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
         log_and_print(f"{'='*80}", "INFO")
 
-        for broker_name, cfg in brokersdictionary.items():
+        for user_brokerid, cfg in developersdictionary.items():
             TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
             LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
             PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -6567,10 +6567,10 @@ def _160_320_orders():
 
             if riskreward_raw is None:
                 riskreward_raw = 2
-                log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+                log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
             log_and_print(
-                f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+                f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
                 f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
             )
 
@@ -6750,7 +6750,7 @@ def _160_320_orders():
 
             mt5.shutdown()
             log_and_print(
-                f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+                f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
                 f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
                 "SUCCESS"
             )
@@ -7025,42 +7025,42 @@ def collect_all_brokers_limit_orders():
 
     broker_symbol_data = {}
 
-    for broker_name, cfg in brokersdictionary.items():
+    for user_brokerid, cfg in developersdictionary.items():
         TERMINAL_PATH = cfg["TERMINAL_PATH"]
         LOGIN_ID     = cfg["LOGIN_ID"]
         PASSWORD     = cfg["PASSWORD"]
         SERVER       = cfg["SERVER"]
 
-        log_and_print(f"\n→ Broker: {broker_name.upper()}", "INFO")
+        log_and_print(f"\n→ Broker: {user_brokerid.upper()}", "INFO")
 
         if not os.path.exists(TERMINAL_PATH):
             log_and_print(f"Terminal not found: {TERMINAL_PATH}", "ERROR")
-            failed_brokers.append(broker_name)
+            failed_brokers.append(user_brokerid)
             continue
 
         if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
             log_and_print(f"MT5 init failed: {mt5.last_error()}", "ERROR")
-            failed_brokers.append(broker_name)
+            failed_brokers.append(user_brokerid)
             continue
 
         if not mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER):
             log_and_print(f"Login failed: {mt5.last_error()}", "ERROR")
             mt5.shutdown()
-            failed_brokers.append(broker_name)
+            failed_brokers.append(user_brokerid)
             continue
 
         account = mt5.account_info()
         if not account:
             log_and_print("No account info.", "ERROR")
             mt5.shutdown()
-            failed_brokers.append(broker_name)
+            failed_brokers.append(user_brokerid)
             continue
 
         balance = account.balance
         currency = account.currency
         log_and_print(f"Connected: Account {account.login} | Balance: ${balance:.2f} {currency}", "INFO")
 
-        broker_symbol_data[broker_name] = {}
+        broker_symbol_data[user_brokerid] = {}
         current_time = datetime.now(TZ)
 
         # ========== 1. PENDING LIMIT ORDERS ==========
@@ -7079,8 +7079,8 @@ def collect_all_brokers_limit_orders():
             log_and_print(f"Found {pending_count} pending limit order(s).", "INFO")
             for order in pending_orders:
                 symbol = order.symbol
-                if symbol not in broker_symbol_data[broker_name]:
-                    broker_symbol_data[broker_name][symbol] = {
+                if symbol not in broker_symbol_data[user_brokerid]:
+                    broker_symbol_data[user_brokerid][symbol] = {
                         "has_open": False,
                         "pending": {"BUY": None, "SELL": None},
                         "account_login": account.login,
@@ -7102,7 +7102,7 @@ def collect_all_brokers_limit_orders():
                     currency=currency
                 )
 
-                broker_symbol_data[broker_name][symbol]["pending"][side_key] = {
+                broker_symbol_data[user_brokerid][symbol]["pending"][side_key] = {
                     "ticket": order.ticket,
                     "volume": order.volume_current,
                     "entry_price": round(order.price_open, 6),
@@ -7143,18 +7143,18 @@ def collect_all_brokers_limit_orders():
                     currency=currency
                 )
 
-                if symbol not in broker_symbol_data[broker_name]:
-                    broker_symbol_data[broker_name][symbol] = {
+                if symbol not in broker_symbol_data[user_brokerid]:
+                    broker_symbol_data[user_brokerid][symbol] = {
                         "has_open": True,
                         "pending": {"BUY": None, "SELL": None},
                         "account_login": account.login,
                         "account_currency": currency
                     }
                 else:
-                    broker_symbol_data[broker_name][symbol]["has_open"] = True
+                    broker_symbol_data[user_brokerid][symbol]["has_open"] = True
 
                 all_open_positions.append({
-                    "broker": broker_name,
+                    "broker": user_brokerid,
                     "account_login": account.login,
                     "account_currency": currency,
                     "ticket": pos.ticket,
@@ -7217,7 +7217,7 @@ def collect_all_brokers_limit_orders():
                 )
 
                 entry = {
-                    "broker": broker_name,
+                    "broker": user_brokerid,
                     "account_login": account.login,
                     "account_currency": currency,
                     "ticket": h.ticket,
@@ -7245,11 +7245,11 @@ def collect_all_brokers_limit_orders():
 
         # ========== 4. DELETE STALE PENDING ORDERS (>2 days) ==========
         if to_delete:
-            log_and_print(f"Attempting to delete {len(to_delete)} stale limit order(s) on {broker_name.upper()}...", "INFO")
+            log_and_print(f"Attempting to delete {len(to_delete)} stale limit order(s) on {user_brokerid.upper()}...", "INFO")
             if mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER, timeout=30000):
                 mt5.login(int(LOGIN_ID), password=PASSWORD, server=SERVER)
                 for ticket, symbol, order_type, age_str in to_delete:
-                    sym_data = broker_symbol_data[broker_name].get(symbol, {})
+                    sym_data = broker_symbol_data[user_brokerid].get(symbol, {})
                     if sym_data.get("has_open", False):
                         log_and_print(f"SKIPPED: {symbol} [{order_type}] has open position", "INFO")
                         continue
@@ -7258,8 +7258,8 @@ def collect_all_brokers_limit_orders():
                     if not current_orders:
                         log_and_print(f"SKIP: Order {ticket} no longer exists", "INFO")
                         side = "BUY" if "BUY" in order_type else "SELL"
-                        if broker_symbol_data[broker_name].get(symbol, {}).get("pending", {}).get(side):
-                            broker_symbol_data[broker_name][symbol]["pending"][side] = None
+                        if broker_symbol_data[user_brokerid].get(symbol, {}).get("pending", {}).get(side):
+                            broker_symbol_data[user_brokerid][symbol]["pending"][side] = None
                         continue
 
                     request = {"action": mt5.TRADE_ACTION_REMOVE, "order": ticket}
@@ -7268,13 +7268,13 @@ def collect_all_brokers_limit_orders():
                         log_and_print(f"DELETED: {symbol} [{order_type}] | Ticket: {ticket} | Age: {age_str}", "SUCCESS")
                         deleted_count += 1
                         side = "BUY" if "BUY" in order_type else "SELL"
-                        broker_symbol_data[broker_name][symbol]["pending"][side] = None
+                        broker_symbol_data[user_brokerid][symbol]["pending"][side] = None
                     else:
                         log_and_print(f"FAILED: {symbol} [{order_type}] | Ticket: {ticket} | {result.comment}", "ERROR")
                 mt5.shutdown()
 
     # ========== POST-PROCESS: Build final pending list ==========
-    for broker_name, symbols_data in broker_symbol_data.items():
+    for user_brokerid, symbols_data in broker_symbol_data.items():
         for symbol, data in symbols_data.items():
             has_open = data["has_open"]
             pending = data["pending"]
@@ -7282,7 +7282,7 @@ def collect_all_brokers_limit_orders():
                 if not order:
                     continue
                 base_entry = {
-                    "broker": broker_name,
+                    "broker": user_brokerid,
                     "account_login": data["account_login"],
                     "account_currency": data["account_currency"],
                     "ticket": order["ticket"],
@@ -7306,7 +7306,7 @@ def collect_all_brokers_limit_orders():
     # ========== FINAL SUMMARY & SAVE ==========
     log_and_print(f"\n{'='*100}", "SUCCESS")
     log_and_print(f"COLLECTION COMPLETE", "SUCCESS")
-    log_and_print(f"Total Brokers: {len(brokersdictionary)} | Failed: {len(failed_brokers)}", "INFO")
+    log_and_print(f"Total Brokers: {len(developersdictionary)} | Failed: {len(failed_brokers)}", "INFO")
     if failed_brokers:
         log_and_print(f"Failed: {', '.join(failed_brokers)}", "WARNING")
     log_and_print(f"Pending Limit Orders: {len(all_pending_orders)}", "INFO")
@@ -7316,7 +7316,7 @@ def collect_all_brokers_limit_orders():
 
     report = {
         "generated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "total_brokers": len(brokersdictionary),
+        "total_brokers": len(developersdictionary),
         "failed_brokers": failed_brokers,
         "cleanup": {"stale_orders_deleted": deleted_count},
         "history_window_seconds": MAX_HISTORY_SECONDS,
@@ -7387,15 +7387,15 @@ def deduplicate_pending_orders():
         return (not better, reason)  # True → keep existing
 
     # ------------------------------------------------------------------ #
-    for broker_name, broker_cfg in brokersdictionary.items():
+    for user_brokerid, broker_cfg in developersdictionary.items():
         account_type = broker_cfg.get("ACCOUNT", "").lower()
         if account_type not in ("demo", "real"):
-            log_and_print(f"Skipping {broker_name} (account type: {account_type})", "INFO")
+            log_and_print(f"Skipping {user_brokerid} (account type: {account_type})", "INFO")
             continue
 
         strategy_key = broker_cfg.get("STRATEGY", "").lower()
         if strategy_key and strategy_key not in ("lowtohigh", "hightolow"):
-            log_and_print(f"{broker_name}: Unknown STRATEGY '{strategy_key}' – using oldest ticket", "WARNING")
+            log_and_print(f"{user_brokerid}: Unknown STRATEGY '{strategy_key}' – using oldest ticket", "WARNING")
             strategy_key = ""
 
         TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
@@ -7403,20 +7403,20 @@ def deduplicate_pending_orders():
         PASSWORD      = broker_cfg["PASSWORD"]
         SERVER        = broker_cfg["SERVER"]
 
-        log_and_print(f"Deduplicating pending orders for {broker_name} ({account_type})", "INFO")
+        log_and_print(f"Deduplicating pending orders for {user_brokerid} ({account_type})", "INFO")
 
         # ------------------- MT5 connection -------------------
         if not os.path.exists(TERMINAL_PATH):
-            log_and_print(f"{broker_name}: Terminal path missing", "ERROR")
+            log_and_print(f"{user_brokerid}: Terminal path missing", "ERROR")
             continue
 
         if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD,
                               server=SERVER, timeout=30000):
-            log_and_print(f"{broker_name}: MT5 init failed: {mt5.last_error()}", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 init failed: {mt5.last_error()}", "ERROR")
             continue
 
         if not mt5.login(login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
-            log_and_print(f"{broker_name}: MT5 login failed: {mt5.last_error()}", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 login failed: {mt5.last_error()}", "ERROR")
             mt5.shutdown()
             continue
 
@@ -7466,7 +7466,7 @@ def deduplicate_pending_orders():
                         err_msg = del_res.comment
 
                     log_and_print(
-                        f"{broker_name} | {symbol} {type_str} "
+                        f"{user_brokerid} | {symbol} {type_str} "
                         f"ticket {order['ticket']} @ {order['price']} → {status} "
                         f"(running { 'BUY' if new_dir==1 else 'SELL' } position)",
                         "INFO" if status == "DELETED" else "WARNING"
@@ -7515,7 +7515,7 @@ def deduplicate_pending_orders():
                     err_msg = del_res.comment
 
                 log_and_print(
-                    f"{broker_name} | {symbol} {type_str} "
+                    f"{user_brokerid} | {symbol} {type_str} "
                     f"ticket {to_delete['ticket']} @ {to_delete['price']} → {status} | {reason}",
                     "INFO" if status == "DELETED" else "WARNING"
                 )
@@ -7541,7 +7541,7 @@ def deduplicate_pending_orders():
             total_kept += 1  # one survivor
 
         # ------------------- Save reports -------------------
-        broker_dir = Path(BASE_INPUT_DIR) / broker_name
+        broker_dir = Path(BASE_INPUT_DIR) / user_brokerid
         dedup_file = broker_dir / DEDUP_REPORT
         try:
             existing = json.load(dedup_file.open("r", encoding="utf-8")) if dedup_file.exists() else []
@@ -7552,7 +7552,7 @@ def deduplicate_pending_orders():
             with dedup_file.open("w", encoding="utf-8") as f:
                 json.dump(all_report, f, indent=2)
         except Exception as e:
-            log_and_print(f"{broker_name}: Failed to write {DEDUP_REPORT}: {e}", "ERROR")
+            log_and_print(f"{user_brokerid}: Failed to write {DEDUP_REPORT}: {e}", "ERROR")
 
         issues_path = broker_dir / ISSUES_FILE
         try:
@@ -7560,11 +7560,11 @@ def deduplicate_pending_orders():
             with issues_path.open("w", encoding="utf-8") as f:
                 json.dump(existing_issues + issues_list, f, indent=2)
         except Exception as e:
-            log_and_print(f"{broker_name}: Failed to update {ISSUES_FILE}: {e}", "ERROR")
+            log_and_print(f"{user_brokerid}: Failed to update {ISSUES_FILE}: {e}", "ERROR")
 
         mt5.shutdown()
         log_and_print(
-            f"{broker_name}: Deduplication complete – Kept: {total_kept}, Deleted: {total_deleted}",
+            f"{user_brokerid}: Deduplication complete – Kept: {total_kept}, Deleted: {total_deleted}",
             "SUCCESS"
         )
 
@@ -7657,18 +7657,18 @@ def BreakevenRunningPositions():
             return False
 
     # ------------------------------------------------------------------ #
-    for broker_name, cfg in brokersdictionary.items():
+    for user_brokerid, cfg in developersdictionary.items():
         # ---- MT5 Connection ------------------------------------------------
         if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
                               password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
-            log_and_print(f"{broker_name}: MT5 init failed", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 init failed", "ERROR")
             continue
         if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
-            log_and_print(f"{broker_name}: MT5 login failed", "ERROR")
+            log_and_print(f"{user_brokerid}: MT5 login failed", "ERROR")
             mt5.shutdown()
             continue
 
-        broker_dir = Path(BASE_INPUT_DIR) / broker_name
+        broker_dir = Path(BASE_INPUT_DIR) / user_brokerid
         report_path = broker_dir / BREAKEVEN_REPORT
         issues_path = broker_dir / ISSUES_FILE
 
@@ -7679,7 +7679,7 @@ def BreakevenRunningPositions():
                 with report_path.open("r", encoding="utf-8") as f:
                     existing_report = json.load(f)
             except Exception as e:
-                log_and_print(f"{broker_name}: Failed to load breakeven_report.json – {e}", "WARNING")
+                log_and_print(f"{user_brokerid}: Failed to load breakeven_report.json – {e}", "WARNING")
 
         issues = []
         now = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z")
@@ -7726,7 +7726,7 @@ def BreakevenRunningPositions():
 
             # Base block
             block = [
-                f"┌─ {broker_name} ─ {sym} ─ {typ} (ticket {pos.ticket})",
+                f"┌─ {user_brokerid} ─ {sym} ─ {typ} (ticket {pos.ticket})",
                 f"│ Entry : {pos.price_open:.{info.digits}f}   SL : {pos.sl:.{info.digits}f}   TP : {pos.tp:.{info.digits}f}",
                 f"│ Now   : {cur_price:.{info.digits}f}"
             ]
@@ -7796,7 +7796,7 @@ def BreakevenRunningPositions():
                 be_050   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_2, is_buy)
 
                 block = [
-                    f"┌─ {broker_name} ─ {sym} ─ PENDING {typ}",
+                    f"┌─ {user_brokerid} ─ {sym} ─ PENDING {typ}",
                     f"│ Entry : {o['price']:.{info.digits}f}   SL : {o['sl']:.{info.digits}f}   TP : {o['tp']:.{info.digits}f}",
                     f"│ Target 1 → {r1_price:.{info.digits}f}  |  BE @ 0.25 → {be_025:.{info.digits}f}",
                     f"│ Target 2 → {r2_price:.{info.digits}f}  |  BE @ 0.50 → {be_050:.{info.digits}f}",
@@ -7815,7 +7815,7 @@ def BreakevenRunningPositions():
 
         mt5.shutdown()
         log_and_print(
-            f"{broker_name}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
+            f"{user_brokerid}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
             "SUCCESS"
         )
 
@@ -7837,7 +7837,7 @@ def risk_reward_ratio_levels():
     log_and_print("RATIO LEVELS + TP UPDATE (PENDING + RUNNING) – CONSISTENCY: N×R | MARTINGALE: 1R", "INFO")
     log_and_print(f"{'='*80}", "INFO")
 
-    for broker_name, cfg in brokersdictionary.items():
+    for user_brokerid, cfg in developersdictionary.items():
         TERMINAL_PATH = cfg.get("TERMINAL_PATH") or cfg.get("terminal_path")
         LOGIN_ID      = cfg.get("LOGIN_ID")      or cfg.get("login_id")
         PASSWORD      = cfg.get("PASSWORD")      or cfg.get("password")
@@ -7854,10 +7854,10 @@ def risk_reward_ratio_levels():
 
         if riskreward_raw is None:
             riskreward_raw = 2
-            log_and_print(f"{broker_name}: 'riskreward' not found → using default 2R", "WARNING")
+            log_and_print(f"{user_brokerid}: 'riskreward' not found → using default 2R", "WARNING")
 
         log_and_print(
-            f"\nProcessing broker: {broker_name} | Scale: {SCALE.upper()} | "
+            f"\nProcessing broker: {user_brokerid} | Scale: {SCALE.upper()} | "
             f"Strategy: {STRATEGY.upper()} | riskreward: {riskreward_raw}R", "INFO"
         )
 
@@ -8031,7 +8031,7 @@ def risk_reward_ratio_levels():
 
         mt5.shutdown()
         log_and_print(
-            f"{broker_name} → {len(processed_symbols)} symbol(s) | "
+            f"{user_brokerid} → {len(processed_symbols)} symbol(s) | "
             f"{updated_count} TP(s) set to {effective_rr}R [{SCALE.upper()}]",
             "SUCCESS"
         )
@@ -8062,7 +8062,7 @@ def martingale_enforcement():
     log_and_print("MARTINGALE ENFORCER v5.2 – SMART KILL + HISTORY SCALING", "INFO")
     log_and_print(f"{'='*100}", "INFO")
 
-    for broker_name, cfg in brokersdictionary.items():
+    for user_brokerid, cfg in developersdictionary.items():
         SCALE = (cfg.get("SCALE") or cfg.get("scale") or "").lower()
         if SCALE != "martingale":
             continue
@@ -8077,7 +8077,7 @@ def martingale_enforcement():
         if not allowed:
             continue
 
-        log_and_print(f"\n{broker_name.upper()} → LOCKING TO: {', '.join(sorted(allowed)).upper()}", "INFO")
+        log_and_print(f"\n{user_brokerid.upper()} → LOCKING TO: {', '.join(sorted(allowed)).upper()}", "INFO")
 
         # ------------------------------------------------------------------ #
         # 1. CONNECT / RECONNECT
@@ -8313,7 +8313,7 @@ def martingale_enforcement():
         # ------------------------------------------------------------------ #
         # 7. FINAL REPORT
         # ------------------------------------------------------------------ #
-        log_and_print(f"\n{broker_name.upper()} → ENFORCEMENT COMPLETE", "SUCCESS")
+        log_and_print(f"\n{user_brokerid.upper()} → ENFORCEMENT COMPLETE", "SUCCESS")
         log_and_print(f"   REMOVED     : {killed}", "SUCCESS")
         log_and_print(f"   SKIPPED     : {skipped} (market closed / safe)", "INFO")
         log_and_print(f"   Failed      : {failed}", "WARNING")
@@ -8330,13 +8330,13 @@ def place_2usd_orders():
     REPORT_SUFFIX = "forex_order_report.json"
     ISSUES_FILE = "ordersissues.json"
 
-    for broker_name, broker_cfg in brokersdictionary.items():
+    for user_brokerid, broker_cfg in developersdictionary.items():
         TERMINAL_PATH = broker_cfg["TERMINAL_PATH"]
         LOGIN_ID = broker_cfg["LOGIN_ID"]
         PASSWORD = broker_cfg["PASSWORD"]
         SERVER = broker_cfg["SERVER"]
 
-        log_and_print(f"Processing broker: {broker_name} (Balance $8–$11.99 → 2 USD risk mode)", "INFO")
+        log_and_print(f"Processing broker: {user_brokerid} (Balance $8–$11.99 → 2 USD risk mode)", "INFO")
 
         # === MT5 Init ===
         if not os.path.exists(TERMINAL_PATH):
@@ -8376,7 +8376,7 @@ def place_2usd_orders():
         log_and_print(f"Account valid → Proceeding with {RISK_FOLDER} strategy", "INFO")
 
         # === Load hightolow.json ===
-        file_path = Path(BASE_INPUT_DIR) / broker_name / RISK_FOLDER / STRATEGY_FILE
+        file_path = Path(BASE_INPUT_DIR) / user_brokerid / RISK_FOLDER / STRATEGY_FILE
         if not file_path.exists():
             log_and_print(f"Strategy file not found: {file_path}", "WARNING")
             mt5.shutdown()
@@ -8579,7 +8579,7 @@ def place_2usd_orders():
             log_and_print(f"Failed to save issues: {e}", "ERROR")
 
         mt5.shutdown()
-        log_and_print(f"{broker_name} → Placed: {placed} | Failed: {failed} | Skipped: {skipped}", "SUCCESS")
+        log_and_print(f"{user_brokerid} → Placed: {placed} | Failed: {failed} | Skipped: {skipped}", "SUCCESS")
 
     log_and_print("All 2 USD risk accounts processed successfully.", "SUCCESS")
     return True
@@ -8741,16 +8741,16 @@ def purge_non_allowed_orders():
 
     # ========================= CANCEL PENDING LIMIT ORDERS IN MT5 =========================
     total_removed_pending = 0
-    for broker_name, cfg in brokersdictionary.items():  # Assuming you have this dict defined globally
-        print(f"[PURGE] Connecting to {broker_name} to cancel non-allowed pending orders...")
+    for user_brokerid, cfg in developersdictionary.items():  # Assuming you have this dict defined globally
+        print(f"[PURGE] Connecting to {user_brokerid} to cancel non-allowed pending orders...")
 
         if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
                               password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=60000):
-            print(f"[PURGE] {broker_name}: MT5 initialize failed")
+            print(f"[PURGE] {user_brokerid}: MT5 initialize failed")
             continue
 
         if not mt5.login(int(cfg["LOGIN_ID"]), password=cfg["PASSWORD"], server=cfg["SERVER"]):
-            print(f"[PURGE] {broker_name}: Login failed")
+            print(f"[PURGE] {user_brokerid}: Login failed")
             mt5.shutdown()
             continue
 
@@ -8803,7 +8803,7 @@ def purge_non_allowed_orders():
                         "sl": order.sl,
                         "tp": order.tp,
                         "purged_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "broker": broker_name,
+                        "broker": user_brokerid,
                         "resolved_symbol": resolved,
                         "detected_asset_class": asset_class,
                         "reason": f"LIMITED asset class '{asset_class}' – not in whitelist",
@@ -8812,7 +8812,7 @@ def purge_non_allowed_orders():
                 else:
                     print(f"  [FAILED CANCEL] {sym} (ticket {order.ticket}) – {result.comment if result else 'No result'}")
 
-        print(f"[PURGE] {broker_name}: Canceled {canceled_this_broker} non-allowed pending orders.")
+        print(f"[PURGE] {user_brokerid}: Canceled {canceled_this_broker} non-allowed pending orders.")
         mt5.shutdown()
 
     # ========================= FINAL REPORT =========================
@@ -8839,15 +8839,15 @@ def purge_non_allowed_orders():
 
     return total_removed == 0
 
-def print_broker_names():
+def print_user_brokerids():
     base_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
     
     if not os.path.exists(base_path):
         print(f"ERROR: Base directory does not exist:\n    {base_path}")
         return
     
-    if not brokersdictionary:
-        print("No brokers found in brokersdictionary.")
+    if not developersdictionary:
+        print("No brokers found in developersdictionary.")
         return
 
     print("Configured Brokers & Folder Check:")
@@ -8858,21 +8858,21 @@ def print_broker_names():
     existing = 0
     missing = 0
     
-    for broker_name in brokersdictionary.keys():
-        configured_names.add(broker_name.strip())
-        safe_broker_name = "".join(c if c not in r'\/:*?"<>|' else "_" for c in broker_name.strip())
-        folder_path = os.path.join(base_path, safe_broker_name)
+    for user_brokerid in developersdictionary.keys():
+        configured_names.add(user_brokerid.strip())
+        safe_user_brokerid = "".join(c if c not in r'\/:*?"<>|' else "_" for c in user_brokerid.strip())
+        folder_path = os.path.join(base_path, safe_user_brokerid)
         
         exists = os.path.isdir(folder_path)
         marker = "Success" if exists else "Error"
         status = "EXISTS" if exists else "MISSING"
         
-        print(f"{marker} {broker_name.ljust(30)} → {status}")
+        print(f"{marker} {user_brokerid.ljust(30)} → {status}")
         print(f"    Path: {folder_path}\n")
         
         broker_details.append({
-            'full': broker_name.strip(),
-            'safe': safe_broker_name,
+            'full': user_brokerid.strip(),
+            'safe': safe_user_brokerid,
             'exists': exists
         })
         
@@ -8882,7 +8882,7 @@ def print_broker_names():
             missing += 1
     
     print("=" * 90)
-    print(f"Total configured: {len(brokersdictionary)} broker(s) | "
+    print(f"Total configured: {len(developersdictionary)} broker(s) | "
           f"{existing} folder(s) exist | {missing} missing")
 
     # ——————————————————————————————
@@ -8956,7 +8956,7 @@ def print_broker_names():
         print(f"\nReminder: {missing} configured broker(s) are missing their folder!")
 
 def main():
-    print_broker_names()
+    print_user_brokerids()
     collect_all_brokers_limit_orders()
     _12_20_orders()
     _0_50_4_orders()

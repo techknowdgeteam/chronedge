@@ -22,13 +22,14 @@
         {"symbol": "ETHUSD", "volume": 0.02, "risk": 4}
     ]
   },
-  "basketindices": {
+  "basket_indices": {
     "limited": true,
     "allowed": [
-        {"symbol": "AUD Basket", "volume": 0.01, "risk": 4},
-        {"symbol": "GPB Basket", "volume": 0.01, "risk": 4},
-        {"symbol": "USD Basket", "volume": 0.01, "risk": 4},
-        {"symbol": "Gold Basket", "volume": 0.01, "risk": 4}
+      {"symbol": "AUD Basket", "volume": 0.01, "risk": 4},
+      {"symbol": "GBP Basket", "volume": 0.01, "risk": 4},
+      {"symbol": "USD Basket", "volume": 0.01, "risk": 4},
+      {"symbol": "Gold Basket", "volume": 0.01, "risk": 4},
+      {"symbol": "EUR Basket", "volume": 0.01, "risk": 4}
     ]
   },
   "indices": {
@@ -48,19 +49,11 @@
         {"symbol": "xauusd", "volume": 0.01, "risk": 16}
     ]
   },
-  "etfs": {
-    "limited": false,
-    "allowed": []
-  },
   "equities": {
     "limited": false,
     "allowed": []
   },
   "energies": {
-    "limited": false,
-    "allowed": []
-  },
-  "commodities": {
     "limited": false,
     "allowed": []
   }
