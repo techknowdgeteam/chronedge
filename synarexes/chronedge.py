@@ -151,39 +151,102 @@ def get_symbols():
     log_and_print(f"Retrieved {len(available_symbols)} symbols", "INFO")
     return available_symbols, error_log
 
+
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
-    """Fetch OHLCV data for a given symbol and timeframe."""
+    """
+    Fetch OHLCV data for a given symbol and timeframe with detailed diagnostics.
+    
+    Returns:
+        df (pd.DataFrame or None), error_log (list of dicts)
+    """
     error_log = []
-    if not mt5.symbol_select(symbol, True):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    timestamp = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S.%f%z')
+
+    broker_name = mt5.terminal_info().name if mt5.terminal_info() else "unknown"
+
+    # --- Step 1: Ensure symbol is selected (with retry) ---
+    selected = False
+    for attempt in range(3):
+        if mt5.symbol_select(symbol, True):
+            selected = True
+            break
+        time.sleep(0.5)  # small delay before retry
+
+    if not selected:
+        last_err = mt5.last_error()
+        err_msg = f"FAILED symbol_select('{symbol}') after 3 attempts: {last_err}"
+        log_and_print(err_msg, "ERROR")
         error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to select symbol {symbol}: {mt5.last_error()}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
+            "timestamp": timestamp,
+            "symbol": symbol,
+            "timeframe": mt5_timeframe,
+            "requested_bars": bars,
+            "error": err_msg,
+            "broker": broker_name
         })
         save_errors(error_log)
-        log_and_print(f"Failed to select symbol {symbol}: {mt5.last_error()}", "ERROR")
         return None, error_log
 
+    # --- Step 2: Try to copy rates ---
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, bars)
-    if rates is None or len(rates) == 0:
+
+    if rates is None:
+        last_err = mt5.last_error()
+        err_msg = f"copy_rates_from_pos returned None for {symbol} (TF: {mt5_timeframe}): {last_err}"
+        log_and_print(err_msg, "ERROR")
         error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to retrieve rates for {symbol}: {mt5.last_error()}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
+            "timestamp": timestamp,
+            "symbol": symbol,
+            "timeframe": mt5_timeframe,
+            "requested_bars": bars,
+            "error": err_msg,
+            "broker": broker_name
         })
         save_errors(error_log)
-        log_and_print(f"Failed to retrieve rates for {symbol}: {mt5.last_error()}", "ERROR")
         return None, error_log
 
+    available_bars = len(rates)
+    if available_bars == 0:
+        err_msg = f"NO historical data available for {symbol} on this timeframe (requested {bars} bars, got 0)"
+        log_and_print(err_msg, "WARNING")
+        error_log.append({
+            "timestamp": timestamp,
+            "symbol": symbol,
+            "timeframe": mt5_timeframe,
+            "requested_bars": bars,
+            "available_bars": 0,
+            "error": "No bars returned (likely broker limitation on higher timeframes)",
+            "broker": broker_name
+        })
+        save_errors(error_log)
+        return None, error_log
+
+    # --- Success path ---
+    if available_bars < bars:
+        log_msg = (f"Partial data: {symbol} → requested {bars} bars, "
+                   f"but only {available_bars} available (common on higher TFs like 1h/4h)")
+        log_and_print(log_msg, "WARNING")
+    else:
+        log_and_print(f"Fetched {available_bars} bars for {symbol}", "INFO")
+
+    # Convert to DataFrame
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s")
     df = df.set_index("time")
+
+    # Clean and standardize dtypes
     df = df.astype({
-        "open": float, "high": float, "low": float, "close": float,
-        "tick_volume": float, "spread": int, "real_volume": float
+        "open": float,
+        "high": float,
+        "low": float,
+        "close": float,
+        "tick_volume": float,
+        "spread": int,
+        "real_volume": float
     })
     df.rename(columns={"tick_volume": "volume"}, inplace=True)
-    log_and_print(f"OHLCV data fetched for {symbol}", "INFO")
+
     return df, error_log
 
 def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
@@ -236,17 +299,19 @@ def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
         log_and_print(f"Failed to identify PH/PL: {str(e)}", "ERROR")
         return [], [], error_log
 
-
-def save_oldest_newest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels):
-    """
-    Save all candles + highlight the SECOND-MOST-RECENT candle (candle_number = 1)
-    as 'x' in previous latest candle with age in days/hours.
-    """
+def save_oldest_newest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels, n_left, n_right):
     error_log = []
-    all_json_path = os.path.join(timeframe_folder, "all_oldest_newest_candles.json")
-    latest_json_path = os.path.join(timeframe_folder, "previous_oldest_newest_latestcandle.json")
     
-    # Use Lagos timezone consistently
+    # === Define and Create Subfolder ===
+    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
+    if not os.path.exists(target_subfolder):
+        os.makedirs(target_subfolder)
+    
+    # === UPDATED: Dynamic Filename Logic ===
+    dynamic_filename = f"old_new_l{n_left}_r{n_right}.json"
+    all_json_path = os.path.join(target_subfolder, dynamic_filename)
+    latest_json_path = os.path.join(target_subfolder, "oldest_newest_latestcandle.json")
+    
     lagos_tz = pytz.timezone('Africa/Lagos')
     now = datetime.now(lagos_tz)
 
@@ -254,96 +319,71 @@ def save_oldest_newest(df, symbol, timeframe_str, timeframe_folder, ph_labels, p
         if len(df) < 2:
             error_msg = f"Not enough data for {symbol} ({timeframe_str})"
             log_and_print(error_msg, "ERROR")
-            error_log.append({
-                "error": error_msg,
-                "timestamp": now.isoformat()
-            })
+            error_log.append({"error": error_msg, "timestamp": now.isoformat()})
             save_errors(error_log)
             return error_log
 
-        # === 1. Prepare PH/PL lookup ===
+        # 1. Prepare PH/PL lookup
         ph_dict = {t: label for label, _, t in ph_labels}
         pl_dict = {t: label for label, _, t in pl_labels}
 
-        # === 2. Save ALL candles (oldest = 0) ===
+        # 2. Save ALL candles
         all_candles = []
-        for i, (ts, row) in enumerate(df[::-1].iterrows()):  # newest first → reverse → oldest first
+        for i, (ts, row) in enumerate(df[::-1].iterrows()):
             candle = row.to_dict()
             candle.update({
                 "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,  # 0 = oldest, 1 = second-most-recent, ..., N-1 = most recent
+                "candle_number": i,
                 "symbol": symbol,
                 "timeframe": timeframe_str,
                 "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL'
+                "is_pl": pl_dict.get(ts, None) == 'PL',
+                "neighbor_left": n_left,   # Optional: added for data tracking
+                "neighbor_right": n_right  # Optional: added for data tracking
             })
             all_candles.append(candle)
 
-        # Write all candles
+        # Write all candles to the dynamic filename (e.g., l10_r15.json)
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # === 3. Save CANDLE #1 (second-most-recent) as id: "x" with age ===
-        if len(all_candles) < 2:
-            raise ValueError("Expected at least 2 candles to extract candle_number 1")
-
-        previous_latest_candle = all_candles[1].copy()  # candle_number == 1
-        candle_time_str = previous_latest_candle["time"]
-        candle_time = datetime.strptime(candle_time_str, '%Y-%m-%d %H:%M:%S')
-        candle_time = lagos_tz.localize(candle_time)  # Make timezone-aware
-
-        # Calculate age
+        # 3. Save CANDLE #1 (second-most-recent)
+        previous_latest_candle = all_candles[1].copy()
+        candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
+        
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
+        age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
 
-        if total_hours <= 24:
-            age_str = f"{int(total_hours)} hour{'s' if int(total_hours) != 1 else ''} old"
-        else:
-            days = int(total_hours // 24)
-            age_str = f"{days} day{'s' if days != 1 else ''} old"
+        previous_latest_candle.update({"age": age_str, "id": "x"})
+        if "candle_number" in previous_latest_candle: del previous_latest_candle["candle_number"]
 
-        # Add age field
-        previous_latest_candle["age"] = age_str
-        previous_latest_candle["id"] = "x"
-
-        # Remove candle_number as per original logic
-        if "candle_number" in previous_latest_candle:
-            del previous_latest_candle["candle_number"]
-
-        # Write the highlighted candle
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        # === 4. LOG SUCCESS ===
-        log_and_print(
-            f"SAVED {symbol} {timeframe_str}: "
-            f"all_oldest_newest_candles.json ({len(all_candles)} candles) + "
-            f"previouslatestcandle.json (candle_number=1 → id='x', {age_str})",
-            "SUCCESS"
-        )
+        log_and_print(f"SAVED: {dynamic_filename} for {symbol} {timeframe_str}", "SUCCESS")
 
     except Exception as e:
         err = f"save_oldest_newest failed: {str(e)}"
         log_and_print(err, "ERROR")
-        error_log.append({
-            "error": err,
-            "timestamp": now.isoformat()
-        })
+        error_log.append({"error": err, "timestamp": now.isoformat()})
         save_errors(error_log)
 
     return error_log
 
-def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels):
-    """
-    Save all candles + highlight the SECOND-MOST-RECENT candle (candle_number = 1)
-    as 'x' in previous latest candle  with age in days/hours.
-    Candles are now numbered with 0 = newest (most recent), 1 = previous, etc.
-    """
+def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels, n_left, n_right):
     error_log = []
-    all_json_path = os.path.join(timeframe_folder, "all_newest_oldest_candles.json")
-    latest_json_path = os.path.join(timeframe_folder, "previous_newest_oldest_latestcandle.json")
     
-    # Use Lagos timezone consistently
+    # === Define and Create Subfolder ===
+    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
+    if not os.path.exists(target_subfolder):
+        os.makedirs(target_subfolder, exist_ok=True)
+    
+    # === UPDATED: Dynamic Filename Logic ===
+    dynamic_filename = f"new_old_l{n_left}_r{n_right}.json"
+    all_json_path = os.path.join(target_subfolder, dynamic_filename)
+    latest_json_path = os.path.join(target_subfolder, "newest_oldest_latestcandle.json")
+    
     lagos_tz = pytz.timezone('Africa/Lagos')
     now = datetime.now(lagos_tz)
 
@@ -351,505 +391,156 @@ def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, p
         if len(df) < 2:
             error_msg = f"Not enough data for {symbol} ({timeframe_str})"
             log_and_print(error_msg, "ERROR")
-            error_log.append({
-                "error": error_msg,
-                "timestamp": now.isoformat()
-            })
+            error_log.append({"error": error_msg, "timestamp": now.isoformat()})
             save_errors(error_log)
             return error_log
 
-        # === 1. Prepare PH/PL lookup ===
+        # 1. Prepare PH/PL lookup
         ph_dict = {t: label for label, _, t in ph_labels}
         pl_dict = {t: label for label, _, t in pl_labels}
 
-        # === 2. Save ALL candles (newest = 0) ===
+        # 2. Save ALL candles (newest = 0)
         all_candles = []
-        # Iterate from newest to oldest (no reverse needed)
-        for i, (ts, row) in enumerate(df.iterrows()):  # newest first
+        for i, (ts, row) in enumerate(df.iterrows()):
             candle = row.to_dict()
             candle.update({
                 "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,  # 0 = newest, 1 = previous, 2 = two ago, ...
+                "candle_number": i,
                 "symbol": symbol,
                 "timeframe": timeframe_str,
                 "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL'
+                "is_pl": pl_dict.get(ts, None) == 'PL',
+                "neighbor_left": n_left,
+                "neighbor_right": n_right
             })
             all_candles.append(candle)
 
-        # Write all candles
+        # Write to dynamic filename
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # === 3. Save CANDLE #1 (second-most-recent, i.e., one candle ago) as id: "x" with age ===
-        if len(all_candles) < 2:
-            raise ValueError("Expected at least 2 candles to extract candle_number 1")
+        # 3. Save CANDLE #1 logic
+        previous_latest_candle = all_candles[1].copy()
+        candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
 
-        previous_latest_candle = all_candles[1].copy()  # candle_number == 1 (previous candle)
-        candle_time_str = previous_latest_candle["time"]
-        candle_time = datetime.strptime(candle_time_str, '%Y-%m-%d %H:%M:%S')
-        candle_time = lagos_tz.localize(candle_time)  # Make timezone-aware
-
-        # Calculate age
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
+        age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
 
-        if total_hours <= 24:
-            age_str = f"{int(total_hours)} hour{'s' if int(total_hours) != 1 else ''} old"
-        else:
-            days = int(total_hours // 24)
-            age_str = f"{days} day{'s' if days != 1 else ''} old"
-
-        # Add age field
-        previous_latest_candle["age"] = age_str
-        previous_latest_candle["id"] = "x"
-
-        # Remove candle_number as per original logic
-        if "candle_number" in previous_latest_candle:
+        previous_latest_candle.update({"age": age_str, "id": "x"})
+        if "candle_number" in previous_latest_candle: 
             del previous_latest_candle["candle_number"]
 
-        # Write the highlighted candle
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        # === 4. LOG SUCCESS ===
-        log_and_print(
-            f"SAVED {symbol} {timeframe_str}: "
-            f"all_newest_oldest_candles.json ({len(all_candles)} candles, 0=newest) + "
-            f"previouslatestcandle.json (candle_number=1 → id='x', {age_str})",
-            "SUCCESS"
-        )
+        log_and_print(f"SAVED: {dynamic_filename} for {symbol}", "SUCCESS")
 
     except Exception as e:
         err = f"save newest to oldest failed: {str(e)}"
         log_and_print(err, "ERROR")
-        error_log.append({
-            "error": err,
-            "timestamp": now.isoformat()
-        })
+        error_log.append({"error": err, "timestamp": now.isoformat()})
         save_errors(error_log)
 
     return error_log
 
-def save_next_oldest_newest_candles(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels):
-    """
-    Save candles that appear **after** the previous-latest candle (the one saved as 'x')
-    i.e. candles with timestamp > timestamp of 'x' candle
-    into <timeframe_folder>/next_oldest_newest_candles.json
-    """
+
+def generate_and_save_chart(df, symbol, timeframe_str, timeframe_folder, neighborcandles_left, neighborcandles_right):
+    """Generate master charts and automatically save smaller sliced versions (pieces) in large format with dynamic naming."""
     error_log = []
-    next_json_path = os.path.join(timeframe_folder, "next_oldest_newest_candles.json")
-
-    try:
-        if len(df) < 3:
-            return error_log  # need at least: old, previous-latest, and one new
-
-        # === 1. Build full ordered list: oldest → newest (candle_number 0 = oldest) ===
-        ph_dict = {t: label for label, _, t in ph_labels}
-        pl_dict = {t: label for label, _, t in pl_labels}
-
-        ordered_candles = []
-        for i, (ts, row) in enumerate(df[::-1].iterrows()):  # newest first → reverse → oldest first
-            candle = row.to_dict()
-            candle.update({
-                "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,  # 0 = oldest, 1 = second-most-recent (x), ..., N-1 = newest
-                "symbol": symbol,
-                "timeframe": timeframe_str,
-                "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL'
-            })
-            ordered_candles.append(candle)
-
-        # === 2. Find the timestamp of the 'x' candle (candle_number == 1) ===
-        if len(ordered_candles) < 2:
-            return error_log
-
-        x_candle_time_str = ordered_candles[1]["time"]  # candle_number 1
-        x_time = datetime.strptime(x_candle_time_str, '%Y-%m-%d %H:%M:%S')
-
-        # === 3. Collect all candles with timestamp > x_time ===
-        next_candles = []
-        for candle in ordered_candles:
-            candle_time = datetime.strptime(candle["time"], '%Y-%m-%d %H:%M:%S')
-            if candle_time > x_time:
-                # Keep original candle_number (from full history context)
-                next_candles.append(candle)
-
-        if not next_candles:
-            return error_log  # No newer candles
-
-        # === 4. Write ===
-        with open(next_json_path, 'w', encoding='utf-8') as f:
-            json.dump(next_candles, f, indent=4)
-
-        log_and_print(
-            f"SAVED {symbol} {timeframe_str}: next_oldest_newest_candles.json "
-            f"({len(next_candles)} candles after {x_candle_time_str})",
-            "SUCCESS"
-        )
-
-    except Exception as e:
-        err = f"save_next_oldest_newest_candles failed: {str(e)}"
-        log_and_print(err, "ERROR")
-        error_log.append({
-            "error": err,
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).isoformat()
-        })
-        save_errors(error_log)
-
-    return error_log
-
-def save_next_newest_oldest_candles(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels):
-    """
-    Save candles that appear **after** the previous-latest candle (the one saved as 'x')
-    i.e. candles with timestamp > timestamp of 'x' candle
-    into <timeframe_folder>/next_newest_oldest_candles.json
-    """
-    error_log = []
-    next_json_path = os.path.join(timeframe_folder, "next_newest_oldest_candles.json")
-
-    try:
-        if len(df) < 3:
-            return error_log  # need at least: old, previous-latest, and one new
-
-        # === 1. Build full ordered list: oldest → newest (candle_number 0 = oldest) ===
-        ph_dict = {t: label for label, _, t in ph_labels}
-        pl_dict = {t: label for label, _, t in pl_labels}
-
-        ordered_candles = []
-        for i, (ts, row) in enumerate(df[::-1].iterrows()):  # newest first → reverse → oldest first
-            candle = row.to_dict()
-            candle.update({
-                "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,  # 0 = oldest, 1 = second-most-recent (x), ..., N-1 = newest
-                "symbol": symbol,
-                "timeframe": timeframe_str,
-                "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL'
-            })
-            ordered_candles.append(candle)
-
-        # === 2. Find the timestamp of the 'x' candle (candle_number == 1) ===
-        if len(ordered_candles) < 2:
-            return error_log
-
-        x_candle_time_str = ordered_candles[1]["time"]  # candle_number 1
-        x_time = datetime.strptime(x_candle_time_str, '%Y-%m-%d %H:%M:%S')
-
-        # === 3. Collect all candles with timestamp > x_time ===
-        next_candles = []
-        for candle in ordered_candles:
-            candle_time = datetime.strptime(candle["time"], '%Y-%m-%d %H:%M:%S')
-            if candle_time > x_time:
-                # Keep original candle_number (from full history context)
-                next_candles.append(candle)
-
-        if not next_candles:
-            return error_log  # No newer candles
-
-        # === 4. Write ===
-        with open(next_json_path, 'w', encoding='utf-8') as f:
-            json.dump(next_candles, f, indent=4)
-
-        log_and_print(
-            f"SAVED {symbol} {timeframe_str}: next_newest_oldest_candles.json "
-            f"({len(next_candles)} candles after {x_candle_time_str})",
-            "SUCCESS"
-        )
-
-    except Exception as e:
-        err = f"save_next newest_candles failed: {str(e)}"
-        log_and_print(err, "ERROR")
-        error_log.append({
-            "error": err,
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).isoformat()
-        })
-        save_errors(error_log)
-
-    return error_log
-
-def generate_and_save_oldest_newest_chart(df, symbol, timeframe_str, timeframe_folder, neighborcandles_left, neighborcandles_right):
-    """Generate and save a basic candlestick chart as chart.png, then identify PH/PL and save as chartanalysed.png with markers."""
-    error_log = []
+    
+    # === Define Paths ===
     chart_path = os.path.join(timeframe_folder, "chart.png")
-    chart_analysed_path = os.path.join(timeframe_folder, "oldest_newest.png")
-    trendline_log_json_path = os.path.join(timeframe_folder, "trendline_log.json")
-    trendline_log = []
+    
+    # Dynamic filename for the analysed chart (e.g., oldest_newest_l10_r15.png)
+    dynamic_chart_name = f"l{neighborcandles_left}_r{neighborcandles_right}.png"
+    chart_analysed_path = os.path.join(timeframe_folder, dynamic_chart_name)
+    
+    candle_slices = [11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 121, 131, 141, 151, 161, 171, 181, 191, 201, 221, 231, 241, 251, 261, 271, 281, 291, 301] 
 
     try:
         custom_style = mpf.make_mpf_style(
             base_mpl_style="default",
             marketcolors=mpf.make_marketcolors(
-                up="green",
-                down="red",
-                edge="inherit",
-                wick={"up": "green", "down": "red"},
-                volume="gray"
+                up="green", down="red", edge="inherit",
+                wick={"up": "green", "down": "red"}, volume="gray"
             )
         )
 
-        # Step 1: Save basic candlestick chart as chart.png
+        # --- STEP 1: Process Slices with LARGE SCREEN format ---
+        for count in candle_slices:
+            if len(df) >= count:
+                df_slice = df.iloc[-count:]
+                slice_path = os.path.join(timeframe_folder, f"chart_{count}.png")
+                
+                fig, axlist = mpf.plot(
+                    df_slice, type='candle', style=custom_style,
+                    title=f"{symbol} ({timeframe_str}) - Last {count}",
+                    returnfig=True, warn_too_much_data=5000
+                )
+                
+                fig.set_size_inches(25, 10)
+                for ax in axlist:
+                    ax.grid(False)
+                    for line in ax.get_lines():
+                        if line.get_label() == '': line.set_linewidth(0.5)
+                
+                fig.savefig(slice_path, bbox_inches="tight", dpi=100)
+                plt.close(fig)
+
+        # --- STEP 2: Save Full Basic Chart ---
         fig, axlist = mpf.plot(
-            df,
-            type='candle',
-            style=custom_style,
-            volume=False,
-            title=f"{symbol} ({timeframe_str})",
-            returnfig=True,
-            warn_too_much_data=5000  # Add this line
+            df, type='candle', style=custom_style, volume=False,
+            title=f"{symbol} ({timeframe_str})", returnfig=True,
+            warn_too_much_data=5000
         )
-
-        # Adjust wick thickness for basic chart
+        fig.set_size_inches(25, 10)
         for ax in axlist:
+            ax.grid(False)
             for line in ax.get_lines():
-                if line.get_label() == '':
-                    line.set_linewidth(0.5)
+                if line.get_label() == '': line.set_linewidth(0.5)
 
-        current_size = fig.get_size_inches()
-        fig.set_size_inches(25, current_size[1])
-        axlist[0].grid(False)
         fig.savefig(chart_path, bbox_inches="tight", dpi=200)
         plt.close(fig)
-        log_and_print(f"Basic chart saved for {symbol} ({timeframe_str}) as {chart_path}", "SUCCESS")
 
-        # Step 2: Identify PH/PL
+        # --- STEP 3: Identify PH/PL ---
         ph_labels, pl_labels, phpl_errors = identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right)
         error_log.extend(phpl_errors)
 
-        # Step 3: Prepare annotations for analyzed chart with PH/PL markers
+        # --- STEP 4: Prepare Annotations ---
         apds = []
         if ph_labels:
             ph_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in ph_labels:
-                ph_series.loc[t] = price
-            apds.append(mpf.make_addplot(
-                ph_series,
-                type='scatter',
-                markersize=100,
-                marker='^',
-                color='blue'
-            ))
+            for _, price, t in ph_labels: ph_series.loc[t] = price
+            apds.append(mpf.make_addplot(ph_series, type='scatter', markersize=100, marker='^', color='blue'))
+        
         if pl_labels:
             pl_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in pl_labels:
-                pl_series.loc[t] = price
-            apds.append(mpf.make_addplot(
-                pl_series,
-                type='scatter',
-                markersize=100,
-                marker='v',
-                color='purple'
-            ))
+            for _, price, t in pl_labels: pl_series.loc[t] = price
+            apds.append(mpf.make_addplot(pl_series, type='scatter', markersize=100, marker='v', color='purple'))
 
-        trendline_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "symbol": symbol,
-            "timeframe": timeframe_str,
-            "team_type": "initial",
-            "status": "info",
-            "reason": f"Found {len(ph_labels)} PH points and {len(pl_labels)} PL points",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-
-        # Save Trendline Log (only PH/PL info, no trendlines)
-        try:
-            with open(trendline_log_json_path, 'w') as f:
-                json.dump(trendline_log, f, indent=4)
-            log_and_print(f"Trendline log saved for {symbol} ({timeframe_str})", "SUCCESS")
-        except Exception as e:
-            error_log.append({
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"Failed to save trendline log for {symbol} ({timeframe_str}): {str(e)}",
-                "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-            })
-            log_and_print(f"Failed to save trendline log for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
-
-        # Step 4: Save analyzed chart with PH/PL markers as chartanalysed.png
+        # --- STEP 5: Save Analyzed Chart (Using Dynamic Path) ---
         fig, axlist = mpf.plot(
-            df,
-            type='candle',
-            style=custom_style,
-            volume=False,
-            title=f"{symbol} ({timeframe_str}) - Analysed",
-            addplot=apds if apds else None,
-            returnfig=True
+            df, type='candle', style=custom_style, volume=False,
+            title=f"{symbol} ({timeframe_str}) - Analysed (L:{neighborcandles_left}, R:{neighborcandles_right})",
+            addplot=apds if apds else None, returnfig=True
         )
-
-        # Adjust wick thickness for analyzed chart
+        fig.set_size_inches(25, 10)
         for ax in axlist:
+            ax.grid(True, linestyle='--')
             for line in ax.get_lines():
-                if line.get_label() == '':
-                    line.set_linewidth(0.5)
+                if line.get_label() == '': line.set_linewidth(0.5)
 
-        current_size = fig.get_size_inches()
-        fig.set_size_inches(25, current_size[1])
-        axlist[0].grid(True, linestyle='--')
         fig.savefig(chart_analysed_path, bbox_inches="tight", dpi=100)
         plt.close(fig)
-        log_and_print(f"Analysed chart saved for {symbol} ({timeframe_str}) as {chart_analysed_path}", "SUCCESS")
+
+        log_and_print(f"SAVED: {dynamic_chart_name} for {symbol}", "SUCCESS")
 
         return chart_path, error_log, ph_labels, pl_labels
+
     except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to save charts for {symbol} ({timeframe_str}): {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        trendline_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "symbol": symbol,
-            "timeframe": timeframe_str,
-            "status": "failed",
-            "reason": f"Chart generation failed: {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        with open(trendline_log_json_path, 'w') as f:
-            json.dump(trendline_log, f, indent=4)
-        save_errors(error_log)
-        log_and_print(f"Failed to save charts for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
-        return chart_path if os.path.exists(chart_path) else None, error_log, [], []
-
-def generate_and_save_newest_oldest_chart(df, symbol, timeframe_str, timeframe_folder, neighborcandles_left, neighborcandles_right):
-    """Generate and save a basic candlestick chart as chart.png, then identify PH/PL and save as chartanalysed.png with markers."""
-    error_log = []
-    chart_path = os.path.join(timeframe_folder, "chart.png")
-    chart_analysed_path = os.path.join(timeframe_folder, "newest_oldest.png")
-    trendline_log_json_path = os.path.join(timeframe_folder, "trendline_log.json")
-    trendline_log = []
-
-    try:
-        custom_style = mpf.make_mpf_style(
-            base_mpl_style="default",
-            marketcolors=mpf.make_marketcolors(
-                up="green",
-                down="red",
-                edge="inherit",
-                wick={"up": "green", "down": "red"},
-                volume="gray"
-            )
-        )
-
-        # Step 1: Save basic candlestick chart as chart.png
-        fig, axlist = mpf.plot(
-            df,
-            type='candle',
-            style=custom_style,
-            volume=False,
-            title=f"{symbol} ({timeframe_str})",
-            returnfig=True,
-            warn_too_much_data=5000  # Add this line
-        )
-
-        # Adjust wick thickness for basic chart
-        for ax in axlist:
-            for line in ax.get_lines():
-                if line.get_label() == '':
-                    line.set_linewidth(0.5)
-
-        current_size = fig.get_size_inches()
-        fig.set_size_inches(25, current_size[1])
-        axlist[0].grid(False)
-        fig.savefig(chart_path, bbox_inches="tight", dpi=200)
-        plt.close(fig)
-        log_and_print(f"Basic chart saved for {symbol} ({timeframe_str}) as {chart_path}", "SUCCESS")
-
-        # Step 2: Identify PH/PL
-        ph_labels, pl_labels, phpl_errors = identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right)
-        error_log.extend(phpl_errors)
-
-        # Step 3: Prepare annotations for analyzed chart with PH/PL markers
-        apds = []
-        if ph_labels:
-            ph_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in ph_labels:
-                ph_series.loc[t] = price
-            apds.append(mpf.make_addplot(
-                ph_series,
-                type='scatter',
-                markersize=100,
-                marker='^',
-                color='blue'
-            ))
-        if pl_labels:
-            pl_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in pl_labels:
-                pl_series.loc[t] = price
-            apds.append(mpf.make_addplot(
-                pl_series,
-                type='scatter',
-                markersize=100,
-                marker='v',
-                color='purple'
-            ))
-
-        trendline_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "symbol": symbol,
-            "timeframe": timeframe_str,
-            "team_type": "initial",
-            "status": "info",
-            "reason": f"Found {len(ph_labels)} PH points and {len(pl_labels)} PL points",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-
-        # Save Trendline Log (only PH/PL info, no trendlines)
-        try:
-            with open(trendline_log_json_path, 'w') as f:
-                json.dump(trendline_log, f, indent=4)
-            log_and_print(f"Trendline log saved for {symbol} ({timeframe_str})", "SUCCESS")
-        except Exception as e:
-            error_log.append({
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"Failed to save trendline log for {symbol} ({timeframe_str}): {str(e)}",
-                "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-            })
-            log_and_print(f"Failed to save trendline log for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
-
-        # Step 4: Save analyzed chart with PH/PL markers as chartanalysed.png
-        fig, axlist = mpf.plot(
-            df,
-            type='candle',
-            style=custom_style,
-            volume=False,
-            title=f"{symbol} ({timeframe_str}) - Analysed",
-            addplot=apds if apds else None,
-            returnfig=True
-        )
-
-        # Adjust wick thickness for analyzed chart
-        for ax in axlist:
-            for line in ax.get_lines():
-                if line.get_label() == '':
-                    line.set_linewidth(0.5)
-
-        current_size = fig.get_size_inches()
-        fig.set_size_inches(25, current_size[1])
-        axlist[0].grid(True, linestyle='--')
-        fig.savefig(chart_analysed_path, bbox_inches="tight", dpi=100)
-        plt.close(fig)
-        log_and_print(f"Analysed chart saved for {symbol} ({timeframe_str}) as {chart_analysed_path}", "SUCCESS")
-
-        return chart_path, error_log, ph_labels, pl_labels
-    except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to save charts for {symbol} ({timeframe_str}): {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        trendline_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "symbol": symbol,
-            "timeframe": timeframe_str,
-            "status": "failed",
-            "reason": f"Chart generation failed: {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        with open(trendline_log_json_path, 'w') as f:
-            json.dump(trendline_log, f, indent=4)
-        save_errors(error_log)
-        log_and_print(f"Failed to save charts for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
-        return chart_path if os.path.exists(chart_path) else None, error_log, [], []
+        log_and_print(f"Error in chart generation: {e}", "ERROR")
+        return None, error_log, [], []    
 
 def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     error_log = []
@@ -1058,45 +749,28 @@ def delete_all_category_jsons():
     return error_log
 
 def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
-    """Crop the saved chart.png and chartanalysed.png images, then detect candle contours only for chart.png."""
+    """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions."""
     error_log = []
-    chart_analysed_path = os.path.join(timeframe_folder, "chartanalysed.png")
+    
+    # List of all images to crop: the main ones and all the slices
+    images_to_crop = [f for f in os.listdir(timeframe_folder) if f.endswith(".png") and "chart" in f]
 
     try:
-        # Crop chart.png
-        with Image.open(chart_path) as img:
-            right = 0
-            left = 0
-            top = 0
-            bottom = 0
-            crop_box = (left, top, img.width - right, img.height - bottom)
-            cropped_img = img.crop(crop_box)
-            cropped_img.save(chart_path, "PNG")
-            log_and_print(f"Chart cropped for {symbol} ({timeframe_str}) at {chart_path}", "SUCCESS")
-
-        # Crop chartanalysed.png if it exists
-        if os.path.exists(chart_analysed_path):
-            with Image.open(chart_analysed_path) as img:
+        for filename in images_to_crop:
+            full_path = os.path.join(timeframe_folder, filename)
+            with Image.open(full_path) as img:
+                # Set your crop margins here if needed (currently 0)
+                left, top, right, bottom = 0, 0, 0, 0 
                 crop_box = (left, top, img.width - right, img.height - bottom)
                 cropped_img = img.crop(crop_box)
-                cropped_img.save(chart_analysed_path, "PNG")
-                log_and_print(f"Analysed chart cropped for {symbol} ({timeframe_str}) at {chart_analysed_path}", "SUCCESS")
-        else:
-            error_log.append({
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"chartanalysed.png not found for {symbol} ({timeframe_str})",
-                "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-            })
-            log_and_print(f"chartanalysed.png not found for {symbol} ({timeframe_str})", "WARNING")
+                cropped_img.save(full_path, "PNG")
+        
+        log_and_print(f"All {len(images_to_crop)} charts cropped for {symbol} ({timeframe_str})", "SUCCESS")
 
     except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to crop charts for {symbol} ({timeframe_str}): {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        save_errors(error_log)
-        log_and_print(f"Failed to crop charts for {symbol} ({timeframe_str}): {str(e)}", "ERROR")
+        err_msg = f"Failed to crop charts: {str(e)}"
+        log_and_print(err_msg, "ERROR")
+        error_log.append({"error": err_msg})
 
     return error_log
 
@@ -1943,7 +1617,6 @@ def updating_database_record():
 
 def calc_and_placeorders():  
     verifying_brokers()
-    updating_database_record()
     calculate_symbols_sl_tp_prices() 
     placeallorders()
 
@@ -2134,10 +1807,6 @@ def fetch_charts_all_brokers(
     # PATHS
     # ------------------------------------------------------------------
     backup_developers_dictionary()
-    delete_all_category_jsons()
-    delete_all_calculated_risk_jsons()
-    delete_issue_jsons()
-    clear_unknown_broker()
     required_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     fallback_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
     allsymbols_path       = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
@@ -2216,17 +1885,7 @@ def fetch_charts_all_brokers(
             log_and_print(f"MARKED AS CHOSEN → {chosen_path} (Balance: {balance})", "SUCCESS")
         except Exception as e:
             log_and_print(f"FAILED to write chosenbroker.json for {original_broker_key}: {e}", "ERROR")
-
-    def breakeven_worker():
-        while True:
-            try:
-                BreakevenRunningPositions()
-            except Exception as e:
-                log_and_print(f"BREAKEVEN ERROR: {e}", "CRITICAL")
-            time.sleep(10)
-
-    threading.Thread(target=breakeven_worker, daemon=True).start()
-    log_and_print("Breakeven thread started", "SUCCESS")
+            
 
     # ------------------------------------------------------------------
     # MAIN LOOP
@@ -2461,66 +2120,71 @@ def fetch_charts_all_brokers(
                             indices[bn][cat] += 1
                             continue
 
-                        for run in (1, 2):
-                            ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
-                            error_log.extend(errs)
-                            if not ok:
-                                log_and_print(f"MT5 INIT FAILED → {bn}/{symbol} (run {run})", "ERROR")
-                                mt5.shutdown()
-                                continue
+                        ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
+                        error_log.extend(errs)
+                        if not ok:
+                            log_and_print(f"MT5 INIT FAILED → {bn}/{symbol}", "ERROR")
+                            mt5.shutdown()
+                            indices[bn][cat] += 1
+                            continue
 
-                            log_and_print(f"RUN {run} – PROCESSING {symbol} ({cat}) on {bn.upper()}", "INFO")
+                        log_and_print(f"PROCESSING {symbol} ({cat}) on {bn.upper()}", "INFO")
 
-                            sym_folder = os.path.join(cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
-                            os.makedirs(sym_folder, exist_ok=True)
-
-                            def roundgoblin():
-                                for tf_str, mt5_tf in TIMEFRAME_MAP.items():
-                                    tf_folder = os.path.join(sym_folder, tf_str)
-                                    os.makedirs(tf_folder, exist_ok=True)
-
-                                    df, errs = fetch_ohlcv_data(symbol, mt5_tf, bars)
-                                    error_log.extend(errs)
-                                    if df is None:
-                                        log_and_print(f"NO DATA for {symbol} {tf_str}", "WARNING")
-                                        continue
-
-                                    df["symbol"] = symbol
-                                    chart_path, ch_errs, ph, pl = generate_and_save_oldest_newest_chart(
-                                        df, symbol, tf_str, tf_folder,
-                                        neighborcandles_left, neighborcandles_right
+                        sym_folder = os.path.join(cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
+                        os.makedirs(sym_folder, exist_ok=True)
+                        # Hardcoded neighbor combinations to iterate through
+                        neighbor_combinations = [
+                            (5, 5), (5, 10), (10, 5), (10, 10), 
+                            (10, 15), (15, 10), (15, 15), (20, 20), (30, 30)
+                        ]
+                        def roundgoblin():
+                            for tf_str, mt5_tf in TIMEFRAME_MAP.items():
+                                # Reinitialize MT5 connection for each timeframe to avoid potential crashes/disconnects
+                                if not mt5.initialize():
+                                    log_and_print(f"MT5 initialize() failed for {tf_str}, error code = {mt5.last_error()}", "ERROR")
+                                    error_log.append(f"MT5 init failed for {tf_str}: {mt5.last_error()}")
+                                    continue
+                                
+                                tf_folder = os.path.join(sym_folder, tf_str)
+                                os.makedirs(tf_folder, exist_ok=True)
+                                
+                                df, errs = fetch_ohlcv_data(symbol, mt5_tf, bars)
+                                error_log.extend(errs)
+                                
+                                if df is None or len(df) == 0:
+                                    log_and_print(f"NO DATA for {symbol} {tf_str}", "WARNING")
+                                    mt5.shutdown()  # Shutdown even if no data
+                                    continue
+                                
+                                df["symbol"] = symbol
+                                
+                                chart_path = None  # Reset for this timeframe
+                                
+                                for n_left, n_right in neighbor_combinations:
+                                    log_and_print(f"Analyzing {symbol} {tf_str} with L:{n_left} R:{n_right}", "INFO")
+                                    
+                                    chart_path, ch_errs, ph, pl = generate_and_save_chart(
+                                        df, symbol, tf_str, tf_folder, n_left, n_right
                                     )
                                     error_log.extend(ch_errs)
-
-                                    generate_and_save_newest_oldest_chart(
-                                        df, symbol, tf_str, tf_folder,
-                                        neighborcandles_left, neighborcandles_right
-                                    )
-                                    error_log.extend(ch_errs)
-
-                                    save_oldest_newest(df, symbol, tf_str, tf_folder, ph, pl)
-                                    next_errs = save_next_oldest_newest_candles(df, symbol, tf_str, tf_folder, ph, pl)
-                                    error_log.extend(next_errs)
-
-                                    save_newest_oldest(df, symbol, tf_str, tf_folder, ph, pl)
-                                    next_errs = save_next_newest_oldest_candles(df, symbol, tf_str, tf_folder, ph, pl)
-                                    error_log.extend(next_errs)
-
-                                    if chart_path:
-                                        crop_chart(chart_path, symbol, tf_str, tf_folder)
-
-                                mt5.shutdown()
-
-                            roundgoblin()
-                            ticks_value(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
-                            calc_and_placeorders()
+                                    
+                                    save_oldest_newest(df, symbol, tf_str, tf_folder, ph, pl, n_left, n_right)
+                                    save_newest_oldest(df, symbol, tf_str, tf_folder, ph, pl, n_left, n_right)
+                                
+                                # Crop the last generated chart (from final neighbor combo)
+                                if chart_path:
+                                    crop_chart(chart_path, symbol, tf_str, tf_folder)
+                                
+                                mt5.shutdown()  # Shutdown connection after processing this timeframe
+                        
+                        roundgoblin()
+                        ticks_value(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
 
                         indices[bn][cat] += 1
 
                 round_no += 1
 
             save_errors(error_log)
-            calc_and_placeorders()
             log_and_print("CYCLE 100% COMPLETED (UNIQUE BROKERS ONLY)", "SUCCESS")
 
             # ------------------------------------------------------------------
@@ -2561,13 +2225,13 @@ def fetch_charts_all_brokers(
             log_and_print(f"MAIN LOOP CRASH: {e}\n{traceback.format_exc()}", "CRITICAL")
             time.sleep(600)
 
-
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
         bars=201,
         neighborcandles_left=10,
         neighborcandles_right=15
     )
+
     if success:
         log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
     else:
