@@ -168,15 +168,15 @@ def custom_horizontal_line():
 
     for broker_raw_name, cfg in developer_brokers.items():
         base_folder = cfg["BASE_FOLDER"]
-        technique_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "breakout.json")
-        if not os.path.exists(technique_path):
-            technique_path = os.path.join(base_folder, "breakout.json")
-        if not os.path.exists(technique_path):
+        strategy_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "breakout.json")
+        if not os.path.exists(strategy_path):
+            strategy_path = os.path.join(base_folder, "breakout.json")
+        if not os.path.exists(strategy_path):
             log(f"breakout.json missing → {broker_raw_name}", "WARNING")
             continue
 
         try:
-            with open(technique_path, 'r', encoding='utf-8') as f:
+            with open(strategy_path, 'r', encoding='utf-8') as f:
                 tech = json.load(f)
         except Exception as e:
             log(f"Failed loading breakout.json: {e}", "ERROR")
@@ -211,7 +211,7 @@ def custom_horizontal_line():
                 if not os.path.isdir(tf_path): continue
 
                 chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
+                json_path = os.path.join(tf_path, "candlesdetails", "all_oldest_newest_candles.json")
                 output_path = os.path.join(tf_path, "chart_custom.png")
 
                 if not os.path.exists(chart_path) or not os.path.exists(json_path):
@@ -487,16 +487,68 @@ def custom_breakout():
     
     for broker_raw_name, cfg in developer_brokers.items():
         base_folder = cfg["BASE_FOLDER"]
-        technique_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "breakout.json")
-        if not os.path.exists(technique_path):
-            technique_path = os.path.join(base_folder, "breakout.json")
-        if not os.path.exists(technique_path):
+        strategy_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "breakout.json")
+        if not os.path.exists(strategy_path):
+            strategy_path = os.path.join(base_folder, "breakout.json")
+        if not os.path.exists(strategy_path):
             log(f"breakout.json missing → {broker_raw_name}", "WARNING")
             continue
         
-        with open(technique_path, 'r', encoding='utf-8') as f:
+        with open(strategy_path, 'r', encoding='utf-8') as f:
             tech = json.load(f)
             global_tech_data = tech # Store for later access
+        
+        # --- LOAD ACCOUNT MANAGEMENT CONFIG ---
+        accountmanagement_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "accountmanagement.json")
+        if not os.path.exists(accountmanagement_path):
+            accountmanagement_path = os.path.join(base_folder, "accountmanagement.json")
+        
+        # === DEFAULTS REMOVED — FULLY DYNAMIC ===
+        bars_value = None
+        parent_neighbor_left = None
+        parent_neighbor_right = None
+        child_neighbor_left = None
+        child_neighbor_right = None
+
+        if os.path.exists(accountmanagement_path):
+            try:
+                with open(accountmanagement_path, 'r', encoding='utf-8') as f:
+                    am_config = json.load(f)
+                
+                chart_config = am_config.get("chart", {})
+                
+                # Required: BARS
+                bars_value = chart_config.get("BARS")
+                if bars_value is None:
+                    log("accountmanagement.json missing 'chart.BARS' → skipping symbol", "ERROR")
+                    continue
+
+                # Required: Parent neighbors
+                phl_config = chart_config.get("parenthighsandlows", {})
+                parent_neighbor_left = phl_config.get("NEIGHBOR_LEFT")
+                parent_neighbor_right = phl_config.get("NEIGHBOR_RIGHT")
+                if parent_neighbor_left is None or parent_neighbor_right is None:
+                    log("accountmanagement.json missing parenthighsandlows NEIGHBOR_LEFT/RIGHT → skipping", "ERROR")
+                    continue
+
+                # Required: Child neighbors
+                chl_config = chart_config.get("childhighsandlows", {})
+                child_neighbor_left = chl_config.get("NEIGHBOR_LEFT")
+                child_neighbor_right = chl_config.get("NEIGHBOR_RIGHT")
+                if child_neighbor_left is None or child_neighbor_right is None:
+                    log("accountmanagement.json missing childhighsandlows NEIGHBOR_LEFT/RIGHT → skipping", "ERROR")
+                    continue
+
+                log(f"Loaded dynamic config → BARS={bars_value}, "
+                    f"Parent(L={parent_neighbor_left},R={parent_neighbor_right}), "
+                    f"Child(L={child_neighbor_left},R={child_neighbor_right})", "INFO")
+
+            except Exception as e:
+                log(f"Failed to load/parse accountmanagement.json: {e} → skipping symbol", "ERROR")
+                continue
+        else:
+            log(f"accountmanagement.json not found → skipping {symbol_folder}/{tf_folder}", "ERROR")
+            continue
             
         if str(tech.get("drawings_switch", {}).get("trendline", "no")).strip().lower() != "yes":
             continue
@@ -553,9 +605,7 @@ def custom_breakout():
         if not trend_list:
             continue
             
-        # Get Neighbor Right settings
-        parent_neighbor_right = global_tech_data.get("parenthighsandlows", {}).get("NEIGHBOR_RIGHT", 15)
-        child_neighbor_right = global_tech_data.get("childhighsandlows", {}).get("NEIGHBOR_RIGHT", 7)
+            
         
         log(f"Processing {broker_raw_name} → {len(trend_list)} institutional trendlines (Parent NR={parent_neighbor_right}, Child NR={child_neighbor_right})")
         
@@ -565,9 +615,32 @@ def custom_breakout():
             for tf_folder in os.listdir(sym_path):
                 tf_path = os.path.join(sym_path, tf_folder)
                 if not os.path.isdir(tf_path): continue
-                chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
-                output_path = os.path.join(tf_path, "chart_custom.png")
+                chart_path = os.path.join(tf_path, f"chart_{bars_value}.png")
+                fallback_chart_path = os.path.join(tf_path, "chart.png")
+                if not os.path.exists(chart_path):
+                    if os.path.exists(fallback_chart_path):
+                        chart_path = fallback_chart_path
+                        log(f"chart_{bars_value}.png not found → falling back to chart.png", "WARNING")
+                    else:
+                        log(f"Neither chart_{bars_value}.png nor chart.png found → skipping", "WARNING")
+                        continue
+
+                # Dynamic candle JSON filename based on parent neighbors only
+                candle_json_filename = f"old_new_l{parent_neighbor_left}_r{parent_neighbor_right}.json"
+                json_path = os.path.join(tf_path, "candlesdetails", candle_json_filename)
+
+                # Optional: fallback to generic name if not found (rare case)
+                fallback_json_path = os.path.join(tf_path, "candlesdetails", "all_oldest_newest_candles.json")
+
+                if not os.path.exists(json_path):
+                    if os.path.exists(fallback_json_path):
+                        log(f"{candle_json_filename} not found → falling back to all_oldest_newest_candles.json", "WARNING")
+                        json_path = fallback_json_path
+                    else:
+                        log(f"Neither {candle_json_filename} nor fallback JSON found → skipping", "ERROR")
+                        continue
+
+                output_path = os.path.join(tf_path, f"chart_custom_{bars_value}.png")
                 report_path = os.path.join(tf_path, "custom_levels.json")
                 if not all(os.path.exists(p) for p in [chart_path, json_path]):
                     continue
@@ -1674,7 +1747,7 @@ def custom_breakout():
 
                     log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (with exit_price in pending_entry_point)", "SUCCESS")
  
-                def enrich_candle_details(candles_list, final_teams, final_valid_trends, report_path, technique_path):
+                def enrich_candle_details(candles_list, final_teams, final_valid_trends, report_path, strategy_path):
                     import os
                     import json
                     
@@ -1685,7 +1758,7 @@ def custom_breakout():
                     # === 1. Load breakout.json to determine if it's breakout-only ===
                     is_breakout_strategy = False
                     try:
-                        with open(technique_path, 'r', encoding='utf-8') as f:
+                        with open(strategy_path, 'r', encoding='utf-8') as f:
                             technique_config = json.load(f)
                         
                         trendline_configs = technique_config.get("trendline", {})
@@ -2048,7 +2121,7 @@ def custom_breakout():
                         tf_folder,
                         chart_path,
                         output_path,  # This is the FINAL drawn chart (with all annotations)
-                        technique_path,
+                        strategy_path,
                         report_path
                     ):
 
@@ -2064,7 +2137,7 @@ def custom_breakout():
                     is_continuation_strategy = False
 
                     try:
-                        with open(technique_path, 'r', encoding='utf-8') as f:
+                        with open(strategy_path, 'r', encoding='utf-8') as f:
                             technique_conf_2ig = json.load(f)
                         
                         for key, value in technique_conf_2ig.items():
@@ -2095,7 +2168,7 @@ def custom_breakout():
                                         is_continuation_strategy = True
                         
                         if not strategy_name:
-                            strategy_name = os.path.basename(os.path.dirname(technique_path))
+                            strategy_name = os.path.basename(os.path.dirname(strategy_path))
                         if not continuation_name:
                             continuation_name = f"{strategy_name}_Continuation"  # fallback if not specified
                         if not pending_entry_value:
@@ -2364,7 +2437,7 @@ def custom_breakout():
                     tf_folder,
                     chart_path,
                     output_path,
-                    technique_path,
+                    strategy_path,
                     report_path
                 ):
                     import os
@@ -2381,7 +2454,7 @@ def custom_breakout():
                     is_breakout_strategy = False
 
                     try:
-                        with open(technique_path, 'r', encoding='utf-8') as f:
+                        with open(strategy_path, 'r', encoding='utf-8') as f:
                             technique_conf = json.load(f)
                         
                         for key, value in technique_conf.items():
@@ -2409,7 +2482,7 @@ def custom_breakout():
 
                         # Fallback
                         if not strategy_name:
-                            strategy_name = os.path.basename(os.path.dirname(technique_path))
+                            strategy_name = os.path.basename(os.path.dirname(strategy_path))
 
                     except Exception as e:
                         log(f"Failed to load technique JSON: {e}", "ERROR")
@@ -2589,7 +2662,7 @@ def custom_breakout():
                     DRAW_ALL_POINTS_LEVELS(final_valid_trends)
 
                     # ==== ENRICH CUSTOM JSON WITH FULL CANDLE DETAILS ====
-                    enrich_candle_details(candles, final_teams, final_valid_trends, report_path, technique_path)
+                    enrich_candle_details(candles, final_teams, final_valid_trends, report_path, strategy_path)
 
                     # Final save after processing all trends (local)
                     cv2.imwrite(output_path, img)
@@ -2598,7 +2671,7 @@ def custom_breakout():
                     log(f"{symbol_folder}/{tf_folder} | {len(final_teams)} Trendlines processed & enriched with full candle details", "SUCCESS")
 
                     # ===== NEW: SAVE TO CENTRAL DEVELOPER STRATEGY FOLDER =====
-                    # We need broker_raw_name and the technique_path from outer scope
+                    # We need broker_raw_name and the strategy_path from outer scope
                     # These variables are available in the main loop context
                     categorize_developer_technique(
                         broker_raw_name=broker_raw_name,
@@ -2606,7 +2679,7 @@ def custom_breakout():
                         tf_folder=tf_folder,
                         chart_path=chart_path,
                         output_path=output_path,
-                        technique_path=technique_path,
+                        strategy_path=strategy_path,
                         report_path=report_path
                     )
 
@@ -2774,16 +2847,68 @@ def custom_continuation():
     
     for broker_raw_name, cfg in developer_brokers.items():
         base_folder = cfg["BASE_FOLDER"]
-        technique_path_2 = os.path.join(base_folder, "..", "developers", broker_raw_name, "continuation.json")
-        if not os.path.exists(technique_path_2):
-            technique_path_2 = os.path.join(base_folder, "continuation.json")
-        if not os.path.exists(technique_path_2):
+        strategy_path_2 = os.path.join(base_folder, "..", "developers", broker_raw_name, "continuation.json")
+        if not os.path.exists(strategy_path_2):
+            strategy_path_2 = os.path.join(base_folder, "continuation.json")
+        if not os.path.exists(strategy_path_2):
             log(f"continuation.json missing → {broker_raw_name}", "WARNING")
             continue
         
-        with open(technique_path_2, 'r', encoding='utf-8') as f:
+        with open(strategy_path_2, 'r', encoding='utf-8') as f:
             tech = json.load(f)
             global_tech_data = tech # Store for later access
+
+        # --- LOAD ACCOUNT MANAGEMENT CONFIG ---
+        accountmanagement_path = os.path.join(base_folder, "..", "developers", broker_raw_name, "accountmanagement.json")
+        if not os.path.exists(accountmanagement_path):
+            accountmanagement_path = os.path.join(base_folder, "accountmanagement.json")
+        
+        # === DEFAULTS REMOVED — FULLY DYNAMIC ===
+        bars_value = None
+        parent_neighbor_left = None
+        parent_neighbor_right = None
+        child_neighbor_left = None
+        child_neighbor_right = None
+
+        if os.path.exists(accountmanagement_path):
+            try:
+                with open(accountmanagement_path, 'r', encoding='utf-8') as f:
+                    am_config = json.load(f)
+                
+                chart_config = am_config.get("chart", {})
+                
+                # Required: BARS
+                bars_value = chart_config.get("BARS")
+                if bars_value is None:
+                    log("accountmanagement.json missing 'chart.BARS' → skipping symbol", "ERROR")
+                    continue
+
+                # Required: Parent neighbors
+                phl_config = chart_config.get("parenthighsandlows", {})
+                parent_neighbor_left = phl_config.get("NEIGHBOR_LEFT")
+                parent_neighbor_right = phl_config.get("NEIGHBOR_RIGHT")
+                if parent_neighbor_left is None or parent_neighbor_right is None:
+                    log("accountmanagement.json missing parenthighsandlows NEIGHBOR_LEFT/RIGHT → skipping", "ERROR")
+                    continue
+
+                # Required: Child neighbors
+                chl_config = chart_config.get("childhighsandlows", {})
+                child_neighbor_left = chl_config.get("NEIGHBOR_LEFT")
+                child_neighbor_right = chl_config.get("NEIGHBOR_RIGHT")
+                if child_neighbor_left is None or child_neighbor_right is None:
+                    log("accountmanagement.json missing childhighsandlows NEIGHBOR_LEFT/RIGHT → skipping", "ERROR")
+                    continue
+
+                log(f"Loaded dynamic config → BARS={bars_value}, "
+                    f"Parent(L={parent_neighbor_left},R={parent_neighbor_right}), "
+                    f"Child(L={child_neighbor_left},R={child_neighbor_right})", "INFO")
+
+            except Exception as e:
+                log(f"Failed to load/parse accountmanagement.json: {e} → skipping symbol", "ERROR")
+                continue
+        else:
+            log(f"accountmanagement.json not found → skipping {symbol_folder}/{tf_folder}", "ERROR")
+            continue
             
         if str(tech.get("drawings_switch", {}).get("trendline", "no")).strip().lower() != "yes":
             continue
@@ -2839,10 +2964,7 @@ def custom_continuation():
 
         if not trend_list:
             continue
-            
-        # Get Neighbor Right settings
-        parent_neighbor_right = global_tech_data.get("parenthighsandlows", {}).get("NEIGHBOR_RIGHT", 15)
-        child_neighbor_right = global_tech_data.get("childhighsandlows", {}).get("NEIGHBOR_RIGHT", 7)
+        
         
         log(f"Processing {broker_raw_name} → {len(trend_list)} institutional trendlines (Parent NR={parent_neighbor_right}, Child NR={child_neighbor_right})")
         
@@ -2852,9 +2974,33 @@ def custom_continuation():
             for tf_folder in os.listdir(sym_path):
                 tf_path = os.path.join(sym_path, tf_folder)
                 if not os.path.isdir(tf_path): continue
-                chart_path = os.path.join(tf_path, "chart.png")
-                json_path = os.path.join(tf_path, "all_oldest_newest_candles.json")
-                output_path = os.path.join(tf_path, "chart_custom.png")
+                chart_path = os.path.join(tf_path, f"chart_{bars_value}.png")
+                fallback_chart_path = os.path.join(tf_path, "chart.png")  # fallback if specific doesn't exist
+                
+                if not os.path.exists(chart_path):
+                    if os.path.exists(fallback_chart_path):
+                        chart_path = fallback_chart_path
+                        log(f"chart_{bars_value}.png not found → falling back to chart.png", "WARNING")
+                    else:
+                        log(f"Neither chart_{bars_value}.png nor chart.png found → skipping", "WARNING")
+                        continue
+
+                 # Dynamic candle JSON filename based on parent neighbors only
+                candle_json_filename = f"old_new_l{parent_neighbor_left}_r{parent_neighbor_right}.json"
+                json_path = os.path.join(tf_path, "candlesdetails", candle_json_filename)
+
+                # Optional: fallback to generic name if not found (rare case)
+                fallback_json_path = os.path.join(tf_path, "candlesdetails", candle_json_filename)
+
+                if not os.path.exists(json_path):
+                    if os.path.exists(fallback_json_path):
+                        log(f"{candle_json_filename} not found → falling back to all_oldest_newest_candles.json", "WARNING")
+                        json_path = fallback_json_path
+                    else:
+                        log(f"Neither {candle_json_filename} nor fallback JSON found → skipping", "ERROR")
+                        continue
+
+                output_path = os.path.join(tf_path, f"chart_custom_{bars_value}.png")
                 report_path = os.path.join(tf_path, "custom_levels.json")
                 if not all(os.path.exists(p) for p in [chart_path, json_path]):
                     continue
@@ -3961,7 +4107,7 @@ def custom_continuation():
 
                     log(f"→ {symbol_folder}/{tf_folder} | {drawn_levels} Horizontal levels drawn (with exit_price in pending_entry_point)", "SUCCESS")
  
-                def enrich_candle_details(candles_list_2, final_teams_2, final_valid_trends_2, report_path, technique_path_2):
+                def enrich_candle_details(candles_list_2, final_teams_2, final_valid_trends_2, report_path, strategy_path_2):
                     import os
                     import json
                     
@@ -3972,7 +4118,7 @@ def custom_continuation():
                     # === 1. Load continuation.json to determine if it's breakout-only ===
                     is_breakout_strategy = False
                     try:
-                        with open(technique_path_2, 'r', encoding='utf-8') as f:
+                        with open(strategy_path_2, 'r', encoding='utf-8') as f:
                             technique_conf_2ig = json.load(f)
                         
                         trendline_conf_2igs = technique_conf_2ig.get("trendline", {})
@@ -4335,7 +4481,7 @@ def custom_continuation():
                     tf_folder,
                     chart_path,
                     output_path,
-                    technique_path_2,
+                    strategy_path_2,
                     report_path
                 ):
                     import os
@@ -4350,7 +4496,7 @@ def custom_continuation():
                     is_continuation_strategy = False
 
                     try:
-                        with open(technique_path_2, 'r', encoding='utf-8') as f:
+                        with open(strategy_path_2, 'r', encoding='utf-8') as f:
                             technique_conf = json.load(f)
                         
                         for key, value in technique_conf.items():
@@ -4374,7 +4520,7 @@ def custom_continuation():
 
                         # Fallback
                         if not strategy_name:
-                            strategy_name = os.path.basename(os.path.dirname(technique_path_2))
+                            strategy_name = os.path.basename(os.path.dirname(strategy_path_2))
 
                     except Exception as e:
                         log(f"Failed to load technique JSON: {e}", "ERROR")
@@ -4526,7 +4672,7 @@ def custom_continuation():
                     DRAW_ALL_POINTS_LEVELS(final_valid_trends_2)
 
                     # ==== ENRICH CUSTOM JSON WITH FULL CANDLE DETAILS ====
-                    enrich_candle_details(candles, final_teams_2, final_valid_trends_2, report_path, technique_path_2)
+                    enrich_candle_details(candles, final_teams_2, final_valid_trends_2, report_path, strategy_path_2)
 
                     # Final save after processing all trends (local)
                     cv2.imwrite(output_path, img)
@@ -4535,7 +4681,7 @@ def custom_continuation():
                     log(f"{symbol_folder}/{tf_folder} | {len(final_teams_2)} Trendlines processed & enriched with full candle details", "SUCCESS")
 
                     # ===== NEW: SAVE TO CENTRAL DEVELOPER STRATEGY FOLDER =====
-                    # We need broker_raw_name and the technique_path_2 from outer scope
+                    # We need broker_raw_name and the strategy_path_2 from outer scope
                     # These variables are available in the main loop context
                     categorize_developer_technique(
                         broker_raw_name=broker_raw_name,
@@ -4543,7 +4689,7 @@ def custom_continuation():
                         tf_folder=tf_folder,
                         chart_path=chart_path,
                         output_path=output_path,
-                        technique_path_2=technique_path_2,
+                        strategy_path_2=strategy_path_2,
                         report_path=report_path
                     )
 
@@ -4552,8 +4698,8 @@ def custom_continuation():
 
     log("=== INSTITUTIONAL TRENDLINE ENGINE v10.1 — DYNAMIC conf_2IGURATION & TARGET ZONE ADDED ===", "SUCCESS")
 
-
-
+custom_breakout()
+custom_continuation()
 
 
 

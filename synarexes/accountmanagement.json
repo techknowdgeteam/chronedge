@@ -1,5 +1,16 @@
 {
     "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+    "chart":{
+        "BARS": 101,
+        "parenthighsandlows": {
+            "NEIGHBOR_LEFT": 5,
+            "NEIGHBOR_RIGHT": 5
+        },
+        "childhighsandlows": {
+            "NEIGHBOR_LEFT": 5,
+            "NEIGHBOR_RIGHT": 7
+        }
+    },
     "settings":{
         "calculate_stoploss":"yes",
         "calculate_takeprofit":"yes",
