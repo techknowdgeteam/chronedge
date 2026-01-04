@@ -41,7 +41,6 @@ def load_developers_dictionary():
             if "RISKREWARD" in cfg and isinstance(cfg["RISKREWARD"], (str, float)):
                 cfg["RISKREWARD"] = int(cfg["RISKREWARD"])
         
-        print(f"Brokers config loaded successfully → {len(data)} broker(s)", "SUCCESS")
         return data
 
     except json.JSONDecodeError as e:
@@ -8882,8 +8881,6 @@ def print_user_brokerids():
             missing += 1
     
     print("=" * 90)
-    print(f"Total configured: {len(developersdictionary)} broker(s) | "
-          f"{existing} folder(s) exist | {missing} missing")
 
     # ——————————————————————————————
     # Unique configured broker bases

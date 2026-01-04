@@ -1,16 +1,5 @@
 {
     "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
-    "chart":{
-        "BARS": 101,
-        "parenthighsandlows": {
-            "NEIGHBOR_LEFT": 5,
-            "NEIGHBOR_RIGHT": 5
-        },
-        "childhighsandlows": {
-            "NEIGHBOR_LEFT": 5,
-            "NEIGHBOR_RIGHT": 7
-        }
-    },
     "settings":{
         "calculate_stoploss":"yes",
         "calculate_takeprofit":"yes",
@@ -20,5 +9,63 @@
         "order_timeframes":["15m","30m","45m","1h","4h"],
         "risk_reward_ratio": 3,
         "disable_orders": "allordertype"
+    },
+    "chart":{
+        "define_candles": {
+            "large_body":{
+                "BARS": 101,
+                "filename":"largebody.json",
+                "read_candles_from":"old_new",
+                "number_candles":"define_candle",
+                "label":{
+                    "text": "LB",
+                    "marker": "arrow",
+                    "label_at": {
+                        "bullish":"low",
+                        "bullish_color":"green",
+                        "bearish":"high",
+                        "bearish_color":"red"
+                    }
+                }
+            },
+            "higherhighsandhigherlows": {
+                "BARS": 101,
+                "filename":"highers.json",
+                "read_candles_from":"old_new",
+                "number_candles":"define_candle",
+                "NEIGHBOR_LEFT": 10,
+                "NEIGHBOR_RIGHT": 15,
+                "label":{
+                    "higherhighs_text": "HH",
+                    "higherlows_text": "HL",
+                    "marker": "doublearrows",
+                    "label_at": {
+                        "higher_lows":"low",
+                        "higher_lows_color":"green",
+                        "higher_highs":"high",
+                        "higher_highs_color":"red"
+                    }
+                }
+            },
+            "lowerhighsandlowerlows": {
+                "BARS": 101,
+                "filename":"lowers.json",
+                "read_candles_from":"old_new",
+                "number_candles":"define_candle",
+                "NEIGHBOR_LEFT": 5,
+                "NEIGHBOR_RIGHT": 5,
+                "label":{
+                    "lowerhighs_text": "HH",
+                    "lowerlows_text": "HL",
+                    "marker": "arrow",
+                    "label_at": {
+                        "lower_lows":"low",
+                        "lower_lows_color":"green",
+                        "lower_highs":"high",
+                        "lower_highs_color":"red"
+                    }
+                }
+            }
+        }
     }
 }

@@ -23,6 +23,9 @@ import re
 import placeorders
 import insiders_server
 import timeorders
+import concurrent.futures
+import multiprocessing
+
 
 
 def load_developers_dictionary():
@@ -43,7 +46,6 @@ def load_developers_dictionary():
             if "RISKREWARD" in cfg and isinstance(cfg["RISKREWARD"], (str, float)):
                 cfg["RISKREWARD"] = int(cfg["RISKREWARD"])
         
-        print(f"Brokers config loaded successfully → {len(data)} broker(s)", "SUCCESS")
         return data
 
     except json.JSONDecodeError as e:
@@ -151,6 +153,56 @@ def get_symbols():
     log_and_print(f"Retrieved {len(available_symbols)} symbols", "INFO")
     return available_symbols, error_log
 
+def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
+    """Identify Parent Highs (PH) and Parent Lows (PL) based on neighbor candles."""
+    error_log = []
+    ph_indices = []
+    pl_indices = []
+    ph_labels = []
+    pl_labels = []
+
+    try:
+        for i in range(len(df)):
+            if i >= len(df) - neighborcandles_right:
+                continue
+
+            current_high = df.iloc[i]['high']
+            current_low = df.iloc[i]['low']
+            right_highs = df.iloc[i + 1:i + neighborcandles_right + 1]['high']
+            right_lows = df.iloc[i + 1:i + neighborcandles_right + 1]['low']
+            left_highs = df.iloc[max(0, i - neighborcandles_left):i]['high']
+            left_lows = df.iloc[max(0, i - neighborcandles_left):i]['low']
+
+            if len(right_highs) == neighborcandles_right:
+                is_ph = True
+                if len(left_highs) > 0:
+                    is_ph = current_high > left_highs.max()
+                is_ph = is_ph and current_high > right_highs.max()
+                if is_ph:
+                    ph_indices.append(df.index[i])
+                    ph_labels.append(('PH', current_high, df.index[i]))
+
+            if len(right_lows) == neighborcandles_right:
+                is_pl = True
+                if len(left_lows) > 0:
+                    is_pl = current_low < left_lows.min()
+                is_pl = is_pl and current_low < right_lows.min()
+                if is_pl:
+                    pl_indices.append(df.index[i])
+                    pl_labels.append(('PL', current_low, df.index[i]))
+
+        log_and_print(f"Identified {len(ph_indices)} PH and {len(pl_indices)} PL for {df['symbol'].iloc[0]}", "INFO")
+        return ph_labels, pl_labels, error_log
+    except Exception as e:
+        error_log.append({
+            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
+            "error": f"Failed to identify PH/PL: {str(e)}",
+            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
+        })
+        save_errors(error_log)
+        log_and_print(f"Failed to identify PH/PL: {str(e)}", "ERROR")
+        return [], [], error_log
+
 
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     """
@@ -249,68 +301,15 @@ def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
 
     return df, error_log
 
-def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
-    """Identify Parent Highs (PH) and Parent Lows (PL) based on neighbor candles."""
-    error_log = []
-    ph_indices = []
-    pl_indices = []
-    ph_labels = []
-    pl_labels = []
-
-    try:
-        for i in range(len(df)):
-            if i >= len(df) - neighborcandles_right:
-                continue
-
-            current_high = df.iloc[i]['high']
-            current_low = df.iloc[i]['low']
-            right_highs = df.iloc[i + 1:i + neighborcandles_right + 1]['high']
-            right_lows = df.iloc[i + 1:i + neighborcandles_right + 1]['low']
-            left_highs = df.iloc[max(0, i - neighborcandles_left):i]['high']
-            left_lows = df.iloc[max(0, i - neighborcandles_left):i]['low']
-
-            if len(right_highs) == neighborcandles_right:
-                is_ph = True
-                if len(left_highs) > 0:
-                    is_ph = current_high > left_highs.max()
-                is_ph = is_ph and current_high > right_highs.max()
-                if is_ph:
-                    ph_indices.append(df.index[i])
-                    ph_labels.append(('PH', current_high, df.index[i]))
-
-            if len(right_lows) == neighborcandles_right:
-                is_pl = True
-                if len(left_lows) > 0:
-                    is_pl = current_low < left_lows.min()
-                is_pl = is_pl and current_low < right_lows.min()
-                if is_pl:
-                    pl_indices.append(df.index[i])
-                    pl_labels.append(('PL', current_low, df.index[i]))
-
-        log_and_print(f"Identified {len(ph_indices)} PH and {len(pl_indices)} PL for {df['symbol'].iloc[0]}", "INFO")
-        return ph_labels, pl_labels, error_log
-    except Exception as e:
-        error_log.append({
-            "timestamp": datetime.now(pytz.timezone('Africa/Lagos')).strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-            "error": f"Failed to identify PH/PL: {str(e)}",
-            "broker": mt5.terminal_info().name if mt5.terminal_info() else "unknown"
-        })
-        save_errors(error_log)
-        log_and_print(f"Failed to identify PH/PL: {str(e)}", "ERROR")
-        return [], [], error_log
-
-def save_oldest_newest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels, n_left, n_right):
+def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
+    """Save candles: newest → oldest, candle_number 0 = newest. Fixed filenames."""
     error_log = []
     
-    # === Define and Create Subfolder ===
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    if not os.path.exists(target_subfolder):
-        os.makedirs(target_subfolder)
+    os.makedirs(target_subfolder, exist_ok=True)
     
-    # === UPDATED: Dynamic Filename Logic ===
-    dynamic_filename = f"old_new_l{n_left}_r{n_right}.json"
-    all_json_path = os.path.join(target_subfolder, dynamic_filename)
-    latest_json_path = os.path.join(target_subfolder, "oldest_newest_latestcandle.json")
+    all_json_path = os.path.join(target_subfolder, "newest_to_oldest.json")
+    latest_json_path = os.path.join(target_subfolder, "latest_completed_candle.json")  # same as above
     
     lagos_tz = pytz.timezone('Africa/Lagos')
     now = datetime.now(lagos_tz)
@@ -323,66 +322,53 @@ def save_oldest_newest(df, symbol, timeframe_str, timeframe_folder, ph_labels, p
             save_errors(error_log)
             return error_log
 
-        # 1. Prepare PH/PL lookup
-        ph_dict = {t: label for label, _, t in ph_labels}
-        pl_dict = {t: label for label, _, t in pl_labels}
-
-        # 2. Save ALL candles
         all_candles = []
-        for i, (ts, row) in enumerate(df[::-1].iterrows()):
+        for i, (ts, row) in enumerate(df.iloc[::-1].iterrows()):
             candle = row.to_dict()
             candle.update({
                 "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,
+                "candle_number": i,  # 0 = newest
                 "symbol": symbol,
-                "timeframe": timeframe_str,
-                "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL',
-                "neighbor_left": n_left,   # Optional: added for data tracking
-                "neighbor_right": n_right  # Optional: added for data tracking
+                "timeframe": timeframe_str
             })
             all_candles.append(candle)
 
-        # Write all candles to the dynamic filename (e.g., l10_r15.json)
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # 3. Save CANDLE #1 (second-most-recent)
+        # Latest completed candle: index 1 (since 0 is current forming)
         previous_latest_candle = all_candles[1].copy()
         candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
-        
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
         age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
 
         previous_latest_candle.update({"age": age_str, "id": "x"})
-        if "candle_number" in previous_latest_candle: del previous_latest_candle["candle_number"]
+        if "candle_number" in previous_latest_candle:
+            del previous_latest_candle["candle_number"]
 
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        log_and_print(f"SAVED: {dynamic_filename} for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"SAVED: newest_to_oldest.json for {symbol} {timeframe_str}", "SUCCESS")
 
     except Exception as e:
-        err = f"save_oldest_newest failed: {str(e)}"
+        err = f"save_newest_oldest_df failed: {str(e)}"
         log_and_print(err, "ERROR")
         error_log.append({"error": err, "timestamp": now.isoformat()})
         save_errors(error_log)
 
     return error_log
 
-def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, pl_labels, n_left, n_right):
+def save_oldest_newest_df(df, symbol, timeframe_str, timeframe_folder):
+    """Save candles: oldest → newest, candle_number 0 = oldest. Fixed filenames."""
     error_log = []
     
-    # === Define and Create Subfolder ===
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    if not os.path.exists(target_subfolder):
-        os.makedirs(target_subfolder, exist_ok=True)
+    os.makedirs(target_subfolder, exist_ok=True)
     
-    # === UPDATED: Dynamic Filename Logic ===
-    dynamic_filename = f"new_old_l{n_left}_r{n_right}.json"
-    all_json_path = os.path.join(target_subfolder, dynamic_filename)
-    latest_json_path = os.path.join(target_subfolder, "newest_oldest_latestcandle.json")
+    all_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+    latest_json_path = os.path.join(target_subfolder, "latest_completed_candle.json")
     
     lagos_tz = pytz.timezone('Africa/Lagos')
     now = datetime.now(lagos_tz)
@@ -395,11 +381,6 @@ def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, p
             save_errors(error_log)
             return error_log
 
-        # 1. Prepare PH/PL lookup
-        ph_dict = {t: label for label, _, t in ph_labels}
-        pl_dict = {t: label for label, _, t in pl_labels}
-
-        # 2. Save ALL candles (newest = 0)
         all_candles = []
         for i, (ts, row) in enumerate(df.iterrows()):
             candle = row.to_dict()
@@ -407,57 +388,43 @@ def save_newest_oldest(df, symbol, timeframe_str, timeframe_folder, ph_labels, p
                 "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
                 "candle_number": i,
                 "symbol": symbol,
-                "timeframe": timeframe_str,
-                "is_ph": ph_dict.get(ts, None) == 'PH',
-                "is_pl": pl_dict.get(ts, None) == 'PL',
-                "neighbor_left": n_left,
-                "neighbor_right": n_right
+                "timeframe": timeframe_str
             })
             all_candles.append(candle)
 
-        # Write to dynamic filename
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # 3. Save CANDLE #1 logic
-        previous_latest_candle = all_candles[1].copy()
+        # Latest completed candle: second from end (-2)
+        previous_latest_candle = all_candles[-2].copy()
         candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
-
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
         age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
 
         previous_latest_candle.update({"age": age_str, "id": "x"})
-        if "candle_number" in previous_latest_candle: 
+        if "candle_number" in previous_latest_candle:
             del previous_latest_candle["candle_number"]
 
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        log_and_print(f"SAVED: {dynamic_filename} for {symbol}", "SUCCESS")
+        log_and_print(f"SAVED: oldest_to_newest.json for {symbol} {timeframe_str}", "SUCCESS")
 
     except Exception as e:
-        err = f"save newest to oldest failed: {str(e)}"
+        err = f"save_oldest_newest_df failed: {str(e)}"
         log_and_print(err, "ERROR")
         error_log.append({"error": err, "timestamp": now.isoformat()})
         save_errors(error_log)
 
     return error_log
 
-
-def generate_and_save_chart(df, symbol, timeframe_str, timeframe_folder, neighborcandles_left, neighborcandles_right):
-    """Generate master charts and automatically save smaller sliced versions (pieces) in large format with dynamic naming."""
+def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
+    """Generate and save only the basic full chart. Sliced charts have been removed."""
     error_log = []
     
-    # === Define Paths ===
     chart_path = os.path.join(timeframe_folder, "chart.png")
     
-    # Dynamic filename for the analysed chart (e.g., oldest_newest_l10_r15.png)
-    dynamic_chart_name = f"l{neighborcandles_left}_r{neighborcandles_right}.png"
-    chart_analysed_path = os.path.join(timeframe_folder, dynamic_chart_name)
-    
-    candle_slices = [11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 121, 131, 141, 151, 161, 171, 181, 191, 201, 221, 231, 241, 251, 261, 271, 281, 291, 301] 
-
     try:
         custom_style = mpf.make_mpf_style(
             base_mpl_style="default",
@@ -467,80 +434,249 @@ def generate_and_save_chart(df, symbol, timeframe_str, timeframe_folder, neighbo
             )
         )
 
-        # --- STEP 1: Process Slices with LARGE SCREEN format ---
-        for count in candle_slices:
-            if len(df) >= count:
-                df_slice = df.iloc[-count:]
-                slice_path = os.path.join(timeframe_folder, f"chart_{count}.png")
-                
-                fig, axlist = mpf.plot(
-                    df_slice, type='candle', style=custom_style,
-                    title=f"{symbol} ({timeframe_str}) - Last {count}",
-                    returnfig=True, warn_too_much_data=5000
-                )
-                
-                fig.set_size_inches(25, 10)
-                for ax in axlist:
-                    ax.grid(False)
-                    for line in ax.get_lines():
-                        if line.get_label() == '': line.set_linewidth(0.5)
-                
-                fig.savefig(slice_path, bbox_inches="tight", dpi=100)
-                plt.close(fig)
-
-        # --- STEP 2: Save Full Basic Chart ---
+        # Generate and save only the full chart
         fig, axlist = mpf.plot(
-            df, type='candle', style=custom_style, volume=False,
-            title=f"{symbol} ({timeframe_str})", returnfig=True,
+            df, 
+            type='candle', 
+            style=custom_style, 
+            volume=False,
+            title=f"{symbol} ({timeframe_str})", 
+            returnfig=True,
             warn_too_much_data=5000
         )
+        
         fig.set_size_inches(25, 10)
         for ax in axlist:
             ax.grid(False)
             for line in ax.get_lines():
-                if line.get_label() == '': line.set_linewidth(0.5)
+                if line.get_label() == '':
+                    line.set_linewidth(0.5)
 
         fig.savefig(chart_path, bbox_inches="tight", dpi=200)
         plt.close(fig)
 
-        # --- STEP 3: Identify PH/PL ---
-        ph_labels, pl_labels, phpl_errors = identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right)
-        error_log.extend(phpl_errors)
+        log_and_print(f"SAVED: chart.png for {symbol} {timeframe_str}", "SUCCESS")
 
-        # --- STEP 4: Prepare Annotations ---
-        apds = []
-        if ph_labels:
-            ph_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in ph_labels: ph_series.loc[t] = price
-            apds.append(mpf.make_addplot(ph_series, type='scatter', markersize=100, marker='^', color='blue'))
-        
-        if pl_labels:
-            pl_series = pd.Series([np.nan] * len(df), index=df.index)
-            for _, price, t in pl_labels: pl_series.loc[t] = price
-            apds.append(mpf.make_addplot(pl_series, type='scatter', markersize=100, marker='v', color='purple'))
-
-        # --- STEP 5: Save Analyzed Chart (Using Dynamic Path) ---
-        fig, axlist = mpf.plot(
-            df, type='candle', style=custom_style, volume=False,
-            title=f"{symbol} ({timeframe_str}) - Analysed (L:{neighborcandles_left}, R:{neighborcandles_right})",
-            addplot=apds if apds else None, returnfig=True
-        )
-        fig.set_size_inches(25, 10)
-        for ax in axlist:
-            ax.grid(True, linestyle='--')
-            for line in ax.get_lines():
-                if line.get_label() == '': line.set_linewidth(0.5)
-
-        fig.savefig(chart_analysed_path, bbox_inches="tight", dpi=100)
-        plt.close(fig)
-
-        log_and_print(f"SAVED: {dynamic_chart_name} for {symbol}", "SUCCESS")
-
-        return chart_path, error_log, ph_labels, pl_labels
+        return chart_path, error_log
 
     except Exception as e:
         log_and_print(f"Error in chart generation: {e}", "ERROR")
-        return None, error_log, [], []    
+        error_log.append(str(e))
+        return None, error_log
+        
+def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
+    """Generate sliced charts + return list of slice counts actually generated"""
+    error_log = []
+
+    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
+    json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+
+    candle_slices = [11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 121, 131, 141, 151, 161, 171, 181, 191, 201, 221, 231, 241, 251, 261, 271, 281, 291, 301]
+
+    generated_slice_counts = []  # To pass to JSON slicers
+
+    try:
+        if not os.path.exists(json_path):
+            err = f"JSON file not found: {json_path}"
+            log_and_print(err, "ERROR")
+            error_log.append({"error": err})
+            return [], error_log
+
+        with open(json_path, 'r', encoding='utf-8') as f:
+            all_candles = json.load(f)
+
+        if len(all_candles) < 11:
+            err = f"Not enough candles in JSON (need at least 11) for {symbol} {timeframe_str}"
+            log_and_print(err, "WARNING")
+            return [], error_log
+
+        df = pd.DataFrame(all_candles)
+        df["time"] = pd.to_datetime(df["time"])
+        df = df.set_index("time")
+        df = df[["open", "high", "low", "close", "volume"]]
+        df = df.astype(float)
+        df = df.sort_index()
+
+        custom_style = mpf.make_mpf_style(
+            base_mpl_style="default",
+            marketcolors=mpf.make_marketcolors(
+                up="green", down="red", edge="inherit",
+                wick={"up": "green", "down": "red"}, volume="gray"
+            )
+        )
+
+        generated_slices = 0
+        for count in candle_slices:
+            if len(df) >= count:
+                df_slice = df.iloc[-count:]
+                slice_path = os.path.join(timeframe_folder, f"chart_{count}.png")
+
+                fig, axlist = mpf.plot(
+                    df_slice,
+                    type='candle',
+                    style=custom_style,
+                    title=f"{symbol} ({timeframe_str}) - Last {count}",
+                    returnfig=True,
+                    warn_too_much_data=5000
+                )
+
+                fig.set_size_inches(25, 10)
+                for ax in axlist:
+                    ax.grid(False)
+                    for line in ax.get_lines():
+                        if line.get_label() == '':
+                            line.set_linewidth(0.5)
+
+                fig.savefig(slice_path, bbox_inches="tight", dpi=100)
+                plt.close(fig)
+
+                generated_slice_counts.append(count)
+                generated_slices += 1
+
+        log_and_print(f"SAVED: {generated_slices} sliced charts (from JSON) for {symbol} {timeframe_str}", "SUCCESS")
+        return generated_slice_counts, error_log
+
+    except Exception as e:
+        log_and_print(f"Error in sliced chart generation (from JSON): {e}", "ERROR")
+        error_log.append({"error": str(e)})
+        return [], error_log
+    
+def save_sliced_oldest_to_newest_json(symbol, timeframe_str, timeframe_folder, slice_counts):
+    """Save sliced versions: oldest → newest (candle_number 0 = oldest) from full oldest_to_newest.json"""
+    error_log = []
+
+    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
+    full_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    now = datetime.now(lagos_tz)
+
+    try:
+        if not os.path.exists(full_json_path):
+            err = f"Full JSON not found for slicing: {full_json_path}"
+            log_and_print(err, "ERROR")
+            error_log.append({"error": err})
+            return error_log
+
+        with open(full_json_path, 'r', encoding='utf-8') as f:
+            all_candles = json.load(f)
+
+        if len(all_candles) < 11:
+            return error_log  # Not enough for smallest slice
+
+        generated = 0
+        for count in slice_counts:
+            if len(all_candles) < count:
+                continue
+
+            # Slice: last `count` candles → most recent
+            sliced_candles = all_candles[-count:]
+
+            # Full sliced JSON: oldest → newest in this slice
+            reordered = []
+            for i, candle in enumerate(sliced_candles):
+                c = candle.copy()
+                c["candle_number"] = i  # 0 = oldest in slice
+                reordered.append(c)
+
+            slice_json_path = os.path.join(target_subfolder, f"old_new_{count}.json")
+            with open(slice_json_path, 'w', encoding='utf-8') as f:
+                json.dump(reordered, f, indent=4)
+
+            # Latest completed candle in this slice: second from end (-2)
+            if len(reordered) >= 2:
+                prev_candle = reordered[-2].copy()
+                candle_time = lagos_tz.localize(datetime.strptime(prev_candle["time"], '%Y-%m-%d %H:%M:%S'))
+                delta = now - candle_time
+                total_hours = delta.total_seconds() / 3600
+                age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
+                prev_candle.update({"age": age_str, "id": "x"})
+                if "candle_number" in prev_candle:
+                    del prev_candle["candle_number"]
+
+                latest_slice_path = os.path.join(target_subfolder, f"latest_completed_candle.json")
+                with open(latest_slice_path, 'w', encoding='utf-8') as f:
+                    json.dump(prev_candle, f, indent=4)
+
+            generated += 1
+
+        if generated > 0:
+            log_and_print(f"SAVED: {generated} sliced old_new_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
+
+    except Exception as e:
+        err = f"save_sliced_oldest_to_newest_json failed: {str(e)}"
+        log_and_print(err, "ERROR")
+        error_log.append({"error": err, "timestamp": now.isoformat()})
+
+    return error_log
+
+def save_sliced_newest_to_oldest_json(symbol, timeframe_str, timeframe_folder, slice_counts):
+    """Save sliced versions: newest → oldest (candle_number 0 = newest) from full oldest_to_newest.json"""
+    error_log = []
+
+    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
+    full_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    now = datetime.now(lagos_tz)
+
+    try:
+        if not os.path.exists(full_json_path):
+            err = f"Full JSON not found for slicing: {full_json_path}"
+            log_and_print(err, "ERROR")
+            error_log.append({"error": err})
+            return error_log
+
+        with open(full_json_path, 'r', encoding='utf-8') as f:
+            all_candles = json.load(f)
+
+        if len(all_candles) < 11:
+            return error_log
+
+        generated = 0
+        for count in slice_counts:
+            if len(all_candles) < count:
+                continue
+
+            sliced_candles = all_candles[-count:]  # most recent count
+
+            # Reverse order: newest first
+            reordered = []
+            for i, candle in enumerate(reversed(sliced_candles)):
+                c = candle.copy()
+                c["candle_number"] = i  # 0 = newest
+                reordered.append(c)
+
+            slice_json_path = os.path.join(target_subfolder, f"new_old_{count}.json")
+            with open(slice_json_path, 'w', encoding='utf-8') as f:
+                json.dump(reordered, f, indent=4)
+
+            # Latest completed: index 1 (since 0 is newest = forming)
+            if len(reordered) >= 2:
+                prev_candle = reordered[1].copy()
+                candle_time = lagos_tz.localize(datetime.strptime(prev_candle["time"], '%Y-%m-%d %H:%M:%S'))
+                delta = now - candle_time
+                total_hours = delta.total_seconds() / 3600
+                age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
+                prev_candle.update({"age": age_str, "id": "x"})
+                if "candle_number" in prev_candle:
+                    del prev_candle["candle_number"]
+
+                latest_slice_path = os.path.join(target_subfolder, f"latest_completed_candle.json")
+                with open(latest_slice_path, 'w', encoding='utf-8') as f:
+                    json.dump(prev_candle, f, indent=4)
+
+            generated += 1
+
+        if generated > 0:
+            log_and_print(f"SAVED: {generated} sliced new_old_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
+
+    except Exception as e:
+        err = f"save_sliced_newest_to_oldest_json failed: {str(e)}"
+        log_and_print(err, "ERROR")
+        error_log.append({"error": err, "timestamp": now.isoformat()})
+
+    return error_log
 
 def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     error_log = []
@@ -677,77 +813,6 @@ def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     
     return error_log
 
-def delete_all_category_jsons():
-    """
-    Delete (empty) every market-type JSON file that ticks_value writes to.
-    - Resets the files to an empty structure (list or dict) so that the next run
-      starts from a clean slate.
-    - Logs every action and collects any errors in the same format as the rest
-      of the module.
-    Returns the list of error dictionaries (empty if everything went fine).
-    """
-    error_log = []
-
-    # ------------------------------------------------------------------ #
-    # 1. Exact same paths you already use in ticks_value
-    # ------------------------------------------------------------------ #
-    market_type_paths = {
-        "forex": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\forexvolumesandrisk.json",
-        "stocks": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\stocksvolumesandrisk.json",
-        "indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\indicesvolumesandrisk.json",
-        "synthetics": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\syntheticsvolumesandrisk.json",
-        "commodities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\commoditiesvolumesandrisk.json",
-        "crypto": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\cryptovolumesandrisk.json",
-        "equities": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\equitiesvolumesandrisk.json",
-        "energies": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\energiesvolumesandrisk.json",
-        "etfs": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\etfsvolumesandrisk.json",
-        "basket_indices": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\basketindicesvolumesandrisk.json",
-        "metals": r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\metalsvolumesandrisk.json"
-    }
-
-    # ------------------------------------------------------------------ #
-    # 2. Helper: what an *empty* file should contain for each type
-    # ------------------------------------------------------------------ #
-    def empty_structure(mkt_type: str):
-        """Return the correct empty JSON structure for a given market type."""
-        if mkt_type == "forex":
-            return {
-                "xxxchf": [], "xxxjpy": [], "xxxnzd": [], "xxxusd": [],
-                "usdxxx": [], "xxxaud": [], "xxxcad": [], "other": []
-            }
-        # All other categories are simple lists
-        return []
-
-    # ------------------------------------------------------------------ #
-    # 3. Iterate over every file and wipe it
-    # ------------------------------------------------------------------ #
-    for mkt_type, json_path in market_type_paths.items():
-        empty_data = empty_structure(mkt_type)
-        try:
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(empty_data, f, indent=4)
-            #log_and_print(f"[{mkt_type.upper()}] Emptied JSON → {json_path}","SUCCESS")
-        except Exception as e:
-            err = {
-                "timestamp": datetime.now(pytz.timezone('Africa/Lagos'))
-                             .strftime('%Y-%m-%d %H:%M:%S.%f+01:00'),
-                "error": f"Failed to empty {json_path}: {str(e)}",
-                "broker": "N/A"          # no broker context here
-            }
-            error_log.append(err)
-            log_and_print(
-                f"Failed to empty {json_path}: {str(e)}",
-                "ERROR"
-            )
-
-    # ------------------------------------------------------------------ #
-    # 4. Persist any errors (same helper you already use elsewhere)
-    # ------------------------------------------------------------------ #
-    if error_log:
-        save_errors(error_log)
-
-    return error_log
-
 def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
     """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions."""
     error_log = []
@@ -773,95 +838,6 @@ def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
         error_log.append({"error": err_msg})
 
     return error_log
-
-def delete_all_calculated_risk_jsons():
-    """Run the updateorders script for M5 timeframe."""
-    try:
-        calculateprices.delete_all_calculated_risk_jsons()
-        print("symbols prices calculated ")
-    except Exception as e:
-        print(f"Error when calculating symbols prices: {e}")
-
-def calculate_symbols_sl_tp_prices():
-    """Run the updateorders script for M5 timeframe."""
-    try:
-        calculateprices.main()
-        print("symbols prices calculated ")
-    except Exception as e:
-        print(f"Error when calculating symbols prices: {e}")
-
-def delete_issue_jsons():
-    """
-    Deletes all issue / report JSON files for **ALL** brokers (real, demo, test, …)
-    before `place_real_orders()` runs – guarantees a clean slate.
-
-    Returns:
-        dict: Summary of deleted files per broker (and global schedule)
-    """
-    
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    REPORT_SUFFIX = "forex_order_report.json"
-    ISSUES_FILE   = "ordersissues.json"
-
-    # Add any other JSON files you want to wipe out here
-    EXTRA_FILES_TO_DELETE = [
-        # "debug_orders.json",
-        # "temp_pending.json"
-    ]
-
-    deleted_summary = {}
-
-    # --------------------------------------------------------------
-    # 1. Walk through every broker folder (no account-type filter)
-    # --------------------------------------------------------------
-    base_path = Path(BASE_INPUT_DIR)
-    if not base_path.exists():
-        print(f"[CLEAN] Base directory not found: {base_path}")
-        return deleted_summary
-
-    for broker_dir in base_path.iterdir():
-        if not broker_dir.is_dir():
-            continue
-
-        user_brokerid = broker_dir.name
-        deleted_files = []
-        risk_folders = [p.name for p in broker_dir.iterdir()
-                        if p.is_dir() and p.name.startswith("risk_")]
-
-        for risk_folder in risk_folders:
-            risk_path = broker_dir / risk_folder
-
-            for file_name in [ISSUES_FILE, REPORT_SUFFIX] + EXTRA_FILES_TO_DELETE:
-                file_path = risk_path / file_name
-                if file_path.exists():
-                    try:
-                        file_path.unlink()          # atomic delete
-                        deleted_files.append(str(file_path))
-                        print(f"[CLEAN] Deleted: {file_path}")
-                    except Exception as e:
-                        print(f"[CLEAN] Failed to delete {file_path}: {e}")
-
-        deleted_summary[user_brokerid] = deleted_files or "No issue/report files found"
-
-    # --------------------------------------------------------------
-    # 2. Delete the global schedule file (if it exists)
-    # --------------------------------------------------------------
-    global_schedule = r"C:\xampp\htdocs\chronedge\synarex\fullordersschedules.json"
-    if Path(global_schedule).exists():
-        try:
-            Path(global_schedule).unlink()
-            print(f"[CLEAN] Deleted global: {global_schedule}")
-            deleted_summary["global_schedule"] = global_schedule
-        except Exception as e:
-            print(f"[CLEAN] Failed to delete global schedule: {e}")
-
-    # --------------------------------------------------------------
-    # 3. Final summary
-    # --------------------------------------------------------------
-    total_deleted = sum(len(v) if isinstance(v, list) else 0
-                        for v in deleted_summary.values())
-    print(f"[CLEAN] Pre-order cleanup complete – {total_deleted} file(s) removed.")
-    return deleted_summary
 
 def backup_developers_dictionary():
     main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json")
@@ -917,708 +893,6 @@ def backup_developers_dictionary():
     write_json(main_path, empty_dict)
     write_json(backup_path, empty_dict)
     print("Created fresh empty developersdictionary.json and backup") 
-
-def placeallorders():
-    """Run the updateorders script for M5 timeframe."""
-    try:
-        placeorders.main()
-        print("all orders placed")
-    except Exception as e:
-        print(f"Error placing all orders: {e}")
-
-def delete_news_sensitive_orders_during_news():
-    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\synarex\requirements.json"
-    
-    # === NEWS-SENSITIVE CATEGORIES (updated) ===
-    NEWS_SENSITIVE_CATEGORIES = {"forex", "basket_indices", "energies", "metals"}
-
-    WINDOW_BEFORE_MINUTES = 20
-    WINDOW_AFTER_MINUTES  = 1
-
-    lagos_tz = pytz.timezone("Africa/Lagos")
-    now_dt = datetime.now(lagos_tz)
-
-    # === Load and parse news time ===
-    try:
-        with open(REQUIREMENTS_JSON, "r", encoding="utf-8") as f:
-            req = json.load(f)
-        news_raw = req.get("news", "").strip()
-        if not news_raw:
-            log_and_print("No news time set → skip protection", "INFO")
-            return
-    except Exception as e:
-        log_and_print(f"Failed to read requirements.json: {e}", "WARNING")
-        return
-
-    try:
-        news_dt = datetime.strptime(news_raw, "%Y-%m-%d %I:%M %p")
-        news_dt = lagos_tz.localize(news_dt)
-    except ValueError:
-        try:
-            # Fallback format if user uses 24-hour
-            news_dt = datetime.strptime(news_raw, "%Y-%m-%d %H:%M")
-            news_dt = lagos_tz.localize(news_dt)
-        except:
-            log_and_print(f"Invalid news format '{news_raw}' → use 'YYYY-MM-DD h:mm AM/PM' or 'YYYY-MM-DD HH:MM'", "ERROR")
-            return
-
-    time_to_news = (news_dt - now_dt).total_seconds()
-    time_since_news = (now_dt - news_dt).total_seconds()
-
-    if time_to_news > (WINDOW_BEFORE_MINUTES * 60):
-        log_and_print(f"Too early → {time_to_news/60:.1f} min to news", "INFO")
-        return
-    if time_since_news > (WINDOW_AFTER_MINUTES * 60):
-        log_and_print(f"News passed → protection off", "INFO")
-        return
-
-    log_and_print(f"NEWS PROTECTION ACTIVE | News: {news_raw} | "
-                  f"Delta: {'-' if time_to_news < 0 else ''}{abs(time_to_news)/60:.1f} min", "CRITICAL")
-
-    # === Load symbol → category mapping ===
-    allsymbols_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    symbol_to_category = {}
-
-    if os.path.exists(allsymbols_path):
-        try:
-            with open(allsymbols_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            for risk_key, markets in data.items():
-                if not isinstance(markets, dict):
-                    continue
-                for category, items in markets.items():
-                    if not isinstance(items, list):
-                        continue
-                    for item in items:
-                        symbol = item.get("symbol") or item.get("Symbol")
-                        if symbol:
-                            symbol_to_category[symbol.strip()] = category.lower()
-        except Exception as e:
-            log_and_print(f"Failed to load symbol categories: {e}", "ERROR")
-    else:
-        log_and_print(f"Symbol mapping file not found: {allsymbols_path}", "ERROR")
-
-    # Add common Deriv-specific symbol aliases (very important!)
-    extra_mappings = {
-        "US Oil": "energies",
-        "UK Oil": "energies",
-        "Oil/USD": "energies",
-        "XAUUSD": "metals",
-        "XAGUSD": "metals",
-        "Gold": "metals",
-        "Silver": "metals",
-    }
-    symbol_to_category.update(extra_mappings)
-
-    total_deleted = 0
-
-    for user_brokerid, cfg in developersdictionary.items():
-        log_and_print(f"Connecting to {user_brokerid.upper()} for news protection...", "INFO")
-
-        if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
-                              password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
-            log_and_print(f"{user_brokerid}: init failed", "ERROR")
-            continue
-        if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
-            log_and_print(f"{user_brokerid}: login failed", "ERROR")
-            mt5.shutdown()
-            continue
-
-        positions = mt5.positions_get() or []
-        pending = mt5.orders_get() or []
-
-        # Log positions
-        if positions:
-            log_and_print(f"{user_brokerid} — OPEN POSITIONS:", "INFO")
-            for p in positions:
-                cat = symbol_to_category.get(p.symbol, "unknown")
-                sensitive = "NEWS-SENSITIVE" if cat in NEWS_SENSITIVE_CATEGORIES else "safe"
-                log_and_print(f"  → {p.symbol} | Vol:{p.volume:.2f} | {'BUY' if p.type==0 else 'SELL'} | "
-                              f"Entry:{p.price_open:.5f} | Ticket:{p.ticket} | Cat:{cat} [{sensitive}]", "INFO")
-
-        # Log pending orders
-        if pending:
-            log_and_print(f"{user_brokerid} — PENDING ORDERS:", "INFO")
-            order_types = ["BUY_LIMIT","SELL_LIMIT","BUY_STOP","SELL_STOP","BUY_STOP_LIMIT","SELL_STOP_LIMIT"]
-            for o in pending:
-                if o.type > 5: continue
-                cat = symbol_to_category.get(o.symbol, "unknown")
-                sensitive = "NEWS-SENSITIVE" if cat in NEWS_SENSITIVE_CATEGORIES else "safe"
-                log_and_print(f"  → {o.symbol} | Vol:{o.volume_current:.2f} | {order_types[o.type]} | "
-                              f"Price:{o.price_open:.5f} | Ticket:{o.ticket} | Cat:{cat} [{sensitive}]", "INFO")
-
-        deleted = 0
-
-        # === Close sensitive positions ===
-        for p in positions:
-            cat = symbol_to_category.get(p.symbol, "").lower()
-            if cat not in NEWS_SENSITIVE_CATEGORIES:
-                continue
-
-            tick = mt5.symbol_info_tick(p.symbol)
-            if not tick:
-                log_and_print(f"Cannot get tick for {p.symbol}, skipping close", "WARNING")
-                continue
-
-            close_price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": p.symbol,
-                "volume": p.volume,
-                "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-                "position": p.ticket,
-                "price": close_price,
-                "deviation": 100,
-                "magic": 999999,
-                "comment": "NEWS_PROTECTION_CLOSE",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            result = mt5.order_send(request)
-            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                log_and_print(f"{user_brokerid}: CLOSED {p.symbol} ({cat}) - News Protection", "WARNING")
-                deleted += 1
-            else:
-                log_and_print(f"{user_brokerid}: FAILED to close {p.symbol} | Retcode: {result.retcode if result else 'None'}", "ERROR")
-
-        # === Cancel sensitive pending orders ===
-        for o in pending:
-            if o.type > 5:
-                continue
-            cat = symbol_to_category.get(o.symbol, "").lower()
-            if cat not in NEWS_SENSITIVE_CATEGORIES:
-                continue
-
-            request = {
-                "action": mt5.TRADE_ACTION_REMOVE,
-                "order": o.ticket
-            }
-            result = mt5.order_send(request)
-            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                log_and_print(f"{user_brokerid}: CANCELED pending {o.symbol} ({cat}) #{o.ticket}", "WARNING")
-                deleted += 1
-            else:
-                log_and_print(f"{user_brokerid}: FAILED to cancel order {o.ticket} | Retcode: {result.retcode if result else 'None'}", "ERROR")
-
-        total_deleted += deleted
-        log_and_print(f"{user_brokerid}: {deleted} sensitive trades removed", "SUCCESS" if deleted > 0 else "INFO")
-        mt5.shutdown()
-
-    log_and_print(f"NEWS PROTECTION COMPLETE → {total_deleted} sensitive trades deleted", "CRITICAL")
-
-def BreakevenRunningPositions():
-    backup_developers_dictionary()
-    delete_news_sensitive_orders_during_news()
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    BREAKEVEN_REPORT = "breakeven_report.json"
-    ISSUES_FILE = "ordersissues.json"
-
-    # === BREAKEVEN STAGES ===
-    BE_STAGE_1 = 0.25   # SL moves here at ratio 1
-    BE_STAGE_2 = 0.50   # SL moves here at ratio 2
-    RATIO_1 = 1.0
-    RATIO_2 = 2.0
-
-    # === Helper: Round to symbol digits ===
-    def _round_price(price, symbol):
-        digits = mt5.symbol_info(symbol).digits
-        return round(price, digits)
-
-    # === Helper: Price at ratio ===
-    def _ratio_price(entry, sl, tp, ratio, is_buy):
-        risk = abs(entry - sl) or 1e-9
-        return entry + risk * ratio * (1 if is_buy else -1)
-
-    # === Helper: Modify SL ===
-    def _modify_sl(pos, new_sl_raw):
-        new_sl = _round_price(new_sl_raw, pos.symbol)
-        req = {
-            "action": mt5.TRADE_ACTION_SLTP,
-            "symbol": pos.symbol,
-            "position": pos.ticket,
-            "sl": new_sl,
-            "tp": pos.tp,
-            "magic": pos.magic,
-            "comment": pos.comment
-        }
-        return mt5.order_send(req)
-
-    # === Helper: Print block ===
-    def _log_block(lines):
-        log_and_print("\n".join(lines), "INFO")
-
-    # === Helper: Safe JSON read (handles corrupted/multi-object files) ===
-    def _safe_read_json(path):
-        if not path.exists():
-            return []
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if not content:
-                    return []
-                # Handle multiple JSON objects by parsing line-by-line
-                objs = []
-                for line in content.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                        if isinstance(obj, list):
-                            objs.extend(obj)
-                        elif isinstance(obj, dict):
-                            objs.append(obj)
-                    except json.JSONDecodeError:
-                        continue
-                return objs
-        except Exception as e:
-            log_and_print(f"Failed to read {path.name}: {e}. Starting fresh.", "WARNING")
-            return []
-
-    # === Helper: Safe JSON write ===
-    def _safe_write_json(path, data):
-        try:
-            # Ensure parent directory exists
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-                f.write("\n")  # Ensure file ends cleanly
-            return True
-        except Exception as e:
-            log_and_print(f"Failed to write {path.name}: {e}", "ERROR")
-            return False
-
-    # ------------------------------------------------------------------ #
-    for user_brokerid, cfg in developersdictionary.items():
-        # ---- MT5 Connection ------------------------------------------------
-        if not mt5.initialize(path=cfg["TERMINAL_PATH"], login=int(cfg["LOGIN_ID"]),
-                              password=cfg["PASSWORD"], server=cfg["SERVER"], timeout=30000):
-            log_and_print(f"{user_brokerid}: MT5 init failed", "ERROR")
-            continue
-        if not mt5.login(int(cfg["LOGIN_ID"]), cfg["PASSWORD"], cfg["SERVER"]):
-            log_and_print(f"{user_brokerid}: MT5 login failed", "ERROR")
-            mt5.shutdown()
-            continue
-
-        broker_dir = Path(BASE_INPUT_DIR) / user_brokerid
-        report_path = broker_dir / BREAKEVEN_REPORT
-        issues_path = broker_dir / ISSUES_FILE
-
-        # Load existing report (unchanged)
-        existing_report = []
-        if report_path.exists():
-            try:
-                with report_path.open("r", encoding="utf-8") as f:
-                    existing_report = json.load(f)
-            except Exception as e:
-                log_and_print(f"{user_brokerid}: Failed to load breakeven_report.json – {e}", "WARNING")
-
-        issues = []
-        now = datetime.now(pytz.timezone("Africa/Lagos")).strftime("%Y-%m-%d %H:%M:%S.%f%z")
-        now = f"{now[:-2]}:{now[-2:]}"  # Format +01:00 properly
-        updated = pending_info = 0
-
-        positions = mt5.positions_get() or []
-        pending   = mt5.orders_get()   or []
-
-        # ---- Group pending orders by symbol ----
-        pending_by_sym = {}
-        for o in pending:
-            if o.type not in (mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT):
-                continue
-            pending_by_sym.setdefault(o.symbol, {})[o.type] = {
-                "price": o.price_open, "sl": o.sl, "tp": o.tp
-            }
-
-        # ==================================================================
-        # === PROCESS RUNNING POSITIONS ===
-        # ==================================================================
-        for pos in positions:
-            if pos.sl == 0 or pos.tp == 0:
-                continue
-
-            sym = pos.symbol
-            tick = mt5.symbol_info_tick(sym)
-            info = mt5.symbol_info(sym)
-            if not tick or not info:
-                continue
-
-            cur_price = tick.ask if pos.type == mt5.ORDER_TYPE_BUY else tick.bid
-            is_buy = pos.type == mt5.ORDER_TYPE_BUY
-            typ = "BUY" if is_buy else "SELL"
-
-            # Key levels
-            r1_price = _ratio_price(pos.price_open, pos.sl, pos.tp, RATIO_1, is_buy)
-            r2_price = _ratio_price(pos.price_open, pos.sl, pos.tp, RATIO_2, is_buy)
-            be_025   = _ratio_price(pos.price_open, pos.sl, pos.tp, BE_STAGE_1, is_buy)
-            be_050   = _ratio_price(pos.price_open, pos.sl, pos.tp, BE_STAGE_2, is_buy)
-
-            stage1 = (cur_price >= r1_price) if is_buy else (cur_price <= r1_price)
-            stage2 = (cur_price >= r2_price) if is_buy else (cur_price <= r2_price)
-
-            # Base block
-            block = [
-                f"┌─ {user_brokerid} ─ {sym} ─ {typ} (ticket {pos.ticket})",
-                f"│ Entry : {pos.price_open:.{info.digits}f}   SL : {pos.sl:.{info.digits}f}   TP : {pos.tp:.{info.digits}f}",
-                f"│ Now   : {cur_price:.{info.digits}f}"
-            ]
-
-            # === STAGE 2: SL to 0.50 ===
-            if stage2 and abs(pos.sl - be_050) > info.point:
-                res = _modify_sl(pos, be_050)
-                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                    block += [
-                        f"│ BE @ 0.25 → {be_025:.{info.digits}f}",
-                        f"│ BE @ 0.50 → {be_050:.{info.digits}f}  ← SL MOVED",
-                        f"└─ All left to market"
-                    ]
-                    updated += 1
-                else:
-                    issues.append({"symbol": sym, "diagnosed_reason": "SL modify failed (stage 2)"})
-                    block.append(f"└─ SL move FAILED")
-                _log_block(block)
-                continue
-
-            # === STAGE 1: SL to 0.25 ===
-            if stage1 and abs(pos.sl - be_025) > info.point:
-                res = _modify_sl(pos, be_025)
-                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                    block += [
-                        f"│ BE @ 0.25 → {be_025:.{info.digits}f}  ← SL MOVED",
-                        f"│ Waiting ratio 2 @ {r2_price:.{info.digits}f} → BE @ 0.50 → {be_050:.{info.digits}f}"
-                    ]
-                    updated += 1
-                else:
-                    issues.append({"symbol": sym, "diagnosed_reason": "SL modify failed (stage 1)"})
-                    block.append(f"└─ SL move FAILED")
-                _log_block(block)
-                continue
-
-            # === STAGE 1 REACHED, WAITING STAGE 2 ===
-            if stage1:
-                block += [
-                    f"│ BE @ 0.25 → {be_025:.{info.digits}f}",
-                    f"│ Waiting ratio 2 @ {r2_price:.{info.digits}f} → BE @ 0.50 → {be_050:.{info.digits}f}"
-                ]
-            # === WAITING STAGE 1 ===
-            else:
-                block += [
-                    f"│ Waiting ratio 1 @ {r1_price:.{info.digits}f} → BE @ 0.25 → {be_025:.{info.digits}f}"
-                ]
-
-            block.append("")
-            _log_block(block)
-
-        # ==================================================================
-        # === PROCESS PENDING ORDERS (INFO ONLY) ===
-        # ==================================================================
-        for sym, orders in pending_by_sym.items():
-            for otype, o in orders.items():
-                if o["sl"] == 0 or o["tp"] == 0:
-                    continue
-                info = mt5.symbol_info(sym)
-                if not info:
-                    continue
-                is_buy = otype == mt5.ORDER_TYPE_BUY_LIMIT
-                typ = "BUY_LIMIT" if is_buy else "SELL_LIMIT"
-
-                r1_price = _ratio_price(o["price"], o["sl"], o["tp"], RATIO_1, is_buy)
-                r2_price = _ratio_price(o["price"], o["sl"], o["tp"], RATIO_2, is_buy)
-                be_025   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_1, is_buy)
-                be_050   = _ratio_price(o["price"], o["sl"], o["tp"], BE_STAGE_2, is_buy)
-
-                block = [
-                    f"┌─ {user_brokerid} ─ {sym} ─ PENDING {typ}",
-                    f"│ Entry : {o['price']:.{info.digits}f}   SL : {o['sl']:.{info.digits}f}   TP : {o['tp']:.{info.digits}f}",
-                    f"│ Target 1 → {r1_price:.{info.digits}f}  |  BE @ 0.25 → {be_025:.{info.digits}f}",
-                    f"│ Target 2 → {r2_price:.{info.digits}f}  |  BE @ 0.50 → {be_050:.{info.digits}f}",
-                    f"└─ Order not running – waiting…"
-                ]
-                _log_block(block)
-                pending_info += 1
-
-        # === SAVE BREAKEVEN REPORT (unchanged) ===
-        _safe_write_json(report_path, existing_report)
-
-        # === SAVE ISSUES – ROBUST MERGE ===
-        current_issues = _safe_read_json(issues_path)
-        all_issues = current_issues + issues
-        _safe_write_json(issues_path, all_issues)
-
-        mt5.shutdown()
-        log_and_print(
-            f"{user_brokerid}: Breakeven done – SL Updated: {updated} | Pending Info: {pending_info}",
-            "SUCCESS"
-        )
-
-    log_and_print("All brokers breakeven processed.", "SUCCESS")
-    
-def verifying_brokers():
-    # --- CONFIGURATION ---
-    BROKERS_JSON = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
-    USERS_JSON   = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
-    REQUIREMENTS_JSON = r"C:\xampp\htdocs\chronedge\synarex\requirements.json"
-
-    # Load requirements
-    if not os.path.exists(REQUIREMENTS_JSON):
-        print(f"CRITICAL: {REQUIREMENTS_JSON} not found!", "CRITICAL")
-        return
-
-    try:
-        with open(REQUIREMENTS_JSON, "r", encoding="utf-8") as f:
-            req_data = json.load(f)
-        
-        BALANCE_REQUIRED = float(req_data.get("minimum_deposit", 0))
-        CONTRACT_DURATION_DAYS = int(req_data.get("contract_duration", 30))
-        
-        if BALANCE_REQUIRED <= 0 or CONTRACT_DURATION_DAYS <= 0:
-            print(f"CRITICAL: Invalid values in {REQUIREMENTS_JSON}", "CRITICAL")
-            return
-            
-        print(f"Requirements loaded → Min Deposit: ${BALANCE_REQUIRED:.2f} | Duration: {CONTRACT_DURATION_DAYS} days", "INFO")
-    except Exception as e:
-        print(f"CRITICAL: Failed to load {REQUIREMENTS_JSON}: {e}", "CRITICAL")
-        return
-
-    if not os.path.exists(BROKERS_JSON):
-        print(f"CRITICAL: {BROKERS_JSON} not found!", "CRITICAL")
-        return
-
-    # Load active brokers
-    try:
-        with open(BROKERS_JSON, "r", encoding="utf-8") as f:
-            brokers_dict = json.load(f)
-    except Exception as e:
-        print(f"Failed to load brokers JSON: {e}", "CRITICAL")
-        return
-
-    # Load historical/expired users
-    users_dict = {}
-    if os.path.exists(USERS_JSON):
-        try:
-            with open(USERS_JSON, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    users_dict = loaded
-        except Exception as e:
-            print(f"Warning: Could not load users JSON: {e}. Starting fresh.", "WARNING")
-
-    move_list = []  # Brokers to move (expired or low balance)
-    updated_any = False
-    lagos_tz = pytz.timezone("Africa/Lagos")
-    now_dt = datetime.now(lagos_tz)
-    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-    now_ts = int(now_dt.timestamp())
-
-    def parse_start_date(date_val):
-        if not date_val or str(date_val).strip().lower() in ("", "none", "null", "unknown"):
-            return None
-        date_str = str(date_val).strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-            try:
-                dt = datetime.strptime(date_str, fmt)
-                return lagos_tz.localize(dt) if dt.tzinfo is None else dt
-            except ValueError:
-                continue
-        return None
-
-    # --- PHASE 1: Check contract time & mark for move if ≤5 days left ---
-    for user_brokerid, cfg in list(brokers_dict.items()):
-        current_start_str = cfg.get("EXECUTION_START_DATE")
-        current_start_dt = parse_start_date(current_start_str)
-
-        # Fix missing start date from history
-        history_str = cfg.get("EXECUTION_DATES_HISTORY", "")
-        if not current_start_dt and history_str:
-            parts = [p.strip() for p in history_str.split(",") if p.strip() and p.lower() not in ("none", "unknown")]
-            if parts:
-                restored = parse_start_date(parts[0])
-                if restored:
-                    current_start_dt = restored
-                    cfg["EXECUTION_START_DATE"] = restored.strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"**{user_brokerid}**: Start date restored from history", "INFO")
-                    updated_any = True
-
-        # Calculate days left with precision
-        if current_start_dt is None:
-            days_left = CONTRACT_DURATION_DAYS
-            cfg["EXECUTION_START_DATE"] = now_str
-            current_start_dt = now_dt
-            updated_any = True
-        else:
-            delta = now_dt - current_start_dt
-            days_passed = delta.days + (delta.seconds / 86400.0)
-            days_left = max(0, CONTRACT_DURATION_DAYS - days_passed)
-
-        days_left_int = int(days_left)
-        cfg["CONTRACT_DAYS_LEFT"] = days_left_int
-        updated_any = True
-
-        # If 5 or fewer days remain → EXPIRE & MOVE
-        if days_left_int <= 5:
-            reason = "Contract Expired (≤5 days left)"
-            print(f"**{user_brokerid}**: {reason} → {days_left_int} days remaining → Will MOVE", "WARNING")
-            move_list.append((user_brokerid, reason))
-
-    # --- PHASE 2: MT5 Live Update (only for brokers NOT being moved yet) ---
-    brokers_to_remove_due_to_balance = []
-
-    for user_brokerid, cfg in list(brokers_dict.items()):
-        # Skip if already marked for move due to time
-        if any(user_brokerid == b[0] for b in move_list):
-            continue
-
-        print(f"**{user_brokerid}**: Connecting to MT5 for live update...", "INFO")
-
-        terminal_path = cfg.get("TERMINAL_PATH")
-        login_id = cfg.get("LOGIN_ID")
-        password = cfg.get("PASSWORD")
-        server = cfg.get("SERVER")
-
-        if not all([terminal_path, login_id, password, server]):
-            print(f"**{user_brokerid}**: Missing credentials → Will move", "ERROR")
-            move_list.append((user_brokerid, "Missing credentials"))
-            continue
-
-        try:
-            if not mt5.initialize(path=terminal_path, timeout=30000):
-                print(f"**{user_brokerid}**: MT5 init failed → Will move", "ERROR")
-                move_list.append((user_brokerid, "MT5 init failed"))
-                continue
-
-            if not mt5.login(int(login_id), password=password, server=server):
-                print(f"**{user_brokerid}**: Login failed → Will move", "ERROR")
-                mt5.shutdown()
-                move_list.append((user_brokerid, "Login failed"))
-                continue
-
-            account_info = mt5.account_info()
-            if not account_info:
-                print(f"**{user_brokerid}**: No account info → Will move", "ERROR")
-                mt5.shutdown()
-                move_list.append((user_brokerid, "No account info"))
-                continue
-
-            current_balance = round(account_info.balance, 2)
-            start_dt = parse_start_date(cfg.get("EXECUTION_START_DATE"))
-            from_ts = int(start_dt.timestamp()) if start_dt else now_ts
-
-            # Fetch realized P&L since start date
-            deals = mt5.history_deals_get(from_ts, now_ts + 120)
-            realized_pnl = 0.0
-            total_trades = won_trades = lost_trades = 0
-            wins_by_symbol = {}
-            losses_by_symbol = {}
-
-            if deals:
-                for deal in deals:
-                    if deal.entry not in (1, 3):
-                        continue
-                    profit = deal.profit
-                    symbol = deal.symbol or "Unknown"
-                    realized_pnl += profit
-                    if profit > 0:
-                        won_trades += 1
-                        wins_by_symbol[symbol] = wins_by_symbol.get(symbol, 0) + profit
-                    elif profit < 0:
-                        lost_trades += 1
-                        losses_by_symbol[symbol] = losses_by_symbol.get(symbol, 0) + profit
-                    else:
-                        won_trades += 1
-                total_trades = won_trades + lost_trades
-
-            realized_pnl = round(realized_pnl, 2)
-            wins_list = [f"{s}:{p:.2f}" for s, p in sorted(wins_by_symbol.items(), key=lambda x: -x[1])]
-            losses_list = [f"{s}:{p:.2f}" for s, p in sorted(losses_by_symbol.items(), key=lambda x: x[1])]
-
-            trades_summary = (
-                f"{total_trades}:Trades, {won_trades}:Won, {lost_trades}:Lost, "
-                f"symbolsthatlost:({', '.join(losses_list) if losses_list else 'None'}), "
-                f"symbolsthatwon:({', '.join(wins_list) if wins_list else 'None'})"
-            )
-
-            # Update live stats
-            cfg["BROKER_BALANCE"] = current_balance
-            cfg["PROFITANDLOSS"] = realized_pnl
-            cfg["TRADES"] = trades_summary
-
-            print(f"**{user_brokerid}**: Live → Bal: ${current_balance:.2f} | P&L: {realized_pnl:+.2f} | Days Left: {cfg['CONTRACT_DAYS_LEFT']}", "INFO")
-
-            # Check minimum balance
-            if current_balance < BALANCE_REQUIRED:
-                print(f"**{user_brokerid}**: Balance ${current_balance:.2f} < ${BALANCE_REQUIRED:.2f} → Will move", "CRITICAL")
-                brokers_to_remove_due_to_balance.append(user_brokerid)
-
-            mt5.shutdown()
-            updated_any = True
-
-        except Exception as e:
-            print(f"**{user_brokerid}**: MT5 error: {e} → Will move", "ERROR")
-            move_list.append((user_brokerid, "MT5 error"))
-            if 'mt5' in locals():
-                mt5.shutdown()
-            continue
-
-    # Add low-balance brokers to move list
-    for b in brokers_to_remove_due_to_balance:
-        if not any(b == x[0] for x in move_list):
-            move_list.append((b, "Balance too low"))
-
-    # --- PHASE 3: MOVE all flagged brokers ---
-    moved_count = 0
-    for user_brokerid, reason in move_list:
-        if user_brokerid not in brokers_dict:
-            continue
-        broker_data = brokers_dict.pop(user_brokerid)
-
-        # Clean sensitive data
-        for field in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
-            broker_data.pop(field, None)
-
-        broker_data["MOVED_REASON"] = reason
-        broker_data["MOVED_TIMESTAMP"] = now_str
-
-        users_dict[user_brokerid] = broker_data
-        print(f"**{user_brokerid}**: MOVED → {reason} | Final Bal: ${broker_data.get('BROKER_BALANCE', 0):.2f}", "SUCCESS")
-        moved_count += 1
-        updated_any = True
-
-    # --- SAVE ---
-    try:
-        if moved_count == 0:
-            print("No brokers moved → Saving active snapshot", "INFO")
-            for name, data in brokers_dict.items():
-                clean = data.copy()
-                for f in ("TERMINAL_PATH", "BASE_FOLDER", "RESET_EXECUTION_DATE_AND_BROKER_BALANCE"):
-                    clean.pop(f, None)
-                clean["LAST_SEEN_ACTIVE"] = now_str
-                users_dict[name] = clean
-
-        with open(BROKERS_JSON, "w", encoding="utf-8") as f:
-            json.dump(brokers_dict, f, indent=4, ensure_ascii=False)
-            f.write("\n")
-        print("developersdictionary.json → Saved (only active)", "SUCCESS")
-
-        with open(USERS_JSON, "w", encoding="utf-8") as f:
-            json.dump(users_dict, f, indent=4, ensure_ascii=False)
-            f.write("\n")
-        print(f"updatedusersdictionary.json → Saved ({len(users_dict)} total records)", "SUCCESS")
-
-    except Exception as e:
-        print(f"CRITICAL: Failed to save files: {e}", "CRITICAL")       
-        
-def updating_database_record():
-    try:
-        timeorders.current_time()
-        print("updated")
-    except Exception as e:
-        print(f"Error updating {e}")
-
-def calc_and_placeorders():  
-    verifying_brokers()
-    calculate_symbols_sl_tp_prices() 
-    placeallorders()
 
 def clear_chart_folder(base_folder: str):
     """Delete ONLY symbols that have NO valid OB-none-OI record on 15m-4h."""
@@ -1799,9 +1073,7 @@ def clear_unknown_broker():
         print("   Expected format: Deriv 2, Bybit 6, Exness 1, etc.")
 
 def fetch_charts_all_brokers(
-    bars,
-    neighborcandles_left,
-    neighborcandles_right
+    bars
 ):
     # ------------------------------------------------------------------
     # PATHS
@@ -2132,14 +1404,8 @@ def fetch_charts_all_brokers(
 
                         sym_folder = os.path.join(cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
                         os.makedirs(sym_folder, exist_ok=True)
-                        # Hardcoded neighbor combinations to iterate through
-                        neighbor_combinations = [
-                            (5, 5), (5, 10), (10, 5), (10, 10), 
-                            (10, 15), (15, 10), (15, 15), (20, 20), (30, 30)
-                        ]
                         def roundgoblin():
                             for tf_str, mt5_tf in TIMEFRAME_MAP.items():
-                                # Reinitialize MT5 connection for each timeframe to avoid potential crashes/disconnects
                                 if not mt5.initialize():
                                     log_and_print(f"MT5 initialize() failed for {tf_str}, error code = {mt5.last_error()}", "ERROR")
                                     error_log.append(f"MT5 init failed for {tf_str}: {mt5.last_error()}")
@@ -2153,29 +1419,28 @@ def fetch_charts_all_brokers(
                                 
                                 if df is None or len(df) == 0:
                                     log_and_print(f"NO DATA for {symbol} {tf_str}", "WARNING")
-                                    mt5.shutdown()  # Shutdown even if no data
+                                    mt5.shutdown()
                                     continue
                                 
                                 df["symbol"] = symbol
                                 
-                                chart_path = None  # Reset for this timeframe
                                 
-                                for n_left, n_right in neighbor_combinations:
-                                    log_and_print(f"Analyzing {symbol} {tf_str} with L:{n_left} R:{n_right}", "INFO")
-                                    
-                                    chart_path, ch_errs, ph, pl = generate_and_save_chart(
-                                        df, symbol, tf_str, tf_folder, n_left, n_right
-                                    )
-                                    error_log.extend(ch_errs)
-                                    
-                                    save_oldest_newest(df, symbol, tf_str, tf_folder, ph, pl, n_left, n_right)
-                                    save_newest_oldest(df, symbol, tf_str, tf_folder, ph, pl, n_left, n_right)
+                                save_oldest_newest_df(df, symbol, tf_str, tf_folder)
+                                save_newest_oldest_df(df, symbol, tf_str, tf_folder)
+
+                                chart_path, ch_errs = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
+                                error_log.extend(ch_errs or [])
+                                slice_counts, ch_errs = generate_and_save_chart(symbol, tf_str, tf_folder)
+                                error_log.extend(ch_errs or [])
+
+                                if slice_counts:
+                                    error_log.extend(save_sliced_oldest_to_newest_json(symbol, tf_str, tf_folder, slice_counts))
+                                    error_log.extend(save_sliced_newest_to_oldest_json(symbol, tf_str, tf_folder, slice_counts))
                                 
-                                # Crop the last generated chart (from final neighbor combo)
                                 if chart_path:
                                     crop_chart(chart_path, symbol, tf_str, tf_folder)
                                 
-                                mt5.shutdown()  # Shutdown connection after processing this timeframe
+                                mt5.shutdown()
                         
                         roundgoblin()
                         ticks_value(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
@@ -2227,9 +1492,7 @@ def fetch_charts_all_brokers(
 
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
-        bars=201,
-        neighborcandles_left=10,
-        neighborcandles_right=15
+        bars=201
     )
 
     if success:
