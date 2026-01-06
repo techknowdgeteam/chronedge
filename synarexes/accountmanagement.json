@@ -12,19 +12,88 @@
     },
     "chart":{
         "define_candles": {
-            "large_body":{
+            "fvg": {
+                "name":"fvg",
                 "BARS": 101,
-                "filename":"largebody.json",
+                "filename":"fvg.json",
                 "read_candles_from":"old_new",
                 "number_candles":"define_candle",
+                "condition":{
+                    "c1_lookback": null,
+                    "strong_c1": "greater",
+                    "strong_fvg": "tallest_body",
+                    "fvg_body_size": "multiply_c3_height_by_2",
+                    "strong_c3": "greater",
+                    "c1_candle_type": "none",
+                    "c3_candle_type": "same_with_fvg",
+                    "c3_closing": "beyond_close",
+                    "c1_c3_higher_body_than_wicks": "none"
+                },
+                "validate_my_condition": true,
                 "label":{
-                    "text": "LB",
-                    "marker": "arrow",
+                    "bullish_text": "",
+                    "bearish_text": "",
                     "label_at": {
                         "bullish":"low",
                         "bullish_color":"green",
+                        "bullish_marker": "arrow",
                         "bearish":"high",
-                        "bearish_color":"red"
+                        "bearish_color":"red",
+                        "bearish_marker": "arrow"
+                    }
+                }
+            },
+            "myfvg": {
+                "BARS": 101,
+                "filename":"myfvg.json",
+                "read_candles_from":"old_new",
+                "number_candles":"define_candle",
+                "condition":{
+                    "c1_lookback": null,
+                    "strong_c1": "greater",
+                    "strong_fvg": "tallest_body",
+                    "fvg_body_size": "multiply_c3_height_by_2",
+                    "strong_c3": "greater",
+                    "c1_candle_type": "none",
+                    "c3_candle_type": "same_with_fvg",
+                    "c3_closing": "beyond_close",
+                    "c1_c3_higher_body_than_wicks": "none"
+                },
+                "validate_my_condition": true,
+                "label":{
+                    "bullish_text": "",
+                    "bearish_text": "",
+                    "label_at": {
+                        "bullish":"low",
+                        "bullish_color":"green",
+                        "bullish_marker": "arrow",
+                        "bearish":"high",
+                        "bearish_color":"red",
+                        "bearish_marker": "arrow"
+                    }
+                }
+            },
+            "higherhighsandhigherlows_2": {
+                "BARS": 101,
+                "filename":"highers2.json",
+                "read_candles_from":"old_new",
+                "number_candles":"define_candle",
+                "timeframes_relation":"default",
+                "NEIGHBOR_LEFT": 14,
+                "NEIGHBOR_RIGHT": 14,
+                "label":{
+                    "higherhighs_text": "HH",
+                    "higherlows_text": "HL",
+                    "directional_bias_text": "",
+                    "label_at": {
+                        "higher_lows":"low",
+                        "higher_lows_color":"green",
+                        "higher_lows_marker": "doublearrows",
+                        "higher_lows_contourmaker_marker": "",
+                        "higher_lows_directional_bias_marker": "",
+                        "higher_highs":"high",
+                        "higher_highs_color":"red",
+                        "higher_highs_marker": "doublearrows"
                     }
                 }
             },
@@ -33,17 +102,48 @@
                 "filename":"highers.json",
                 "read_candles_from":"old_new",
                 "number_candles":"define_candle",
-                "NEIGHBOR_LEFT": 10,
-                "NEIGHBOR_RIGHT": 15,
+                "timeframes_relation":"default",
+                "NEIGHBOR_LEFT": 14,
+                "NEIGHBOR_RIGHT": 14,
                 "label":{
                     "higherhighs_text": "HH",
                     "higherlows_text": "HL",
-                    "marker": "doublearrows",
+                    "directional_bias_text": "",
                     "label_at": {
                         "higher_lows":"low",
                         "higher_lows_color":"green",
+                        "higher_lows_marker": "doublearrows",
+                        "higher_lows_contourmaker_marker": "",
+                        "higher_lows_directional_bias_marker": "",
                         "higher_highs":"high",
-                        "higher_highs_color":"red"
+                        "higher_highs_color":"red",
+                        "higher_highs_marker": "doublearrows"
+                    }
+                }
+            },
+            "directional_bias_candles": {
+                "apprehend_higherhighsandhigherlows": {
+                    "target":"contourmaker",          
+                    "label":{
+                        "directional_bias_candles_text": "db",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_higherhighsandhigherlows_2": {
+                    "target":"contourmaker",          
+                    "label":{
+                        "directional_bias_candles_text": "db",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
                     }
                 }
             },
@@ -52,19 +152,24 @@
                 "filename":"lowers.json",
                 "read_candles_from":"old_new",
                 "number_candles":"define_candle",
-                "NEIGHBOR_LEFT": 5,
-                "NEIGHBOR_RIGHT": 5,
+                "NEIGHBOR_LEFT": 6,
+                "NEIGHBOR_RIGHT": 6,
                 "label":{
-                    "lowerhighs_text": "HH",
-                    "lowerlows_text": "HL",
-                    "marker": "arrow",
+                    "lowerhighs_text": "LH",
+                    "lowerlows_text": "LL",
                     "label_at": {
                         "lower_lows":"low",
                         "lower_lows_color":"green",
+                        "lower_lows_marker": "rightarrow",
                         "lower_highs":"high",
-                        "lower_highs_color":"red"
+                        "lower_highs_color":"red",
+                        "lower_highs_marker": "leftarrow"
                     }
                 }
+            }
+        },
+        "build_strategy":{
+            "direction_bias":{
             }
         }
     }
