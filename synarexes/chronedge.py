@@ -302,72 +302,13 @@ def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     return df, error_log
 
 def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
-    """Save candles: newest → oldest, candle_number 0 = newest. Fixed filenames."""
-    error_log = []
-    
-    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    os.makedirs(target_subfolder, exist_ok=True)
-    
-    all_json_path = os.path.join(target_subfolder, "newest_to_oldest.json")
-    latest_json_path = os.path.join(target_subfolder, "latest_completed_candle.json")  # same as above
-    
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    now = datetime.now(lagos_tz)
-
-    try:
-        if len(df) < 2:
-            error_msg = f"Not enough data for {symbol} ({timeframe_str})"
-            log_and_print(error_msg, "ERROR")
-            error_log.append({"error": error_msg, "timestamp": now.isoformat()})
-            save_errors(error_log)
-            return error_log
-
-        all_candles = []
-        for i, (ts, row) in enumerate(df.iloc[::-1].iterrows()):
-            candle = row.to_dict()
-            candle.update({
-                "time": ts.strftime('%Y-%m-%d %H:%M:%S'),
-                "candle_number": i,  # 0 = newest
-                "symbol": symbol,
-                "timeframe": timeframe_str
-            })
-            all_candles.append(candle)
-
-        with open(all_json_path, 'w', encoding='utf-8') as f:
-            json.dump(all_candles, f, indent=4)
-
-        # Latest completed candle: index 1 (since 0 is current forming)
-        previous_latest_candle = all_candles[1].copy()
-        candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
-        delta = now - candle_time
-        total_hours = delta.total_seconds() / 3600
-        age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
-
-        previous_latest_candle.update({"age": age_str, "id": "x"})
-        if "candle_number" in previous_latest_candle:
-            del previous_latest_candle["candle_number"]
-
-        with open(latest_json_path, 'w', encoding='utf-8') as f:
-            json.dump(previous_latest_candle, f, indent=4)
-
-        log_and_print(f"SAVED: newest_to_oldest.json for {symbol} {timeframe_str}", "SUCCESS")
-
-    except Exception as e:
-        err = f"save_newest_oldest_df failed: {str(e)}"
-        log_and_print(err, "ERROR")
-        error_log.append({"error": err, "timestamp": now.isoformat()})
-        save_errors(error_log)
-
-    return error_log
-
-def save_oldest_newest_df(df, symbol, timeframe_str, timeframe_folder):
     """Save candles: oldest → newest, candle_number 0 = oldest. Fixed filenames."""
     error_log = []
     
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
     os.makedirs(target_subfolder, exist_ok=True)
     
-    all_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+    all_json_path = os.path.join(target_subfolder, "newest_oldest.json")
     latest_json_path = os.path.join(target_subfolder, "latest_completed_candle.json")
     
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -409,10 +350,10 @@ def save_oldest_newest_df(df, symbol, timeframe_str, timeframe_folder):
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        log_and_print(f"SAVED: oldest_to_newest.json for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"SAVED: newest_oldest.json for {symbol} {timeframe_str}", "SUCCESS")
 
     except Exception as e:
-        err = f"save_oldest_newest_df failed: {str(e)}"
+        err = f"save_newest_oldest_df failed: {str(e)}"
         log_and_print(err, "ERROR")
         error_log.append({"error": err, "timestamp": now.isoformat()})
         save_errors(error_log)
@@ -469,7 +410,7 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
     error_log = []
 
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+    json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
     candle_slices = [11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 121, 131, 141, 151, 161, 171, 181, 191, 201, 221, 231, 241, 251, 261, 271, 281, 291, 301]
 
@@ -541,12 +482,12 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
         error_log.append({"error": str(e)})
         return [], error_log
     
-def save_sliced_oldest_to_newest_json(symbol, timeframe_str, timeframe_folder, slice_counts):
-    """Save sliced versions: oldest → newest (candle_number 0 = oldest) from full oldest_to_newest.json"""
+def save_sliced_newest_oldest_json(symbol, timeframe_str, timeframe_folder, slice_counts):
+    """Save sliced versions: oldest → newest (candle_number 0 = oldest) from full newest_oldest.json"""
     error_log = []
 
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    full_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
+    full_json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
     lagos_tz = pytz.timezone('Africa/Lagos')
     now = datetime.now(lagos_tz)
@@ -579,7 +520,7 @@ def save_sliced_oldest_to_newest_json(symbol, timeframe_str, timeframe_folder, s
                 c["candle_number"] = i  # 0 = oldest in slice
                 reordered.append(c)
 
-            slice_json_path = os.path.join(target_subfolder, f"old_new_{count}.json")
+            slice_json_path = os.path.join(target_subfolder, f"new_old_{count}.json")
             with open(slice_json_path, 'w', encoding='utf-8') as f:
                 json.dump(reordered, f, indent=4)
 
@@ -601,78 +542,10 @@ def save_sliced_oldest_to_newest_json(symbol, timeframe_str, timeframe_folder, s
             generated += 1
 
         if generated > 0:
-            log_and_print(f"SAVED: {generated} sliced old_new_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
-
-    except Exception as e:
-        err = f"save_sliced_oldest_to_newest_json failed: {str(e)}"
-        log_and_print(err, "ERROR")
-        error_log.append({"error": err, "timestamp": now.isoformat()})
-
-    return error_log
-
-def save_sliced_newest_to_oldest_json(symbol, timeframe_str, timeframe_folder, slice_counts):
-    """Save sliced versions: newest → oldest (candle_number 0 = newest) from full oldest_to_newest.json"""
-    error_log = []
-
-    target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
-    full_json_path = os.path.join(target_subfolder, "oldest_to_newest.json")
-
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    now = datetime.now(lagos_tz)
-
-    try:
-        if not os.path.exists(full_json_path):
-            err = f"Full JSON not found for slicing: {full_json_path}"
-            log_and_print(err, "ERROR")
-            error_log.append({"error": err})
-            return error_log
-
-        with open(full_json_path, 'r', encoding='utf-8') as f:
-            all_candles = json.load(f)
-
-        if len(all_candles) < 11:
-            return error_log
-
-        generated = 0
-        for count in slice_counts:
-            if len(all_candles) < count:
-                continue
-
-            sliced_candles = all_candles[-count:]  # most recent count
-
-            # Reverse order: newest first
-            reordered = []
-            for i, candle in enumerate(reversed(sliced_candles)):
-                c = candle.copy()
-                c["candle_number"] = i  # 0 = newest
-                reordered.append(c)
-
-            slice_json_path = os.path.join(target_subfolder, f"new_old_{count}.json")
-            with open(slice_json_path, 'w', encoding='utf-8') as f:
-                json.dump(reordered, f, indent=4)
-
-            # Latest completed: index 1 (since 0 is newest = forming)
-            if len(reordered) >= 2:
-                prev_candle = reordered[1].copy()
-                candle_time = lagos_tz.localize(datetime.strptime(prev_candle["time"], '%Y-%m-%d %H:%M:%S'))
-                delta = now - candle_time
-                total_hours = delta.total_seconds() / 3600
-                age_str = f"{int(total_hours)}h old" if total_hours <= 24 else f"{int(total_hours // 24)}d old"
-                prev_candle.update({"age": age_str, "id": "x"})
-                if "candle_number" in prev_candle:
-                    del prev_candle["candle_number"]
-
-                latest_slice_path = os.path.join(target_subfolder, f"latest_completed_candle.json")
-                with open(latest_slice_path, 'w', encoding='utf-8') as f:
-                    json.dump(prev_candle, f, indent=4)
-
-            generated += 1
-
-        if generated > 0:
             log_and_print(f"SAVED: {generated} sliced new_old_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
 
     except Exception as e:
-        err = f"save_sliced_newest_to_oldest_json failed: {str(e)}"
+        err = f"save_sliced_newest_oldest_json failed: {str(e)}"
         log_and_print(err, "ERROR")
         error_log.append({"error": err, "timestamp": now.isoformat()})
 
@@ -1425,7 +1298,6 @@ def fetch_charts_all_brokers(
                                 df["symbol"] = symbol
                                 
                                 
-                                save_oldest_newest_df(df, symbol, tf_str, tf_folder)
                                 save_newest_oldest_df(df, symbol, tf_str, tf_folder)
 
                                 chart_path, ch_errs = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
@@ -1434,8 +1306,7 @@ def fetch_charts_all_brokers(
                                 error_log.extend(ch_errs or [])
 
                                 if slice_counts:
-                                    error_log.extend(save_sliced_oldest_to_newest_json(symbol, tf_str, tf_folder, slice_counts))
-                                    error_log.extend(save_sliced_newest_to_oldest_json(symbol, tf_str, tf_folder, slice_counts))
+                                    error_log.extend(save_sliced_newest_oldest_json(symbol, tf_str, tf_folder, slice_counts))
                                 
                                 if chart_path:
                                     crop_chart(chart_path, symbol, tf_str, tf_folder)
@@ -1492,7 +1363,7 @@ def fetch_charts_all_brokers(
 
 if __name__ == "__main__":
     success = fetch_charts_all_brokers(
-        bars=201
+        bars=2001
     )
 
     if success:
