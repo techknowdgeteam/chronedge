@@ -14,7 +14,7 @@
         "define_candles": {
             "fvg": {
                 "name":"fvg",
-                "BARS": 101,
+                "BARS": 301,
                 "filename":"fvg.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
@@ -44,7 +44,7 @@
                 }
             },
             "myfvg": {
-                "BARS": 101,
+                "BARS": 301,
                 "filename":"myfvg.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
@@ -73,32 +73,8 @@
                     }
                 }
             },
-            "higherhighsandhigherlows_2": {
-                "BARS": 101,
-                "filename":"highers2.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "label":{
-                    "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
-                    "directional_bias_text": "",
-                    "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
-                    }
-                }
-            },
             "higherhighsandhigherlows": {
-                "BARS": 101,
+                "BARS": 301,
                 "filename":"highers.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
@@ -122,7 +98,7 @@
                 }
             },
             "lowerhighsandlowerlows": {
-                "BARS": 101,
+                "BARS": 301,
                 "filename":"lowers.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
@@ -141,40 +117,8 @@
                     }
                 }
             },
-            "lowerhighsandlowerlows_2": {
-                "BARS": 101,
-                "filename":"lowers2.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "NEIGHBOR_LEFT": 6,
-                "NEIGHBOR_RIGHT": 6,
-                "label":{
-                    "lowerhighs_text": "LH",
-                    "lowerlows_text": "LL",
-                    "label_at": {
-                        "lower_lows":"low",
-                        "lower_lows_color":"green",
-                        "lower_lows_marker": "rightarrow",
-                        "lower_highs":"high",
-                        "lower_highs_color":"red",
-                        "lower_highs_marker": "leftarrow"
-                    }
-                }
-            },
             "directional_bias_candles": {
                 "apprehend_higherhighsandhigherlows": {
-                    "target":"contourmaker",          
-                    "label":{
-                        "directional_bias_candles_text": "",
-                        "label_at": {
-                            "upward_directional_bias": "high",
-                            "downward_directional_bias": "high",
-                            "upward_directional_bias_marker": "dot",
-                            "downward_directional_bias_marker": "dot"
-                        }
-                    }
-                },
-                "apprehend_higherhighsandhigherlows_2": {
                     "target":"contourmaker",          
                     "label":{
                         "directional_bias_candles_text": "",
@@ -223,11 +167,40 @@
                 }
             },
             "timeframes_communication": {
-                "filename":"relation.json",
                 "apprehend_higherhighsandhigherlows": {
                     "number_candles":"define_candle",
-                    "timeframes_communication":"4h15m",
-                    "target":"contourmaker",          
+                    "timeframe_sender":"4h, 1h, 15m",
+                    "timeframe_receiver":"15m, 5m, 5m",
+                    "target":"contourmaker, directional_bias, next_bias",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_lowerhighsandlowerlows": {
+                    "number_candles":"define_candle",
+                    "timeframe_sender":"4h",
+                    "timeframe_receiver":"15m",
+                    "target":"contourmaker, directional_bias, next_bias",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },"apprehend_fvg": {
+                    "number_candles":"define_candle",
+                    "timeframe_sender":"4h",
+                    "timeframe_receiver":"15m",
+                    "target":"fvg_c1, fvg_c2, fvg_c3",          
                     "label":{
                         "directional_bias_candles_text": "",
                         "label_at": {
