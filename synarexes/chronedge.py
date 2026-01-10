@@ -412,7 +412,7 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
     json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
-    candle_slices = [11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 121, 131, 141, 151, 161, 171, 181, 191, 201, 221, 231, 241, 251, 261, 271, 281, 291, 301]
+    candle_slices = [ 21, 31, 41, 51, 101, 151, 201, 301, 501, 701, 801, 1001]
 
     generated_slice_counts = []  # To pass to JSON slicers
 
@@ -1373,4 +1373,4 @@ if __name__ == "__main__":
 
 
         
-        
+         
