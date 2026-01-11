@@ -211,6 +211,42 @@
                         }
                     }
                 }
+            },
+            "liquidity": {
+                "apprehend_higherhighsandhigherlows": {
+                    "target":"higherhighs, higherlows, contourmaker, directional_bias",          
+                    "label":{
+                        "liquidity_text": "lq",
+                        "higher_highs_poi": "low",
+                        "higher_lows_poi": "high",
+                        "contourmaker_support_poi": "high",
+                        "contourmaker_resistance_poi": "low",
+                        "directional_bias_support_poi": "high",
+                        "directional_bias_resistance_poi": "low"
+                    }
+                },
+                "apprehend_lowerhighsandlowerlows": {
+                    "target":"lowerhighs, lowerlows, contourmaker, directional_bias",          
+                    "label":{
+                        "liquidity_text": "lq",
+                        "higher_highs_poi": "low",
+                        "higher_lows_poi": "high",
+                        "contourmaker_support_poi": "high",
+                        "contourmaker_resistance_poi": "low",
+                        "directional_bias_support_poi": "high",
+                        "directional_bias_resistance_poi": "low"
+                    }
+                },
+                "apprehend_fvg": {
+                    "target":"fvg_c2, fvg_c3",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "fvg_ctargets_resistance_poi": "low",
+                            "fvg_ctargets__support_poi": "high"
+                        }
+                    }
+                }
             }
         },
         "build_strategy":{

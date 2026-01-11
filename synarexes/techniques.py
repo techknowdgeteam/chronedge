@@ -74,12 +74,13 @@ def get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, outpu
         "comm_paths": comm_paths  # New constructed paths
     }
 
+
 def label_objects_and_text(
     img,
     cx,
     y_rect,
     h_rect,
-    c_num=None,                  
+    c_num=None,                 
     custom_text=None,           
     object_type="arrow",        
     is_bullish_arrow=True,      
@@ -89,7 +90,8 @@ def label_objects_and_text(
     object_color=(0, 255, 0),
     font_scale=0.55,
     text_thickness=2,
-    label_position="auto"       
+    label_position="auto",
+    end_x=None  # New parameter for horizontal line stopping point
 ):
     color = object_color if object_color != (0, 255, 0) else arrow_color
 
@@ -108,7 +110,7 @@ def label_objects_and_text(
     # tip_y is the exact pixel of the wick tip (top or bottom)
     tip_y = y_rect if place_at_high else (y_rect + h_rect)
 
-    # 2. Draw Objects (Arrows/Shapes) ONLY if is_marked is True
+    # 2. Draw Objects (Arrows/Shapes/Lines) ONLY if is_marked is True
     if is_marked:
         if object_type in ["arrow", "reverse_arrow"]:
             def draw_single_arrow_logic(center_x: int, is_reverse=False):
@@ -149,6 +151,12 @@ def label_objects_and_text(
             pts = np.array([[tip_x, tip_y], [tip_x + head_size, tip_y - wing_size], [tip_x + head_size, tip_y + wing_size]], np.int32)
             cv2.fillPoly(img, [pts], color)
 
+        elif object_type == "hline":
+            # Horizontal line starting at candle center
+            # If end_x is None, extend to the right edge of the image
+            stop_x = end_x if end_x is not None else img.shape[1]
+            cv2.line(img, (cx, tip_y), (int(stop_x), tip_y), color, thickness)
+
         else:
             shape_y = tip_y - 12 if place_at_high else tip_y + 12
             if object_type == "circle":
@@ -172,19 +180,17 @@ def label_objects_and_text(
     if not (custom_text or c_num is not None):
         return
 
-    # If marked, text goes beyond the arrow/shape.
-    # If NOT marked (just numbering), we use a tiny 4-pixel gap.
+    # Determine vertical reach for text
     if is_marked:
         is_vertical_obj = object_type in ["arrow", "reverse_arrow"]
+        # hline doesn't add height, so we treat it like other shapes
         reach = (shaft_length + head_size + 4) if is_vertical_obj else 14
     else:
         reach = 4
 
     if place_at_high:
-        # Number sits directly above the top wick
         base_text_y = tip_y - reach
     else:
-        # Number sits directly below the bottom wick (+10 accounts for text height)
         base_text_y = tip_y + reach + 10
 
     # Draw the Higher/Lower text (HH, LL, etc.)
@@ -192,7 +198,6 @@ def label_objects_and_text(
         (tw, th), _ = cv2.getTextSize(custom_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness)
         cv2.putText(img, custom_text, (cx - tw // 2, int(base_text_y)),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, arrow_color, text_thickness)
-        # Shift the number slightly so it doesn't overlap the HH/LL text
         c_num_y = (base_text_y - 15) if place_at_high else (base_text_y + 15)
     else:
         c_num_y = base_text_y
@@ -200,10 +205,9 @@ def label_objects_and_text(
     # Draw the candle number (c_num)
     if c_num is not None:
         cv2.putText(img, str(c_num), (cx - 8, int(c_num_y)), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2) # Shadow for visibility
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2) # Shadow
         cv2.putText(img, str(c_num), (cx - 8, int(c_num_y)), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1) # White text
-
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1) # White
 
 def lower_highs_lower_lows(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -229,37 +233,26 @@ def lower_highs_lower_lows(broker_name):
     total_marked_all, processed_charts_all = 0, 0
 
     def resolve_marker(raw):
-        if not raw:
-            return None, False
+        if not raw: return None, False
         raw = str(raw).lower().strip()
-        if raw in ["arrow", "arrows", "singlearrow"]:
-            return "arrow", False
-        if raw in ["doublearrow", "doublearrows"]:
-            return "arrow", True
-        if raw in ["reverse_arrow", "reversearrow"]:
-            return "reverse_arrow", False
-        if raw in ["reverse_doublearrow", "reverse_doublearrows"]:
-            return "reverse_arrow", True
-        if raw in ["rightarrow", "right_arrow"]:
-            return "rightarrow", False
-        if raw in ["leftarrow", "left_arrow"]:
-            return "leftarrow", False
-        if "dot" in raw:
-            return "dot", False
+        if raw in ["arrow", "arrows", "singlearrow"]: return "arrow", False
+        if raw in ["doublearrow", "doublearrows"]: return "arrow", True
+        if raw in ["reverse_arrow", "reversearrow"]: return "reverse_arrow", False
+        if raw in ["reverse_doublearrow", "reverse_doublearrows"]: return "reverse_arrow", True
+        if raw in ["rightarrow", "right_arrow"]: return "rightarrow", False
+        if raw in ["leftarrow", "left_arrow"]: return "leftarrow", False
+        if "dot" in raw: return "dot", False
         return raw, False
 
     for config_key, lhll_cfg in matching_configs:
         bars = lhll_cfg.get("BARS", 101)
         output_filename_base = lhll_cfg.get("filename", "lowers.json")
-        
-        # Set default to 'new_old' to ensure left-to-right processing
         direction = lhll_cfg.get("read_candles_from", "new_old")
         
         neighbor_left = lhll_cfg.get("NEIGHBOR_LEFT", 5)
         neighbor_right = lhll_cfg.get("NEIGHBOR_RIGHT", 5)
 
         label_cfg = lhll_cfg.get("label", {})
-        # Note: These use the 'lower' variables now
         lh_text = label_cfg.get("lowerhighs_text", "LH")
         ll_text = label_cfg.get("lowerlows_text", "LL")
         cm_text = label_cfg.get("contourmaker_text", "m")
@@ -295,13 +288,32 @@ def lower_highs_lower_lows(broker_name):
                     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                     mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    # FORCED Left-to-Right Sorting:
-                    # Removed 'reverse' parameter to ensure index 0 is always the leftmost (oldest) candle.
+                    if len(contours) == 0: continue
+
                     contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 
-                    swing_results = []
+                    # Sync data and contours
+                    if len(data) != len(contours):
+                        min_len = min(len(data), len(contours))
+                        data = data[:min_len]
+                        contours = contours[:min_len]
+
+                    # Record coordinates for EVERY candle
+                    for idx, contour in enumerate(contours):
+                        x, y, w, h = cv2.boundingRect(contour)
+                        data[idx].update({
+                            "candle_x": x + (w // 2),
+                            "candle_y": y,
+                            "candle_width": w,
+                            "candle_height": h,
+                            "candle_left": x,
+                            "candle_right": x + w,
+                            "candle_top": y,
+                            "candle_bottom": y + h
+                        })
+
                     n = len(data)
+                    swing_count_in_chart = 0
                     for i in range(neighbor_left, n - neighbor_right):
                         curr_h, curr_l = data[i]['high'], data[i]['low']
                         l_h = [d['high'] for d in data[i-neighbor_left:i]]
@@ -309,70 +321,113 @@ def lower_highs_lower_lows(broker_name):
                         r_h = [d['high'] for d in data[i+1:i+neighbor_right+1]]
                         r_l = [d['low'] for d in data[i+1:i+neighbor_right+1]]
 
-                        # Lower High (LH): Current high is lower than previous highs
-                        # Lower Low (LL): Current low is lower than previous lows
-                        is_lh = len(l_h) > 0 and len(r_h) > 0 and curr_h < max(l_h) and curr_h > max(r_h) # Logic varies based on your specific strategy definition
-                        # Typical LH definition: curr_h is a peak (higher than neighbors) but lower than the PREVIOUS peak. 
-                        # Using your specific neighbor logic:
                         is_peak = curr_h > max(l_h) and curr_h > max(r_h)
                         is_valley = curr_l < min(l_l) and curr_l < min(r_l)
 
                         if is_peak or is_valley:
-                            m_idx = i + neighbor_right
-                            if m_idx >= len(contours): continue
-
-                            # Assigning based on LH/LL context
-                            is_bull = is_valley # LL is bullish potential/reversal context
+                            swing_count_in_chart += 1
+                            is_bull = is_valley
                             active_color = ll_col if is_bull else lh_col
                             custom_text = ll_text if is_bull else lh_text
                             obj_type = ll_obj if is_bull else lh_obj
                             dbl_arrow = ll_dbl if is_bull else lh_dbl
                             position = ll_pos if is_bull else lh_pos
 
-                            # Draw main LH/LL label
-                            x, y, w, h = cv2.boundingRect(contours[i])
-                            label_objects_and_text(img, x+w//2, y, h, c_num=data[i]['candle_number'],
-                                                 custom_text=custom_text,
-                                                 object_type=obj_type,
-                                                 is_bullish_arrow=is_bull,
-                                                 is_marked=True,
-                                                 double_arrow=dbl_arrow,
-                                                 arrow_color=active_color,
-                                                 label_position=position)
+                            # Draw LH/LL
+                            label_objects_and_text(
+                                img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"], 
+                                c_num=data[i]['candle_number'],
+                                custom_text=custom_text,
+                                object_type=obj_type,
+                                is_bullish_arrow=is_bull,
+                                is_marked=True,
+                                double_arrow=dbl_arrow,
+                                arrow_color=active_color,
+                                label_position=position
+                            )
 
-                            # Draw contour maker 'm'
-                            mx, my, mw, mh = cv2.boundingRect(contours[m_idx])
-                            cm_obj = ll_cm_obj if is_bull else lh_cm_obj
-                            cm_dbl = ll_cm_dbl if is_bull else lh_cm_dbl
-                            label_objects_and_text(img, mx+mw//2, my, mh, custom_text=cm_text,
-                                                 object_type=cm_obj,
-                                                 is_bullish_arrow=is_bull,
-                                                 is_marked=True,
-                                                 double_arrow=cm_dbl,
-                                                 arrow_color=active_color,
-                                                 label_position=position)
+                            m_idx = i + neighbor_right
+                            contour_maker_entry = None
+                            if m_idx < n:
+                                cm_obj = ll_cm_obj if is_bull else lh_cm_obj
+                                cm_dbl = ll_cm_dbl if is_bull else lh_cm_dbl
+                                
+                                label_objects_and_text(
+                                    img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"], 
+                                    custom_text=cm_text,
+                                    object_type=cm_obj,
+                                    is_bullish_arrow=is_bull,
+                                    is_marked=True,
+                                    double_arrow=cm_dbl,
+                                    arrow_color=active_color,
+                                    label_position=position
+                                )
+                                contour_maker_entry = data[m_idx].copy()
+                                contour_maker_entry.update({
+                                    "draw_x": data[m_idx]["candle_x"],
+                                    "draw_y": data[m_idx]["candle_y"],
+                                    "draw_w": data[m_idx]["candle_width"],
+                                    "draw_h": data[m_idx]["candle_height"],
+                                    "draw_left": data[m_idx]["candle_left"],
+                                    "draw_right": data[m_idx]["candle_right"],
+                                    "draw_top": data[m_idx]["candle_top"],
+                                    "draw_bottom": data[m_idx]["candle_bottom"]
+                                })
 
-                            enriched = data[i].copy()
-                            enriched.update({
+                            data[i].update({
                                 "type": "lower_low" if is_bull else "lower_high",
-                                "contour_maker": data[m_idx] if m_idx < n else None,
-                                "m_idx": m_idx,
-                                "active_color": active_color
+                                "is_swing": True,
+                                "active_color": active_color,
+                                "draw_x": data[i]["candle_x"],
+                                "draw_y": data[i]["candle_y"],
+                                "draw_w": data[i]["candle_width"],
+                                "draw_h": data[i]["candle_height"],
+                                "draw_left": data[i]["candle_left"],
+                                "draw_right": data[i]["candle_right"],
+                                "draw_top": data[i]["candle_top"],
+                                "draw_bottom": data[i]["candle_bottom"],
+                                "contour_maker": contour_maker_entry,
+                                "m_idx": m_idx if m_idx < n else None
                             })
-                            swing_results.append(enriched)
 
-                    if swing_results:
-                        os.makedirs(paths["output_dir"], exist_ok=True)
-                        cv2.imwrite(paths["output_chart"], img)
-                        with open(paths["output_json"], 'w', encoding='utf-8') as f:
-                            json.dump(swing_results, f, indent=4)
-                        processed_charts_all += 1
-                        total_marked_all += len(swing_results)
+                    # Save full chart data (all candles)
+                    os.makedirs(paths["output_dir"], exist_ok=True)
+                    cv2.imwrite(paths["output_chart"], img)
+                    with open(paths["output_json"], 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=4)
+
+                    # --- OVERWRITE SECTION: SYNC TO CONFIG.JSON ---
+                    config_path = os.path.join(paths["output_dir"], "config.json")
+                    try:
+                        config_content = {}
+                        if os.path.exists(config_path):
+                            with open(config_path, 'r', encoding='utf-8') as f:
+                                try:
+                                    config_content = json.load(f)
+                                    if not isinstance(config_content, dict):
+                                        config_content = {}
+                                except:
+                                    config_content = {}
+
+                        # Exact copy/paste to the specific config key
+                        config_content[config_key] = data
+
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            json.dump(config_content, f, indent=4)
+                    except Exception as e:
+                        log(f"Config sync failed for {sym}/{tf}: {e}", "WARN")
+                    # --- END OF OVERWRITE SECTION ---
+                    
+                    processed_charts_all += 1
+                    total_marked_all += swing_count_in_chart
+                    
+                    if processed_charts_all % 10 == 0:
+                        log(f"Processed {processed_charts_all} charts for {broker_name}...")
 
                 except Exception as e:
                     log(f"Error processing {sym}/{tf}: {e}", "ERROR")
 
-    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"
+    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"   
 
 def higher_highs_higher_lows(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -456,9 +511,7 @@ def higher_highs_higher_lows(broker_name):
                     mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     
-                    if len(contours) == 0:
-                        log(f"No candle contours detected for {sym}/{tf}", "WARN")
-                        continue
+                    if len(contours) == 0: continue
 
                     contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 
@@ -467,33 +520,40 @@ def higher_highs_higher_lows(broker_name):
                         data = data[:min_len]
                         contours = contours[:min_len]
 
-                    swing_results = []
-                    n = len(data)
+                    # STEP 1: Record coordinates for EVERY candle
+                    for idx, contour in enumerate(contours):
+                        x, y, w, h = cv2.boundingRect(contour)
+                        data[idx].update({
+                            "candle_x": x + (w // 2),
+                            "candle_y": y,
+                            "candle_width": w,
+                            "candle_height": h,
+                            "candle_left": x,
+                            "candle_right": x + w,
+                            "candle_top": y,
+                            "candle_bottom": y + h
+                        })
 
-                    # NEW STRICT LOOP: Only process candles that have full neighbors on both sides
+                    n = len(data)
+                    swing_count_in_chart = 0
                     start_idx = neighbor_left
-                    end_idx = n - neighbor_right  # Exclusive
+                    end_idx = n - neighbor_right 
 
                     for i in range(start_idx, end_idx):
                         curr_h, curr_l = data[i]['high'], data[i]['low']
                         
-                        # Left neighbors (full count required)
                         l_h = [d['high'] for d in data[i - neighbor_left:i]]
                         l_l = [d['low'] for d in data[i - neighbor_left:i]]
-                        
-                        # Right neighbors (full count required)
                         r_h = [d['high'] for d in data[i + 1:i + 1 + neighbor_right]]
                         r_l = [d['low'] for d in data[i + 1:i + 1 + neighbor_right]]
 
-                        # Higher High: current high > all left highs AND > all right highs
                         is_hh = curr_h > max(l_h) and curr_h > max(r_h)
-                        
-                        # Higher Low: current low < all left lows AND < all right lows
                         is_hl = curr_l < min(l_l) and curr_l < min(r_l)
 
                         if not (is_hh or is_hl):
                             continue
 
+                        swing_count_in_chart += 1
                         is_bull = is_hl
                         active_color = hl_col if is_bull else hh_col
                         custom_text = hl_text if is_bull else hh_text
@@ -501,9 +561,9 @@ def higher_highs_higher_lows(broker_name):
                         dbl_arrow = hl_dbl if is_bull else hh_dbl
                         position = hl_pos if is_bull else hh_pos
 
-                        x, y, w, h = cv2.boundingRect(contours[i])
+                        # Draw swing marker
                         label_objects_and_text(
-                            img, x + w // 2, y, h,
+                            img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
                             c_num=data[i]['candle_number'],
                             custom_text=custom_text,
                             object_type=obj_type,
@@ -514,15 +574,15 @@ def higher_highs_higher_lows(broker_name):
                             label_position=position
                         )
 
-                        # Contour maker logic (marks the candle neighbor_right steps to the right)
+                        # Contour maker logic
                         m_idx = i + neighbor_right
-                        contour_maker_data = None
+                        contour_maker_entry = None
                         if m_idx < n:
-                            mx, my, mw, mh = cv2.boundingRect(contours[m_idx])
                             cm_obj = hl_cm_obj if is_bull else hh_cm_obj
                             cm_dbl = hl_cm_dbl if is_bull else hh_cm_dbl
+                            
                             label_objects_and_text(
-                                img, mx + mw // 2, my, mh,
+                                img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
                                 custom_text=cm_text,
                                 object_type=cm_obj,
                                 is_bullish_arrow=is_bull,
@@ -531,30 +591,78 @@ def higher_highs_higher_lows(broker_name):
                                 arrow_color=active_color,
                                 label_position=position
                             )
-                            contour_maker_data = data[m_idx]
+                            # Create a copy of the target candle with its own drawing coords
+                            contour_maker_entry = data[m_idx].copy()
+                            contour_maker_entry.update({
+                                "draw_x": data[m_idx]["candle_x"],
+                                "draw_y": data[m_idx]["candle_y"],
+                                "draw_w": data[m_idx]["candle_width"],
+                                "draw_h": data[m_idx]["candle_height"],
+                                "draw_left": data[m_idx]["candle_left"],
+                                "draw_right": data[m_idx]["candle_right"],
+                                "draw_top": data[m_idx]["candle_top"],
+                                "draw_bottom": data[m_idx]["candle_bottom"]
+                            })
 
-                        enriched = data[i].copy()
-                        enriched.update({
+                        # Update the swing candle with identification and drawing coords
+                        data[i].update({
                             "type": "higher_low" if is_bull else "higher_high",
-                            "contour_maker": contour_maker_data,
-                            "m_idx": m_idx if m_idx < n else None,
-                            "active_color": active_color
+                            "is_swing": True,
+                            "active_color": active_color,
+                            "draw_x": data[i]["candle_x"],
+                            "draw_y": data[i]["candle_y"],
+                            "draw_w": data[i]["candle_width"],
+                            "draw_h": data[i]["candle_height"],
+                            "draw_left": data[i]["candle_left"],
+                            "draw_right": data[i]["candle_right"],
+                            "draw_top": data[i]["candle_top"],
+                            "draw_bottom": data[i]["candle_bottom"],
+                            "contour_maker": contour_maker_entry,
+                            "m_idx": m_idx if m_idx < n else None
                         })
-                        swing_results.append(enriched)
 
-                    if swing_results:
-                        os.makedirs(paths["output_dir"], exist_ok=True)
-                        cv2.imwrite(paths["output_chart"], img)
-                        with open(paths["output_json"], 'w', encoding='utf-8') as f:
-                            json.dump(swing_results, f, indent=4)
-                        processed_charts_all += 1
-                        total_marked_all += len(swing_results)
+                    # Save full chart data
+                    os.makedirs(paths["output_dir"], exist_ok=True)
+                    cv2.imwrite(paths["output_chart"], img)
+                    with open(paths["output_json"], 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=4)
+
+                    # --- NEW SECTION: Consolidate to config.json ---
+                    config_path = os.path.join(paths["output_dir"], "config.json")
+                    try:
+                        # Load existing or create fresh if invalid
+                        if os.path.exists(config_path):
+                            with open(config_path, 'r', encoding='utf-8') as f:
+                                try:
+                                    config_json = json.load(f)
+                                    if not isinstance(config_json, dict):
+                                        config_json = {}
+                                except:
+                                    config_json = {}
+                        else:
+                            config_json = {}
+
+                        # Exact copy/paste of data to its own key
+                        config_json[config_key] = data
+
+                        # Overwrite to ensure exact word-for-word consistency
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            json.dump(config_json, f, indent=4)
+                    except Exception as e:
+                        log(f"Config sync failed for {sym}/{tf}: {e}", "WARN")
+                    # --- END OF NEW SECTION ---
+                    
+                    processed_charts_all += 1
+                    total_marked_all += swing_count_in_chart
+                    
+                    if processed_charts_all % 10 == 0:
+                        log(f"Processed {processed_charts_all} charts for {broker_name}...")
 
                 except Exception as e:
                     log(f"Error processing {sym}/{tf}: {e}", "ERROR")
 
     return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"
-    
+
 def fair_value_gaps(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
     
@@ -676,7 +784,6 @@ def fair_value_gaps(broker_name):
                     min_required = 3 + c1_lookback
                     if len(data) < min_required: continue
                     
-                    # Sort data by candle number to ensure sequence matches Left-to-Right chart order
                     data = sorted(data, key=lambda x: x.get('candle_number', 0))
                     
                     img = cv2.imread(paths["source_chart"])
@@ -685,21 +792,18 @@ def fair_value_gaps(broker_name):
                     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                     mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    # FIXED: Always sort Left-to-Right (ascending x-coordinate)
                     contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0], reverse=False)
                     
-                    fvg_results = []
                     marked_count = 0
-                    potential_fvgs = []
+                    potential_fvgs_map = {} # Maps candle_number to its enriched FVG data
                     
+                    # --- Identify Potential FVGs ---
                     for i in range(1 + c1_lookback, len(data) - 1):
                         if i >= len(contours): break
                         
                         c_idx_1 = i - 1 - c1_lookback
                         c1, c2, c3 = data[c_idx_1], data[i], data[i+1]
                         
-                        # --- Wick & Body Calculations ---
                         c1_u_wick = round(c1['high'] - max(c1['open'], c1['close']), 5)
                         c1_l_wick = round(min(c1['open'], c1['close']) - c1['low'], 5)
                         c1_total_wick = round(c1_u_wick + c1_l_wick, 5)
@@ -763,9 +867,9 @@ def fair_value_gaps(broker_name):
                             elif fvg_body_size_cfg == "multiply_c3_body_by_2":
                                 fvg_durability = (body3 * 2) <= body2
                             elif fvg_body_size_cfg == "multiply_c1_height_by_2":
-                                fvg_durability = (height1 * 2) <= height2
+                                fvg_durability = (height1 * 2) <= body2
                             elif fvg_body_size_cfg == "multiply_c3_height_by_2":
-                                fvg_durability = (height3 * 2) <= height2
+                                fvg_durability = (height3 * 2) <= body2
                             
                             meets_all = all([
                                 c1_type_match, c3_type_match, c3_closing_match,
@@ -809,12 +913,47 @@ def fair_value_gaps(broker_name):
                                     "_contour_idx": i,
                                     "_is_bull_c2": is_bullish_fvg_c
                                 })
-                                potential_fvgs.append(enriched)
+                                potential_fvgs_map[c2.get('candle_number')] = enriched
+
+                    # --- Build Final JSON (All Candles) ---
+                    fvg_results = []
+                    max_gap_found = max([p["fvg_gap_size"] for p in potential_fvgs_map.values()], default=0)
                     
-                    if potential_fvgs:
-                        max_gap_found = max(p["fvg_gap_size"] for p in potential_fvgs)
-                        
-                        for entry in potential_fvgs:
+                    for idx, candle in enumerate(data):
+                        # Extract coordinates for every candle based on the contours
+                        if idx < len(contours):
+                            x_c, y_c, w_c, h_c = cv2.boundingRect(contours[idx])
+                            candle.update({
+                                "candle_x": x_c + w_c // 2,
+                                "candle_y": y_c,
+                                "candle_width": w_c,
+                                "candle_height": h_c,
+                                "candle_left": x_c,
+                                "candle_right": x_c + w_c,
+                                "candle_top": y_c,
+                                "candle_bottom": y_c + h_c,
+                                "draw_x": x_c + w_c // 2,
+                                "draw_y": y_c,
+                                "draw_w": w_c,
+                                "draw_h": h_c,
+                                "draw_left": x_c,
+                                "draw_right": x_c + w_c,
+                                "draw_top": y_c,
+                                "draw_bottom": y_c + h_c
+                            })
+
+                        c_num = candle.get('candle_number')
+                        if c_num in potential_fvgs_map:
+                            entry = potential_fvgs_map[c_num]
+                            
+                            coord_keys = [
+                                "candle_x", "candle_y", "candle_width", "candle_height", 
+                                "candle_left", "candle_right", "candle_top", "candle_bottom",
+                                "draw_x", "draw_y", "draw_w", "draw_h", 
+                                "draw_left", "draw_right", "draw_top", "draw_bottom"
+                            ]
+                            entry.update({k: candle[k] for k in coord_keys if k in candle})
+
                             is_tallest = (entry["fvg_gap_size"] == max_gap_found)
                             wick_compromised = (entry["c1_upper_and_lower_wick_higher"] or 
                                               entry["c3_upper_and_lower_wick_higher"])
@@ -830,43 +969,67 @@ def fair_value_gaps(broker_name):
                             else:
                                 body_condition_ok = True
                             
-                            if not body_condition_ok:
-                                continue
-                            
-                            idx = entry["_contour_idx"]
-                            x_rect, y_rect, w_rect, h_rect = cv2.boundingRect(contours[idx])
-                            cx = x_rect + w_rect // 2
-                            should_num = number_all or number_only_marked
-                            
-                            label_objects_and_text(
-                                img=img, cx=cx, y_rect=y_rect, h_rect=h_rect,
-                                c_num=entry.get('candle_number') if should_num else None,
-                                custom_text=bull_text if entry["fvg_type"] == "bullish" else bear_text,
-                                object_type=bull_obj if entry["fvg_type"] == "bullish" else bear_obj,
-                                is_bullish_arrow=entry["_is_bull_c2"],
-                                is_marked=True,
-                                double_arrow=bull_double if entry["fvg_type"] == "bullish" else bear_double,
-                                arrow_color=bullish_color if entry["_is_bull_c2"] else bearish_color,
-                                label_position="low" if entry["_is_bull_c2"] else "high"
-                            )
-                            
-                            final_entry = {k: v for k, v in entry.items() 
-                                          if not k.startswith("_") and k != "fvg_gap_size"}
-                            fvg_results.append(final_entry)
-                            marked_count += 1
+                            if body_condition_ok:
+                                # Mark on chart
+                                c_idx = entry["_contour_idx"]
+                                x_rect, y_rect, w_rect, h_rect = cv2.boundingRect(contours[c_idx])
+                                cx = x_rect + w_rect // 2
+                                should_num = number_all or number_only_marked
+                                
+                                label_objects_and_text(
+                                    img=img, cx=cx, y_rect=y_rect, h_rect=h_rect,
+                                    c_num=c_num if should_num else None,
+                                    custom_text=bull_text if entry["fvg_type"] == "bullish" else bear_text,
+                                    object_type=bull_obj if entry["fvg_type"] == "bullish" else bear_obj,
+                                    is_bullish_arrow=entry["_is_bull_c2"],
+                                    is_marked=True,
+                                    double_arrow=bull_double if entry["fvg_type"] == "bullish" else bear_double,
+                                    arrow_color=bullish_color if entry["_is_bull_c2"] else bearish_color,
+                                    label_position="low" if entry["_is_bull_c2"] else "high"
+                                )
+                                final_entry = {k: v for k, v in entry.items() 
+                                              if not k.startswith("_") and k != "fvg_gap_size"}
+                                fvg_results.append(final_entry)
+                                marked_count += 1
+                                continue 
+
+                        fvg_results.append(candle)
                     
                     if marked_count > 0 or (number_all and len(data) > 0):
                         os.makedirs(paths["output_dir"], exist_ok=True)
                         cv2.imwrite(paths["output_chart"], img)
                         with open(paths["output_json"], 'w', encoding='utf-8') as f:
                             json.dump(fvg_results, f, indent=4)
+
+                        # --- OVERWRITE SECTION: SYNC TO CONFIG.JSON ---
+                        config_path = os.path.join(paths["output_dir"], "config.json")
+                        try:
+                            config_content = {}
+                            if os.path.exists(config_path):
+                                with open(config_path, 'r', encoding='utf-8') as f:
+                                    try:
+                                        config_content = json.load(f)
+                                        if not isinstance(config_content, dict):
+                                            config_content = {}
+                                    except:
+                                        config_content = {}
+                            
+                            # Update specific key with the full fvg_results
+                            config_content[config_key] = fvg_results
+
+                            with open(config_path, 'w', encoding='utf-8') as f:
+                                json.dump(config_content, f, indent=4)
+                        except Exception as e:
+                            log(f"Config sync failed for {sym}/{tf}: {e}", "WARN")
+                        # --- END OVERWRITE SECTION ---
+
                         processed_charts += 1
                         total_marked += marked_count
                         
                 except Exception as e:
                     log(f"Error processing {sym}/{tf} with config '{config_key}': {e}", "ERROR")
 
-        log(f"Completed config '{config_key}': FVGs: {total_marked} | Charts: {processed_charts}")
+        log(f"Completed config '{config_key}': FVGs marked: {total_marked} | Charts: {processed_charts}")
         total_marked_all += total_marked
         processed_charts_all += processed_charts
 
@@ -1863,7 +2026,6 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
 
     return f"Identify Receiver Comm Done. Processed {processed_charts_all} files with total {total_marked_all} swings marked/enriched."
 
-
 def receiver_directional_bias(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
 
@@ -1883,6 +2045,12 @@ def receiver_directional_bias(broker_name):
     def is_valid_candle(item):
         """Checks if the item is a candle record and not a summary block."""
         return isinstance(item, dict) and item.get("candle_number") is not None
+
+    def get_base_type(bias_type):
+        """Convert bias direction to base_type: upward → support, downward → resistance"""
+        if not bias_type:
+            return None
+        return "support" if bias_type == "upward" else "resistance"
 
     dev_dict = load_developers_dictionary()
     cfg = dev_dict.get(broker_name)
@@ -1978,16 +2146,14 @@ def receiver_directional_bias(broker_name):
                             })
 
                         # ─── SPATIAL MAPPING (FUZZY COORDINATE MATCH) ─────────────
-                        # Map JSON candles to the closest detected contour center
                         candle_to_contour_map = {}
                         used_contour_indices = set()
 
                         for i, candle in enumerate(actual_candles):
-                            # Target center from JSON
                             t_cx = candle.get("candle_left", 0) + (candle.get("candle_width", 0) / 2)
                             t_cy = candle.get("candle_top", 0) + (candle.get("candle_height", 0) / 2)
                             
-                            best_dist = 15 # Max distance in pixels to consider a match
+                            best_dist = 15
                             best_idx = None
 
                             for idx, c_info in enumerate(contour_list):
@@ -2001,7 +2167,6 @@ def receiver_directional_bias(broker_name):
                                 candle_to_contour_map[i] = contour_list[best_idx]["cnt"]
                                 used_contour_indices.add(best_idx)
 
-                        # Align working data to matched visual candles
                         matched_indices = sorted(candle_to_contour_map.keys())
                         working_data = [actual_candles[i] for i in matched_indices]
                         ordered_contours = [candle_to_contour_map[i] for i in matched_indices]
@@ -2035,7 +2200,6 @@ def receiver_directional_bias(broker_name):
                         for i, candle in enumerate(working_data):
                             candle["is_candle"] = True
                             
-                            # Reference Candle Check
                             cm = candle.get("contour_maker")
                             if not isinstance(cm, dict): continue
                             
@@ -2046,19 +2210,25 @@ def receiver_directional_bias(broker_name):
                             ref_h, ref_l = cm.get("high"), cm.get("low")
                             active_color = tuple(candle.get("active_color", [0, 255, 0]))
                             
-                            # Finding Bias Candle
+                            # Finding First Directional Bias (Level 1)
                             first_db_info = None
                             first_db_idx = None
 
                             for k in range(ref_idx + 1, num_working):
                                 check_c = working_data[k]
                                 if check_c['low'] > ref_h:
-                                    first_db_info = {**check_c, "type": "upward", "level": 1}; first_db_idx = k; break
+                                    first_db_info = {**check_c, "type": "upward", "level": 1}
+                                    first_db_idx = k
+                                    break
                                 if check_c['high'] < ref_l:
-                                    first_db_info = {**check_c, "type": "downward", "level": 1}; first_db_idx = k; break
+                                    first_db_info = {**check_c, "type": "downward", "level": 1}
+                                    first_db_idx = k
+                                    break
 
                             if first_db_info and first_db_idx not in marked_indices:
-                                # Get actual coordinates from the matched contour
+                                # 1. Set base_type for contour_maker based on LEVEL 1 direction
+                                cm["base_type"] = get_base_type(first_db_info["type"])
+
                                 x, y, w, h = cv2.boundingRect(ordered_contours[first_db_idx])
                                 cx, is_up = x + w // 2, first_db_info["type"] == "upward"
 
@@ -2080,24 +2250,39 @@ def receiver_directional_bias(broker_name):
                                 modified = True
                                 total_db_marked += 1
 
-                                # Level 2 Bias
+                                # Level 2 - Next Bias (used to confirm base_type of level 1)
                                 if has_self_apprehend:
                                     s_ref_h, s_ref_l = first_db_info["high"], first_db_info["low"]
+
                                     for m in range(first_db_idx + 1, num_working):
                                         c2 = working_data[m]
                                         if c2['high'] < s_ref_l or c2['low'] > s_ref_h:
                                             if m not in marked_indices:
                                                 s_up = c2['low'] > s_ref_h
                                                 sx, sy, sw, sh = cv2.boundingRect(ordered_contours[m])
+
                                                 label_objects_and_text(
                                                     img=img, cx=sx+sw//2, y_rect=sy, h_rect=sh, custom_text=self_db_text,
                                                     object_type=self_up_obj if s_up else self_dn_obj, is_bullish_arrow=s_up,
                                                     is_marked=True, double_arrow=self_up_dbl if s_up else self_dn_dbl,
                                                     arrow_color=active_color, label_position=self_up_pos if s_up else self_dn_pos
                                                 )
-                                                s_info = {**c2, "type": "upward" if s_up else "downward", "level": 2,
-                                                          "draw_x": int(sx+sw//2), "draw_y": int(sy), "draw_w": int(sw), "draw_h": int(sh)}
-                                                candle["directional_bias"]["next_bias"] = s_info
+
+                                                s_info = {
+                                                    **c2,
+                                                    "type": "upward" if s_up else "downward",
+                                                    "level": 2,
+                                                    "draw_x": int(sx+sw//2),
+                                                    "draw_y": int(sy),
+                                                    "draw_w": int(sw),
+                                                    "draw_h": int(sh)
+                                                }
+
+                                                # 2. VERY IMPORTANT: Set base_type on the LEVEL 1 directional_bias
+                                                #    according to the direction of the LEVEL 2 bias
+                                                first_db_info["base_type"] = get_base_type(s_info["type"])
+
+                                                first_db_info["next_bias"] = s_info
                                                 marked_indices.add(m)
                                                 total_db_marked += 1
                                             break
@@ -2111,9 +2296,217 @@ def receiver_directional_bias(broker_name):
                             log(f"✓ Processed {os.path.basename(json_path)}", "INFO")
 
                     except Exception as e:
-                        log(f"Error: {str(e)}", "ERROR")
+                        log(f"Error processing {json_path}: {str(e)}", "ERROR")
 
-    return f"Done. Processed {total_files_processed} files with {total_db_marked} markers."   
+    return f"Done. Processed {total_files_processed} files with {total_db_marked} markers added."  
+
+def consolidate_all_to_config_json(broker_name):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+
+    def log(msg, level="INFO"):
+        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] {msg}")
+
+    # ─── Configuration loading ────────────────────────────────────────────────────
+    dev_dict = load_developers_dictionary()
+    cfg = dev_dict.get(broker_name)
+    if not cfg:
+        return f"[{broker_name}] Error: Broker not found."
+
+    base_folder = cfg.get("BASE_FOLDER")
+    if not base_folder or not os.path.isdir(base_folder):
+        return f"[{broker_name}] Error: Invalid BASE_FOLDER."
+
+    am_data = get_account_management(broker_name)
+    if not am_data:
+        return f"[{broker_name}] Error: accountmanagement.json missing."
+
+    define_candles = am_data.get("chart", {}).get("define_candles", {})
+    if not define_candles:
+        return f"[{broker_name}] Error: No define_candles section."
+
+    tf_comm_section = define_candles.get("timeframes_communication", {})
+
+    stats = {
+        "files_processed": 0,
+        "records_moved": 0,
+        "files_deleted": 0,
+        "errors": []
+    }
+
+    # ─── 1. Regular analysis outputs ──────────────────────────────────────────────
+    for section_key, section_cfg in define_candles.items():
+        if not isinstance(section_cfg, dict):
+            continue
+        if section_key in ["directional_bias_candles", "timeframes_communication"]:
+            continue
+
+        filename = section_cfg.get("filename")
+        if not filename:
+            log(f"Skipping {section_key} — no filename", "WARN")
+            continue
+
+        bars = section_cfg.get("BARS", 101)
+        direction = section_cfg.get("read_candles_from", "new_old")
+
+        log(f"Consolidating regular: {section_key} ({filename})")
+
+        for sym in sorted(os.listdir(base_folder)):
+            sym_path = os.path.join(base_folder, sym)
+            if not os.path.isdir(sym_path):
+                continue
+
+            for tf in sorted(os.listdir(sym_path)):
+                tf_path = os.path.join(sym_path, tf)
+                if not os.path.isdir(tf_path):
+                    continue
+
+                paths = get_analysis_paths(
+                    base_folder, broker_name, sym, tf, direction, bars, filename
+                )
+
+                src_json = paths.get("output_json")
+                if not src_json or not os.path.isfile(src_json):
+                    continue
+
+                config_path = os.path.join(paths["output_dir"], "config.json")
+
+                try:
+                    config = json.load(open(config_path, 'r', encoding='utf-8')) if os.path.exists(config_path) else {}
+
+                    with open(src_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    if not isinstance(data, (list, dict)):
+                        log(f"Bad format {src_json}", "WARN")
+                        continue
+
+                    config[section_key] = data
+                    json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2)
+
+                    count = len(data) if isinstance(data, list) else 1
+                    stats["files_processed"] += 1
+                    stats["records_moved"] += count
+
+                    log(f"Merged {count} items → {sym}/{tf}/{section_key}")
+
+                    try:
+                        os.remove(src_json)
+                        stats["files_deleted"] += 1
+                        log(f"Deleted {os.path.basename(src_json)}")
+                    except Exception as e:
+                        log(f"Delete failed {src_json}: {e}", "WARN")
+
+                except Exception as e:
+                    stats["errors"].append(f"{sym}/{tf}/{section_key}: {str(e)}")
+                    log(str(e), "ERROR")
+
+    # ─── 2. Timeframe communication outputs ───────────────────────────────────────
+    for apprehend_key, comm_cfg in tf_comm_section.items():
+        if not apprehend_key.startswith("apprehend_"):
+            continue
+
+        source_name = apprehend_key.replace("apprehend_", "")
+        source_cfg = define_candles.get(source_name, {})
+        base_name = source_cfg.get("filename", "output.json").replace(".json", "")
+
+        sender_raw = comm_cfg.get("timeframe_sender", "").strip()
+        receiver_raw = comm_cfg.get("timeframe_receiver", "").strip()
+
+        senders = [s.strip().lower() for s in sender_raw.split(",") if s.strip()]
+        receivers = [r.strip().lower() for r in receiver_raw.split(",") if r.strip()]
+
+        if len(senders) != len(receivers):
+            log(f"TF length mismatch in {apprehend_key}", "ERROR")
+            continue
+
+        log(f"Processing comm block: {apprehend_key} ({len(senders)} pairs)")
+
+        for sym in sorted(os.listdir(base_folder)):
+            sym_path = os.path.join(base_folder, sym)
+            if not os.path.isdir(sym_path):
+                continue
+
+            for sender_tf, receiver_tf in zip(senders, receivers):
+                # ── CRITICAL: files are saved in SENDER's output dir! ───────────────
+                sender_paths = get_analysis_paths(
+                    base_folder, broker_name, sym, sender_tf,
+                    source_cfg.get("read_candles_from", "new_old"),
+                    source_cfg.get("BARS", 101),
+                    source_cfg.get("filename", "output.json")
+                )
+
+                output_dir = sender_paths["output_dir"]
+
+                if not os.path.isdir(output_dir):
+                    log(f"No output dir: {output_dir}", "DEBUG")
+                    continue
+
+                # Very flexible pattern that catches all your naming variations
+                pattern = os.path.join(
+                    output_dir,
+                    f"{receiver_tf}_{base_name}_*_{sender_tf}_*.json"
+                )
+
+                comm_files = glob.glob(pattern)
+
+                if not comm_files:
+                    continue
+
+                log(f"Found {len(comm_files)} comm files in {sym}/{sender_tf} → {receiver_tf}")
+
+                for file_path in sorted(comm_files):
+                    key_name = os.path.splitext(os.path.basename(file_path))[0]
+
+                    config_path = os.path.join(output_dir, "config.json")
+
+                    try:
+                        config = json.load(open(config_path, 'r', encoding='utf-8')) if os.path.exists(config_path) else {}
+
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = json.load(f)
+
+                        config[key_name] = content
+
+                        json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2)
+
+                        stats["files_processed"] += 1
+                        stats["records_moved"] += 1
+
+                        log(f"Added → config.json[{key_name}]")
+
+                        try:
+                            os.remove(file_path)
+                            stats["files_deleted"] += 1
+                            log(f"Deleted {os.path.basename(file_path)}")
+                        except Exception as e:
+                            log(f"Delete failed {file_path}: {e}", "WARN")
+
+                    except Exception as e:
+                        err = f"{sym} | {key_name}: {str(e)}"
+                        stats["errors"].append(err)
+                        log(err, "ERROR")
+
+    # ─── Summary ──────────────────────────────────────────────────────────────────
+    summary = (
+        f"Consolidation finished for {broker_name}\n"
+        f"• Files processed:       {stats['files_processed']}\n"
+        f"• Records/items moved:   {stats['records_moved']:,}\n"
+        f"• Files deleted:         {stats['files_deleted']}\n"
+        f"• Errors:                {len(stats['errors'])}"
+    )
+
+    log("═" * 70)
+    log(summary)
+    if stats["errors"]:
+        log("First few errors:")
+        for e in stats["errors"][:4]:
+            log(f"  • {e}")
+        if len(stats["errors"]) > 4:
+            log(f"  ... +{len(stats['errors'])-4} more")
+    log("═" * 70)
+
+    return summary
 
 def single():
     dev_dict = load_developers_dictionary()
@@ -2128,7 +2521,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & Higher Lows
-        hh_hl_results = pool.map(receiver_directional_bias, broker_names)
+        hh_hl_results = pool.map(consolidate_all_to_config_json, broker_names)
         for r in hh_hl_results: print(r)
 
 def main():
@@ -2172,13 +2565,15 @@ def main():
 
         hh_hl_results = pool.map(receiver_comm_higher_highs_higher_lows, broker_names)
         for r in hh_hl_results: print(r)
+
+        hh_hl_results = pool.map(receiver_directional_bias, broker_names)
+        for r in hh_hl_results: print(r)
         
 
     print("\n[SUCCESS] All tasks completed.")
 
 if __name__ == "__main__":
    main()
-   single()
     
 
 
