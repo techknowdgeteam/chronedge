@@ -1061,15 +1061,12 @@ def directional_bias(broker_name):
 
     total_db_marked = 0
 
-    # ─── Self-apprehend (second level DB) config ───────────────────────────────
+    # ─── Self-apprehend config ────────────────────────────────────────────────
     self_apprehend_cfg = db_section.get("apprehend_directional_bias_candles", {})
     self_label_cfg = self_apprehend_cfg.get("label", {}) if self_apprehend_cfg else {}
     self_db_text = self_label_cfg.get("directional_bias_candles_text", "DB2")
-
     self_label_at = self_label_cfg.get("label_at", {})
-    self_up_pos   = self_label_at.get("upward_directional_bias",   "high").lower()
-    self_dn_pos   = self_label_at.get("downward_directional_bias", "high").lower()
-
+    
     def resolve_marker(raw):
         raw = str(raw or "").lower().strip()
         if not raw: return None, False
@@ -1079,16 +1076,15 @@ def directional_bias(broker_name):
         if "pentagon" in raw: return "pentagon", False
         return raw, False
 
-    self_up_obj,  self_up_dbl  = resolve_marker(self_label_at.get("upward_directional_bias_marker"))
-    self_dn_obj,  self_dn_dbl  = resolve_marker(self_label_at.get("downward_directional_bias_marker"))
-
+    self_up_obj, self_up_dbl = resolve_marker(self_label_at.get("upward_directional_bias_marker"))
+    self_dn_obj, self_dn_dbl = resolve_marker(self_label_at.get("downward_directional_bias_marker"))
+    self_up_pos = self_label_at.get("upward_directional_bias", "high").lower()
+    self_dn_pos = self_label_at.get("downward_directional_bias", "high").lower()
     has_self_apprehend = bool(self_apprehend_cfg)
 
     # ─── Process every apprehend_* section ─────────────────────────────────────
     for apprehend_key, apprehend_cfg in db_section.items():
-        if not isinstance(apprehend_cfg, dict):
-            continue
-        if apprehend_key == "apprehend_directional_bias_candles":
+        if not isinstance(apprehend_cfg, dict) or apprehend_key == "apprehend_directional_bias_candles":
             continue 
 
         log(f"Processing directional bias apprehend: '{apprehend_key}'")
@@ -1101,10 +1097,10 @@ def directional_bias(broker_name):
         label_cfg = apprehend_cfg.get("label", {})
         db_text   = label_cfg.get("directional_bias_candles_text", "DB")
         label_at  = label_cfg.get("label_at", {})
-        up_pos    = label_at.get("upward_directional_bias",   "high").lower()
-        dn_pos    = label_at.get("downward_directional_bias", "high").lower()
         up_obj, up_dbl = resolve_marker(label_at.get("upward_directional_bias_marker"))
         dn_obj, dn_dbl = resolve_marker(label_at.get("downward_directional_bias_marker"))
+        up_pos = label_at.get("upward_directional_bias", "high").lower()
+        dn_pos = label_at.get("downward_directional_bias", "high").lower()
 
         source_config_name = apprehend_key.replace("apprehend_", "")
         source_config = define_candles.get(source_config_name)
@@ -1114,8 +1110,6 @@ def directional_bias(broker_name):
 
         bars      = source_config.get("BARS", 101)
         filename  = source_config.get("filename", "output.json")
-        
-        # FORCED TO new_old (Left to Right)
         direction = "new_old" 
 
         is_hhhl = "higherhighsandhigherlows" in source_config_name.lower()
@@ -1127,14 +1121,24 @@ def directional_bias(broker_name):
             if not os.path.isdir(sym_p): continue
 
             for tf in sorted(os.listdir(sym_p)):
+                tf_path = os.path.join(sym_p, tf)
+
+                # ── Changed: config.json now lives in developers folder ───────────
+                dev_output_dir = os.path.join(
+                    os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)),
+                    sym, tf
+                )
+                config_json_path = os.path.join(dev_output_dir, "config.json")
+                # ───────────────────────────────────────────────────────────────────
+
                 paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, filename)
-                
                 required = ["source_json", "source_chart", "output_json", "output_chart"]
+                
                 if not all(os.path.exists(paths.get(p)) for p in required):
                     continue
 
                 try:
-                    # 1. Load and Sort JSON data Left-to-Right (Ascending candle number)
+                    # 1. Load Data
                     with open(paths["source_json"], 'r', encoding='utf-8') as f:
                         full_data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
 
@@ -1143,33 +1147,25 @@ def directional_bias(broker_name):
 
                     clean_img  = cv2.imread(paths["source_chart"])
                     marked_img = cv2.imread(paths["output_chart"])
-                    if clean_img is None or marked_img is None:
-                        continue
+                    if clean_img is None or marked_img is None: continue
 
-                    # 2. Extract and Sort Contours Left-to-Right (Ascending X coordinate)
                     hsv = cv2.cvtColor(clean_img, cv2.COLOR_BGR2HSV)
                     mask = cv2.inRange(hsv, (35,50,50), (85,255,255)) | cv2.inRange(hsv, (0,50,50),(10,255,255))
                     raw_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    # Sorting based on X coordinate (left to right)
                     contours = sorted(raw_contours, key=lambda c: cv2.boundingRect(c)[0])
 
                     n_candles = len(full_data)
-                    if n_candles != len(contours):
-                        log(f"Contour/data mismatch {sym}/{tf}. Data:{n_candles} Contours:{len(contours)}", "WARN")
-                        continue
+                    if n_candles != len(contours): continue
 
                     updated_structures = []
-
                     for structure in structures:
-                        reference_idx   = None
-                        reference_high  = None
-                        reference_low   = None
-                        active_color    = (0, 255, 0)
-                        structure_type  = None
-                        fvg_type        = None
+                        reference_idx = None
+                        reference_high = None
+                        reference_low = None
+                        active_color = (0, 255, 0)
+                        structure_type = None
 
-                        # Determine reference candle index based on structure type
+                        # --- Selection Logic ---
                         if (is_hhhl or is_lhll) and target_type == "contourmaker":
                             cm_data = structure.get("contour_maker")
                             if not cm_data:
@@ -1183,65 +1179,47 @@ def directional_bias(broker_name):
 
                         elif is_fvg:
                             c1, c2, c3 = structure.get("c1_data"), structure.get("c2_data", structure), structure.get("c3_data")
-                            ref_candle = None
-                            if target_type == "fvg_c1": ref_candle = c1
-                            elif target_type == "fvg_c2": ref_candle = c2
-                            elif target_type == "fvg_c3": ref_candle = c3
-
+                            ref_candle = c1 if target_type == "fvg_c1" else c2 if target_type == "fvg_c2" else c3 if target_type == "fvg_c3" else None
                             if not ref_candle:
                                 updated_structures.append(structure)
                                 continue
-
                             ref_key = ref_candle.get("time") or ref_candle.get("candle_number")
                             reference_idx = next((i for i, d in enumerate(full_data) if d.get("time") == ref_key or d.get("candle_number") == ref_key), None)
-                            
                             if reference_idx is not None:
                                 reference_high = ref_candle["high"]
                                 reference_low  = ref_candle["low"]
-                                fvg_type       = structure.get("fvg_type", "").lower()
-                                active_color   = (0, 255, 0) if "bullish" in fvg_type else (255, 0, 0)
+                                active_color   = (0, 255, 0) if "bullish" in structure.get("fvg_type", "").lower() else (255, 0, 0)
                                 structure_type = "fvg"
 
                         if reference_idx is None or reference_idx >= n_candles:
                             updated_structures.append(structure)
                             continue
 
-                        # ─── First-level directional bias ─────────────────────────────
+                        # --- DB Search ---
                         first_db_info = None
                         for k in range(reference_idx + 1, n_candles):
                             candle = full_data[k]
-                            # Logic for identifying the break (DB)
-                            if structure_type == "hhhl":
+                            if structure_type in ["hhhl", "lhll"]:
                                 if candle['high'] < reference_low:
                                     first_db_info = {**candle, "idx": k, "type": "downward", "level": 1}
                                     break
                                 if candle['low'] > reference_high:
                                     first_db_info = {**candle, "idx": k, "type": "upward", "level": 1}
-                                    break
-                            elif structure_type == "lhll":
-                                if candle['low'] > reference_high:
-                                    first_db_info = {**candle, "idx": k, "type": "upward", "level": 1}
-                                    break
-                                if candle['high'] < reference_low:
-                                    first_db_info = {**candle, "idx": k, "type": "downward", "level": 1}
                                     break
                             elif structure_type == "fvg":
-                                is_bull_fvg = "bullish" in fvg_type
-                                if (is_bull_fvg and candle['low'] > reference_high) or (not is_bull_fvg and candle['low'] > reference_high):
+                                if candle['low'] > reference_high:
                                     first_db_info = {**candle, "idx": k, "type": "upward", "level": 1}
                                     break
-                                if (is_bull_fvg and candle['high'] < reference_low) or (not is_bull_fvg and candle['high'] < reference_low):
+                                if candle['high'] < reference_low:
                                     first_db_info = {**candle, "idx": k, "type": "downward", "level": 1}
                                     break
 
                         if first_db_info:
                             db_idx = first_db_info["idx"]
                             x, y, w, h = cv2.boundingRect(contours[db_idx])
-                            cx = x + w // 2
                             is_up = first_db_info["type"] == "upward"
-
                             label_objects_and_text(
-                                img=marked_img, cx=cx, y_rect=y, h_rect=h,
+                                img=marked_img, cx=x + w // 2, y_rect=y, h_rect=h,
                                 custom_text=db_text, object_type=up_obj if is_up else dn_obj,
                                 is_bullish_arrow=is_up, is_marked=True,
                                 double_arrow=up_dbl if is_up else dn_dbl,
@@ -1250,25 +1228,23 @@ def directional_bias(broker_name):
                             structure["directional_bias"] = first_db_info
                             total_db_marked += 1
 
-                            # ─── Second level (self-apprehend) ────────────────────────
+                            # Second Level
                             if has_self_apprehend and db_idx + 1 < n_candles:
                                 s_ref_h, s_ref_l = first_db_info["high"], first_db_info["low"]
                                 second_db_info = None
                                 for m in range(db_idx + 1, n_candles):
                                     c2 = full_data[m]
-                                    if (structure_type == "hhhl" or structure_type == "lhll" or structure_type == "fvg"):
-                                        if c2['high'] < s_ref_l:
-                                            second_db_info = {**c2, "idx": m, "type": "downward", "level": 2}
-                                            break
-                                        if c2['low'] > s_ref_h:
-                                            second_db_info = {**c2, "idx": m, "type": "upward", "level": 2}
-                                            break
+                                    if c2['high'] < s_ref_l:
+                                        second_db_info = {**c2, "idx": m, "type": "downward", "level": 2}
+                                        break
+                                    if c2['low'] > s_ref_h:
+                                        second_db_info = {**c2, "idx": m, "type": "upward", "level": 2}
+                                        break
                                 
                                 if second_db_info:
                                     s_idx = second_db_info["idx"]
                                     sx, sy, sw, sh = cv2.boundingRect(contours[s_idx])
                                     s_is_up = second_db_info["type"] == "upward"
-
                                     label_objects_and_text(
                                         img=marked_img, cx=sx + sw // 2, y_rect=sy, h_rect=sh,
                                         custom_text=self_db_text, object_type=self_up_obj if s_is_up else self_dn_obj,
@@ -1281,16 +1257,37 @@ def directional_bias(broker_name):
 
                         updated_structures.append(structure)
 
-                    # Save results
+                    # 1. Save main analysis files
                     cv2.imwrite(paths["output_chart"], marked_img)
                     with open(paths["output_json"], 'w', encoding='utf-8') as f:
                         json.dump(updated_structures, f, indent=4)
 
+                    # 2. SYNC TO CONFIG.JSON (now in developers folder)
+                    local_config = {}
+                    if os.path.exists(config_json_path):
+                        try:
+                            with open(config_json_path, 'r', encoding='utf-8') as f:
+                                local_config = json.load(f)
+                        except Exception:
+                            log(f"Config invalid/empty at {config_json_path}, initializing new.", "WARN")
+                            local_config = {}
+                    
+                    # Update/Create the structure key with word-for-word data from output.json
+                    local_config[source_config_name] = updated_structures
+                    
+                    # Ensure directory exists
+                    os.makedirs(dev_output_dir, exist_ok=True)
+                    
+                    with open(config_json_path, 'w', encoding='utf-8') as f:
+                        json.dump(local_config, f, indent=4)
+                    
+                    log(f"Success: Synced '{source_config_name}' to {config_json_path}")
+
                 except Exception as e:
-                    log(f"Error processing {sym}/{tf} ({apprehend_key}): {e}", "ERROR")
+                    log(f"Error processing {sym}/{tf}: {e}", "ERROR")
 
-    return f"Directional Bias Done. Total DB Markers: {total_db_marked}"  
-
+    return f"Directional Bias Done. Total DB Markers: {total_db_marked}"
+    
 def timeframes_communication(broker_name):
 
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -1831,6 +1828,7 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                 )
                 
                 output_dir = paths["output_dir"]
+                config_path = os.path.join(output_dir, "config.json")
                 
                 base_pattern = f"{r_tf}_{source_filename.replace('.json','')}_*_{s_tf}_*"
                 json_pattern = os.path.join(output_dir, base_pattern + ".json")
@@ -1888,8 +1886,8 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                             x, y, w, h = cv2.boundingRect(contours[i])
                             
                             candle_info = {
-                                "candle_x": int(x + w // 2),           # center x
-                                "candle_y": int(y),                    # top y
+                                "candle_x": int(x + w // 2),
+                                "candle_y": int(y),
                                 "candle_width": int(w),
                                 "candle_height": int(h),
                                 "candle_left": int(x),
@@ -1898,10 +1896,9 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                                 "candle_bottom": int(y + h)
                             }
                             
-                            # Merge into existing candle dict (without overwriting other keys)
                             data[i].update(candle_info)
 
-                        # Summary at index 0 (optional - you can remove if not needed)
+                        # Summary at index 0
                         highs_summary = {
                             "highs_summary": {
                                 "json_candles_count": json_candles_count,
@@ -1911,7 +1908,7 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                         }
                         data.insert(0, highs_summary)
 
-                        # ── 2. Swing detection & drawing (same as before) ────────────────────────
+                        # ── 2. Swing detection & drawing (original logic unchanged) ──────────────
                         swing_results = []
                         modified = False
                         n = len(data)
@@ -1938,7 +1935,6 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                             dbl_arrow = hl_dbl if is_bull else hh_dbl
                             pos = hl_pos if is_bull else hh_pos
 
-                            # ── Swing candle drawing info ───────────────────────────────
                             x, y, w, h = cv2.boundingRect(contours[real_idx])
                             center_x = x + w // 2
                             center_y = y   # top of candle
@@ -1965,7 +1961,7 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                             swing_dict["draw_top"]    = int(y)
                             swing_dict["draw_bottom"] = int(y + h)
 
-                            # ── CONTOUR MAKER ───────────────────────────────────────────
+                            # ── CONTOUR MAKER (original logic kept unchanged) ───────────────────
                             m_idx = i + neighbor_right
                             contour_maker_entry = None
                             if m_idx < n and 'high' in data[m_idx]:
@@ -1998,7 +1994,6 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                                 contour_maker_entry["draw_top"]    = int(my)
                                 contour_maker_entry["draw_bottom"] = int(my + mh)
 
-                            # ── Update swing record ─────────────────────────────────────
                             if "type" not in swing_dict:
                                 swing_dict["type"] = "higher_low" if is_bull else "higher_high"
                             if "active_color" not in swing_dict:
@@ -2009,6 +2004,7 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                             modified = True
                             swing_results.append(swing_dict)
 
+                        # ── Save chart + json (original behavior) ───────────────────────────────
                         if modified:
                             cv2.imwrite(png_path, img)
                             
@@ -2020,6 +2016,32 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                             
                             log(f"Processed {os.path.basename(json_path)} → "
                                 f"{len(swing_results)} swings | all {min_len} candles coords added", "INFO")
+
+                        # ────────────────────────────────────────────────────────────────
+                        #               Optional: Update config.json
+                        #               (new isolated section - does not affect original logic)
+                        # ────────────────────────────────────────────────────────────────
+                        if modified:  # only if we actually made changes
+                            file_key = os.path.basename(json_path).replace('.json', '')
+                            
+                            config_data = {}
+                            try:
+                                if os.path.exists(config_path):
+                                    with open(config_path, 'r', encoding='utf-8') as f:
+                                        config_data = json.load(f)
+                            except Exception as e:
+                                log(f"Error reading config.json (will overwrite): {e}", "WARN")
+                                config_data = {}
+
+                            # Store under its own key (safe, isolated)
+                            config_data[file_key] = data  # the full enriched data list
+
+                            try:
+                                with open(config_path, 'w', encoding='utf-8') as f:
+                                    json.dump(config_data, f, indent=4)
+                                log(f"config.json updated → key: {file_key}", "INFO")
+                            except Exception as e:
+                                log(f"Failed to save config.json: {e}", "ERROR")
 
                     except Exception as e:
                         log(f"Error processing {sym} | {os.path.basename(json_path)}: {e}", "ERROR")
@@ -2113,7 +2135,10 @@ def receiver_directional_bias(broker_name):
 
             for s_tf, r_tf in zip(sender_tfs, receiver_tfs):
                 paths = get_analysis_paths(base_folder, broker_name, sym, s_tf, "new_old", 101, source_filename, receiver_tf=r_tf)
-                pattern = os.path.join(paths.get("output_dir"), f"{r_tf}_{source_filename.replace('.json', '')}_*_{s_tf}_*.json")
+                output_dir = paths.get("output_dir")
+                config_path = os.path.join(output_dir, "config.json")
+                
+                pattern = os.path.join(output_dir, f"{r_tf}_{source_filename.replace('.json', '')}_*_{s_tf}_*.json")
                 
                 for json_path in glob.glob(pattern):
                     img_path = json_path.replace(".json", ".png")
@@ -2129,12 +2154,11 @@ def receiver_directional_bias(broker_name):
                         img = cv2.imread(img_path)
                         if img is None: continue
 
-                        # Detect all contours (includes candles, arrows, dots, text)
+                        # Detect all contours
                         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                         mask = cv2.inRange(hsv, (35,50,50), (85,255,255)) | cv2.inRange(hsv, (0,50,50),(10,255,255))
                         cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                         
-                        # ─── PRE-PROCESS CONTOURS ─────────────────────────────────
                         contour_list = []
                         for cnt in cnts:
                             x, y, w, h = cv2.boundingRect(cnt)
@@ -2145,14 +2169,13 @@ def receiver_directional_bias(broker_name):
                                 "bbox": (x, y, w, h)
                             })
 
-                        # ─── SPATIAL MAPPING (FUZZY COORDINATE MATCH) ─────────────
+                        # Spatial Mapping
                         candle_to_contour_map = {}
                         used_contour_indices = set()
 
                         for i, candle in enumerate(actual_candles):
                             t_cx = candle.get("candle_left", 0) + (candle.get("candle_width", 0) / 2)
                             t_cy = candle.get("candle_top", 0) + (candle.get("candle_height", 0) / 2)
-                            
                             best_dist = 15
                             best_idx = None
 
@@ -2196,10 +2219,9 @@ def receiver_directional_bias(broker_name):
                         marked_indices = set()
                         num_working = len(working_data)
 
-                        # ─── Processing Loop ──────────────────────────────────────
+                        # Processing Loop
                         for i, candle in enumerate(working_data):
                             candle["is_candle"] = True
-                            
                             cm = candle.get("contour_maker")
                             if not isinstance(cm, dict): continue
                             
@@ -2210,7 +2232,6 @@ def receiver_directional_bias(broker_name):
                             ref_h, ref_l = cm.get("high"), cm.get("low")
                             active_color = tuple(candle.get("active_color", [0, 255, 0]))
                             
-                            # Finding First Directional Bias (Level 1)
                             first_db_info = None
                             first_db_idx = None
 
@@ -2226,9 +2247,7 @@ def receiver_directional_bias(broker_name):
                                     break
 
                             if first_db_info and first_db_idx not in marked_indices:
-                                # 1. Set base_type for contour_maker based on LEVEL 1 direction
                                 cm["base_type"] = get_base_type(first_db_info["type"])
-
                                 x, y, w, h = cv2.boundingRect(ordered_contours[first_db_idx])
                                 cx, is_up = x + w // 2, first_db_info["type"] == "upward"
 
@@ -2250,38 +2269,25 @@ def receiver_directional_bias(broker_name):
                                 modified = True
                                 total_db_marked += 1
 
-                                # Level 2 - Next Bias (used to confirm base_type of level 1)
                                 if has_self_apprehend:
                                     s_ref_h, s_ref_l = first_db_info["high"], first_db_info["low"]
-
                                     for m in range(first_db_idx + 1, num_working):
                                         c2 = working_data[m]
                                         if c2['high'] < s_ref_l or c2['low'] > s_ref_h:
                                             if m not in marked_indices:
                                                 s_up = c2['low'] > s_ref_h
                                                 sx, sy, sw, sh = cv2.boundingRect(ordered_contours[m])
-
                                                 label_objects_and_text(
                                                     img=img, cx=sx+sw//2, y_rect=sy, h_rect=sh, custom_text=self_db_text,
                                                     object_type=self_up_obj if s_up else self_dn_obj, is_bullish_arrow=s_up,
                                                     is_marked=True, double_arrow=self_up_dbl if s_up else self_dn_dbl,
                                                     arrow_color=active_color, label_position=self_up_pos if s_up else self_dn_pos
                                                 )
-
                                                 s_info = {
-                                                    **c2,
-                                                    "type": "upward" if s_up else "downward",
-                                                    "level": 2,
-                                                    "draw_x": int(sx+sw//2),
-                                                    "draw_y": int(sy),
-                                                    "draw_w": int(sw),
-                                                    "draw_h": int(sh)
+                                                    **c2, "type": "upward" if s_up else "downward", "level": 2,
+                                                    "draw_x": int(sx+sw//2), "draw_y": int(sy), "draw_w": int(sw), "draw_h": int(sh)
                                                 }
-
-                                                # 2. VERY IMPORTANT: Set base_type on the LEVEL 1 directional_bias
-                                                #    according to the direction of the LEVEL 2 bias
                                                 first_db_info["base_type"] = get_base_type(s_info["type"])
-
                                                 first_db_info["next_bias"] = s_info
                                                 marked_indices.add(m)
                                                 total_db_marked += 1
@@ -2292,221 +2298,37 @@ def receiver_directional_bias(broker_name):
                             cv2.imwrite(img_path, img)
                             with open(json_path, 'w', encoding='utf-8') as f:
                                 json.dump(final_output, f, indent=4)
+                            
+                            # ─── UPDATE config.json ───────────────────────────────
+                            file_key = os.path.basename(json_path).replace('.json', '')
+                            config_data = {}
+                            try:
+                                if os.path.exists(config_path):
+                                    with open(config_path, 'r', encoding='utf-8') as f:
+                                        config_data = json.load(f)
+                                        if not isinstance(config_data, dict): config_data = {}
+                                else:
+                                    log(f"config.json not found → creating new in {output_dir}", "DEBUG")
+                            except Exception as e:
+                                log(f"Error reading config.json → overwriting: {e}", "WARN")
+                                config_data = {}
+
+                            config_data[file_key] = final_output
+                            
+                            try:
+                                with open(config_path, 'w', encoding='utf-8') as f:
+                                    json.dump(config_data, f, indent=4)
+                                log(f"Updated config.json key '{file_key}'", "DEBUG")
+                            except Exception as e:
+                                log(f"Failed to write config.json: {e}", "ERROR")
+
                             total_files_processed += 1
                             log(f"✓ Processed {os.path.basename(json_path)}", "INFO")
 
                     except Exception as e:
                         log(f"Error processing {json_path}: {str(e)}", "ERROR")
 
-    return f"Done. Processed {total_files_processed} files with {total_db_marked} markers added."  
-
-def consolidate_all_to_config_json(broker_name):
-    lagos_tz = pytz.timezone('Africa/Lagos')
-
-    def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-
-    # ─── Configuration loading ────────────────────────────────────────────────────
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg:
-        return f"[{broker_name}] Error: Broker not found."
-
-    base_folder = cfg.get("BASE_FOLDER")
-    if not base_folder or not os.path.isdir(base_folder):
-        return f"[{broker_name}] Error: Invalid BASE_FOLDER."
-
-    am_data = get_account_management(broker_name)
-    if not am_data:
-        return f"[{broker_name}] Error: accountmanagement.json missing."
-
-    define_candles = am_data.get("chart", {}).get("define_candles", {})
-    if not define_candles:
-        return f"[{broker_name}] Error: No define_candles section."
-
-    tf_comm_section = define_candles.get("timeframes_communication", {})
-
-    stats = {
-        "files_processed": 0,
-        "records_moved": 0,
-        "files_deleted": 0,
-        "errors": []
-    }
-
-    # ─── 1. Regular analysis outputs ──────────────────────────────────────────────
-    for section_key, section_cfg in define_candles.items():
-        if not isinstance(section_cfg, dict):
-            continue
-        if section_key in ["directional_bias_candles", "timeframes_communication"]:
-            continue
-
-        filename = section_cfg.get("filename")
-        if not filename:
-            log(f"Skipping {section_key} — no filename", "WARN")
-            continue
-
-        bars = section_cfg.get("BARS", 101)
-        direction = section_cfg.get("read_candles_from", "new_old")
-
-        log(f"Consolidating regular: {section_key} ({filename})")
-
-        for sym in sorted(os.listdir(base_folder)):
-            sym_path = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_path):
-                continue
-
-            for tf in sorted(os.listdir(sym_path)):
-                tf_path = os.path.join(sym_path, tf)
-                if not os.path.isdir(tf_path):
-                    continue
-
-                paths = get_analysis_paths(
-                    base_folder, broker_name, sym, tf, direction, bars, filename
-                )
-
-                src_json = paths.get("output_json")
-                if not src_json or not os.path.isfile(src_json):
-                    continue
-
-                config_path = os.path.join(paths["output_dir"], "config.json")
-
-                try:
-                    config = json.load(open(config_path, 'r', encoding='utf-8')) if os.path.exists(config_path) else {}
-
-                    with open(src_json, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-
-                    if not isinstance(data, (list, dict)):
-                        log(f"Bad format {src_json}", "WARN")
-                        continue
-
-                    config[section_key] = data
-                    json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2)
-
-                    count = len(data) if isinstance(data, list) else 1
-                    stats["files_processed"] += 1
-                    stats["records_moved"] += count
-
-                    log(f"Merged {count} items → {sym}/{tf}/{section_key}")
-
-                    try:
-                        os.remove(src_json)
-                        stats["files_deleted"] += 1
-                        log(f"Deleted {os.path.basename(src_json)}")
-                    except Exception as e:
-                        log(f"Delete failed {src_json}: {e}", "WARN")
-
-                except Exception as e:
-                    stats["errors"].append(f"{sym}/{tf}/{section_key}: {str(e)}")
-                    log(str(e), "ERROR")
-
-    # ─── 2. Timeframe communication outputs ───────────────────────────────────────
-    for apprehend_key, comm_cfg in tf_comm_section.items():
-        if not apprehend_key.startswith("apprehend_"):
-            continue
-
-        source_name = apprehend_key.replace("apprehend_", "")
-        source_cfg = define_candles.get(source_name, {})
-        base_name = source_cfg.get("filename", "output.json").replace(".json", "")
-
-        sender_raw = comm_cfg.get("timeframe_sender", "").strip()
-        receiver_raw = comm_cfg.get("timeframe_receiver", "").strip()
-
-        senders = [s.strip().lower() for s in sender_raw.split(",") if s.strip()]
-        receivers = [r.strip().lower() for r in receiver_raw.split(",") if r.strip()]
-
-        if len(senders) != len(receivers):
-            log(f"TF length mismatch in {apprehend_key}", "ERROR")
-            continue
-
-        log(f"Processing comm block: {apprehend_key} ({len(senders)} pairs)")
-
-        for sym in sorted(os.listdir(base_folder)):
-            sym_path = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_path):
-                continue
-
-            for sender_tf, receiver_tf in zip(senders, receivers):
-                # ── CRITICAL: files are saved in SENDER's output dir! ───────────────
-                sender_paths = get_analysis_paths(
-                    base_folder, broker_name, sym, sender_tf,
-                    source_cfg.get("read_candles_from", "new_old"),
-                    source_cfg.get("BARS", 101),
-                    source_cfg.get("filename", "output.json")
-                )
-
-                output_dir = sender_paths["output_dir"]
-
-                if not os.path.isdir(output_dir):
-                    log(f"No output dir: {output_dir}", "DEBUG")
-                    continue
-
-                # Very flexible pattern that catches all your naming variations
-                pattern = os.path.join(
-                    output_dir,
-                    f"{receiver_tf}_{base_name}_*_{sender_tf}_*.json"
-                )
-
-                comm_files = glob.glob(pattern)
-
-                if not comm_files:
-                    continue
-
-                log(f"Found {len(comm_files)} comm files in {sym}/{sender_tf} → {receiver_tf}")
-
-                for file_path in sorted(comm_files):
-                    key_name = os.path.splitext(os.path.basename(file_path))[0]
-
-                    config_path = os.path.join(output_dir, "config.json")
-
-                    try:
-                        config = json.load(open(config_path, 'r', encoding='utf-8')) if os.path.exists(config_path) else {}
-
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = json.load(f)
-
-                        config[key_name] = content
-
-                        json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2)
-
-                        stats["files_processed"] += 1
-                        stats["records_moved"] += 1
-
-                        log(f"Added → config.json[{key_name}]")
-
-                        try:
-                            os.remove(file_path)
-                            stats["files_deleted"] += 1
-                            log(f"Deleted {os.path.basename(file_path)}")
-                        except Exception as e:
-                            log(f"Delete failed {file_path}: {e}", "WARN")
-
-                    except Exception as e:
-                        err = f"{sym} | {key_name}: {str(e)}"
-                        stats["errors"].append(err)
-                        log(err, "ERROR")
-
-    # ─── Summary ──────────────────────────────────────────────────────────────────
-    summary = (
-        f"Consolidation finished for {broker_name}\n"
-        f"• Files processed:       {stats['files_processed']}\n"
-        f"• Records/items moved:   {stats['records_moved']:,}\n"
-        f"• Files deleted:         {stats['files_deleted']}\n"
-        f"• Errors:                {len(stats['errors'])}"
-    )
-
-    log("═" * 70)
-    log(summary)
-    if stats["errors"]:
-        log("First few errors:")
-        for e in stats["errors"][:4]:
-            log(f"  • {e}")
-        if len(stats["errors"]) > 4:
-            log(f"  ... +{len(stats['errors'])-4} more")
-    log("═" * 70)
-
-    return summary
+    return f"Done. Processed {total_files_processed} files with {total_db_marked} markers added."
 
 def single():
     dev_dict = load_developers_dictionary()
@@ -2521,7 +2343,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & Higher Lows
-        hh_hl_results = pool.map(consolidate_all_to_config_json, broker_names)
+        hh_hl_results = pool.map(receiver_directional_bias, broker_names)
         for r in hh_hl_results: print(r)
 
 def main():
@@ -2573,7 +2395,7 @@ def main():
     print("\n[SUCCESS] All tasks completed.")
 
 if __name__ == "__main__":
-   main()
+   single()
     
 
 
