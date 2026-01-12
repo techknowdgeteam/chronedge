@@ -1,0 +1,255 @@
+{
+    "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+    "settings":{
+        "calculate_stoploss":"yes",
+        "calculate_takeprofit":"yes",
+        "calculation_type":"default",
+        "record_orders_from":"all",
+        "orders_per_symbol":"all",
+        "order_timeframes":["15m","30m","45m","1h","4h"],
+        "risk_reward_ratio": 3,
+        "disable_orders": "allordertype"
+    },
+    "chart":{
+        "define_candles": {
+            "fvg": {
+                "name":"fvg",
+                "BARS": 301,
+                "filename":"fvg.json",
+                "read_candles_from":"new_old",
+                "number_candles":"define_candle",
+                "condition":{
+                    "c1_lookback": null,
+                    "strong_c1": "greater",
+                    "strong_fvg": "tallest_body",
+                    "fvg_body_size": "multiply_c3_height_by_2",
+                    "strong_c3": "greater",
+                    "c1_candle_type": "none",
+                    "c3_candle_type": "same_with_fvg",
+                    "c3_closing": "beyond_close",
+                    "c1_c3_higher_body_than_wicks": "none"
+                },
+                "validate_my_condition": true,
+                "label":{
+                    "bullish_text": "",
+                    "bearish_text": "",
+                    "label_at": {
+                        "bullish":"low",
+                        "bullish_color":"green",
+                        "bullish_marker": "arrow",
+                        "bearish":"high",
+                        "bearish_color":"red",
+                        "bearish_marker": "arrow"
+                    }
+                }
+            },
+            "myfvg": {
+                "BARS": 301,
+                "filename":"myfvg.json",
+                "read_candles_from":"new_old",
+                "number_candles":"define_candle",
+                "condition":{
+                    "c1_lookback": null,
+                    "strong_c1": "greater",
+                    "strong_fvg": "tallest_body",
+                    "fvg_body_size": "multiply_c3_height_by_2",
+                    "strong_c3": "greater",
+                    "c1_candle_type": "none",
+                    "c3_candle_type": "same_with_fvg",
+                    "c3_closing": "beyond_close",
+                    "c1_c3_higher_body_than_wicks": "none"
+                },
+                "validate_my_condition": true,
+                "label":{
+                    "bullish_text": "",
+                    "bearish_text": "",
+                    "label_at": {
+                        "bullish":"low",
+                        "bullish_color":"green",
+                        "bullish_marker": "arrow",
+                        "bearish":"high",
+                        "bearish_color":"red",
+                        "bearish_marker": "arrow"
+                    }
+                }
+            },
+            "higherhighsandhigherlows": {
+                "BARS": 301,
+                "filename":"highers.json",
+                "read_candles_from":"new_old",
+                "number_candles":"define_candle",
+                "timeframes_relation":"default",
+                "NEIGHBOR_LEFT": 14,
+                "NEIGHBOR_RIGHT": 14,
+                "label":{
+                    "higherhighs_text": "HH",
+                    "higherlows_text": "HL",
+                    "directional_bias_text": "",
+                    "label_at": {
+                        "higher_lows":"low",
+                        "higher_lows_color":"green",
+                        "higher_lows_marker": "doublearrows",
+                        "higher_lows_contourmaker_marker": "",
+                        "higher_lows_directional_bias_marker": "",
+                        "higher_highs":"high",
+                        "higher_highs_color":"red",
+                        "higher_highs_marker": "doublearrows"
+                    }
+                }
+            },
+            "lowerhighsandlowerlows": {
+                "BARS": 301,
+                "filename":"lowers.json",
+                "read_candles_from":"new_old",
+                "number_candles":"define_candle",
+                "NEIGHBOR_LEFT": 6,
+                "NEIGHBOR_RIGHT": 6,
+                "label":{
+                    "lowerhighs_text": "LH",
+                    "lowerlows_text": "LL",
+                    "label_at": {
+                        "lower_lows":"low",
+                        "lower_lows_color":"green",
+                        "lower_lows_marker": "arrow",
+                        "lower_highs":"high",
+                        "lower_highs_color":"red",
+                        "lower_highs_marker": "arrow"
+                    }
+                }
+            },
+            "directional_bias_candles": {
+                "apprehend_higherhighsandhigherlows": {
+                    "target":"contourmaker",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_lowerhighsandlowerlows": {
+                    "target":"contourmaker",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_fvg": {
+                    "target":"fvg_c3",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_directional_bias_candles": {       
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "pentagon",
+                            "downward_directional_bias_marker": "pentagon"
+                        }
+                    }
+                }
+            },
+            "timeframes_communication": {
+                "apprehend_higherhighsandhigherlows": {
+                    "number_candles":"define_candle",
+                    "timeframe_sender":"4h, 1h, 15m",
+                    "timeframe_receiver":"15m, 5m, 5m",
+                    "target":"contourmaker, directional_bias, next_bias",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },
+                "apprehend_lowerhighsandlowerlows": {
+                    "number_candles":"define_candle",
+                    "timeframe_sender":"4h",
+                    "timeframe_receiver":"15m",
+                    "target":"contourmaker, directional_bias, next_bias",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                },"apprehend_fvg": {
+                    "number_candles":"define_candle",
+                    "timeframe_sender":"4h",
+                    "timeframe_receiver":"15m",
+                    "target":"fvg_c1, fvg_c2, fvg_c3",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "upward_directional_bias": "high",
+                            "downward_directional_bias": "high",
+                            "upward_directional_bias_marker": "dot",
+                            "downward_directional_bias_marker": "dot"
+                        }
+                    }
+                }
+            },
+            "liquidity": {
+                "apprehend_higherhighsandhigherlows": {
+                    "target":"higherhighs, higherlows, contourmaker, directional_bias",          
+                    "label":{
+                        "liquidity_text": "lq",
+                        "higher_highs_poi": "low",
+                        "higher_lows_poi": "high",
+                        "contourmaker_support_poi": "high",
+                        "contourmaker_resistance_poi": "low",
+                        "directional_bias_support_poi": "high",
+                        "directional_bias_resistance_poi": "low"
+                    }
+                },
+                "apprehend_lowerhighsandlowerlows": {
+                    "target":"lowerhighs, lowerlows, contourmaker, directional_bias",          
+                    "label":{
+                        "liquidity_text": "lq",
+                        "higher_highs_poi": "low",
+                        "higher_lows_poi": "high",
+                        "contourmaker_support_poi": "high",
+                        "contourmaker_resistance_poi": "low",
+                        "directional_bias_support_poi": "high",
+                        "directional_bias_resistance_poi": "low"
+                    }
+                },
+                "apprehend_fvg": {
+                    "target":"fvg_c2, fvg_c3",          
+                    "label":{
+                        "directional_bias_candles_text": "",
+                        "label_at": {
+                            "fvg_ctargets_resistance_poi": "low",
+                            "fvg_ctargets__support_poi": "high"
+                        }
+                    }
+                }
+            }
+        },
+        "build_strategy":{
+        }
+    }
+}
