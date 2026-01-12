@@ -34,35 +34,55 @@ def get_account_management(broker_name):
             return json.load(f)
     return None
 
-def get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base, 
-                       receiver_tf=None, target=None):
-    # Define the developer output root
+def get_analysis_paths(
+    base_folder,
+    broker_name,
+    sym,
+    tf,
+    direction,
+    bars,
+    output_filename_base,
+    receiver_tf=None,
+    target=None
+):
+    """
+    Generate all relevant file paths for analysis, including the new standardized
+    config.json location in the developers folder.
+
+    Returns a dictionary containing all important paths.
+    """
+    # Root of developer outputs
     dev_output_base = os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name))
-    
-    # Source: Where raw data currently lives
+
+    # Source files (where raw/previous data lives)
     source_json = os.path.join(base_folder, sym, tf, "candlesdetails", f"{direction}_{bars}.json")
     source_chart = os.path.join(base_folder, sym, tf, f"chart_{bars}.png")
     
-    # New: Full bars source
+    # Full bars reference (often useful)
     full_bars_source = os.path.join(base_folder, sym, tf, "candlesdetails", "newest_oldest.json")
-    
-    # Output: Where the results will be saved
+
+    # Output directory & files (inside developers/broker/sym/tf/)
     output_dir = os.path.join(dev_output_base, sym, tf)
+    
+    # Main output files for this particular analysis
     output_json = os.path.join(output_dir, output_filename_base)
     output_chart = os.path.join(output_dir, output_filename_base.replace(".json", ".png"))
 
-    # Communication Paths (Constructor Logic)
+    # Standardized config.json — same for all analyses in this symbol/timeframe
+    config_json = os.path.join(output_dir, "config.json")
+
+    # Communication paths (when used in receiver/forwarding logic)
     comm_paths = {}
     if receiver_tf and target:
         base_name = output_filename_base.replace(".json", "")
-        # Format: {receiver_tf}_{base_output_name}_{target}_{sender_tf}
+        # Format example: 15m_highers_contourmaker_5m
         comm_filename_base = f"{receiver_tf}_{base_name}_{target}_{tf}"
         comm_paths = {
             "json": os.path.join(output_dir, f"{comm_filename_base}.json"),
             "png": os.path.join(output_dir, f"{comm_filename_base}.png"),
             "base_name": comm_filename_base
         }
-    
+
     return {
         "dev_output_base": dev_output_base,
         "source_json": source_json,
@@ -71,9 +91,10 @@ def get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, outpu
         "output_dir": output_dir,
         "output_json": output_json,
         "output_chart": output_chart,
-        "comm_paths": comm_paths  # New constructed paths
+        "config_json": config_json,           # ← NEW: standardized config location
+        "comm_paths": comm_paths
     }
-
+    
 
 def label_objects_and_text(
     img,
@@ -375,7 +396,7 @@ def lower_highs_lower_lows(broker_name):
                                 })
 
                             data[i].update({
-                                "type": "lower_low" if is_bull else "lower_high",
+                                "swing_type": "lower_low" if is_bull else "lower_high",
                                 "is_swing": True,
                                 "active_color": active_color,
                                 "draw_x": data[i]["candle_x"],
@@ -606,7 +627,7 @@ def higher_highs_higher_lows(broker_name):
 
                         # Update the swing candle with identification and drawing coords
                         data[i].update({
-                            "type": "higher_low" if is_bull else "higher_high",
+                            "swing_type": "higher_low" if is_bull else "higher_high",
                             "is_swing": True,
                             "active_color": active_color,
                             "draw_x": data[i]["candle_x"],
@@ -1994,8 +2015,8 @@ def receiver_comm_higher_highs_higher_lows(broker_name):
                                 contour_maker_entry["draw_top"]    = int(my)
                                 contour_maker_entry["draw_bottom"] = int(my + mh)
 
-                            if "type" not in swing_dict:
-                                swing_dict["type"] = "higher_low" if is_bull else "higher_high"
+                            if "swing_type" not in swing_dict:
+                                swing_dict["swing_type"] = "higher_low" if is_bull else "higher_high"
                             if "active_color" not in swing_dict:
                                 swing_dict["active_color"] = active_color
 
@@ -2330,6 +2351,351 @@ def receiver_directional_bias(broker_name):
 
     return f"Done. Processed {total_files_processed} files with {total_db_marked} markers added."
 
+def enrich_base_types_via_config(broker_name):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+
+    def log(msg, level="INFO"):
+        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] {msg}")
+
+    def get_base_type(bias_type):
+        if not bias_type:
+            return None
+        bias_type = str(bias_type).lower().strip()
+        if bias_type == "upward":
+            return "support"
+        if bias_type == "downward":
+            return "resistance"
+        return None
+
+    dev_dict = load_developers_dictionary()
+    cfg = dev_dict.get(broker_name)
+    if not cfg:
+        return f"Error: Broker '{broker_name}' not found."
+
+    base_folder = cfg.get("BASE_FOLDER")
+    if not base_folder:
+        return "Error: BASE_FOLDER not defined."
+
+    am_data = get_account_management(broker_name)
+    if not am_data:
+        return "Error: accountmanagement.json missing."
+
+    define_candles = am_data.get("chart", {}).get("define_candles", {})
+    tf_comm_section = define_candles.get("timeframes_communication", {})
+
+    total_configs_processed = 0
+    total_files_updated = 0
+    total_base_types_fixed = 0
+
+    # We only need to know which symbols and sender tfs exist
+    for sym in sorted(os.listdir(base_folder)):
+        sym_path = os.path.join(base_folder, sym)
+        if not os.path.isdir(sym_path):
+            continue
+
+        for apprehend_key, comm_cfg in tf_comm_section.items():
+            if not apprehend_key.startswith("apprehend_"):
+                continue
+
+            source_config_name = apprehend_key.replace("apprehend_", "")
+            source_cfg = define_candles.get(source_config_name)
+            if not source_cfg:
+                continue
+
+            source_filename = source_cfg.get("filename", "output.json")
+
+            sender_tfs = [s.strip().lower() for s in comm_cfg.get("timeframe_sender", "").split(",") if s.strip()]
+            receiver_tfs = [r.strip().lower() for r in comm_cfg.get("timeframe_receiver", "").split(",") if r.strip()]
+
+            for s_tf in sender_tfs:  # we try each possible sender tf
+                for r_tf in receiver_tfs:
+                    paths = get_analysis_paths(
+                        base_folder=base_folder,
+                        broker_name=broker_name,
+                        sym=sym,
+                        tf=s_tf,                     # sender tf
+                        direction="new_old",
+                        bars=101,
+                        output_filename_base=source_filename,
+                        receiver_tf=r_tf
+                    )
+
+                    config_path = paths["config_json"]
+                    if not os.path.isfile(config_path):
+                        continue
+
+                    try:
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+
+                        if not isinstance(config_data, dict):
+                            continue
+
+                        modified_config = False
+
+                        # Every key in config.json is a receiver file
+                        for file_key, data in config_data.items():
+                            if not isinstance(data, list):
+                                continue
+
+                            file_modified = False
+
+                            for item in data:
+                                if not isinstance(item, dict):
+                                    continue
+
+                                # 1. directional_bias → base_type from next_bias (priority) or own type
+                                db = item.get("directional_bias")
+                                if isinstance(db, dict):
+                                    expected = None
+
+                                    # Priority: next_bias
+                                    next_b = db.get("next_bias")
+                                    if isinstance(next_b, dict):
+                                        expected = get_base_type(next_b.get("type"))
+
+                                    # Fallback: own type
+                                    if expected is None:
+                                        expected = get_base_type(db.get("type"))
+
+                                    current = db.get("base_type")
+                                    if expected and (current != expected or "base_type" not in db):
+                                        db["base_type"] = expected
+                                        total_base_types_fixed += 1
+                                        file_modified = True
+
+                                # 2. contour_maker → base_type from directional_bias.type
+                                cm = item.get("contour_maker")
+                                if isinstance(cm, dict) and isinstance(db, dict):
+                                    expected_cm = get_base_type(db.get("type"))
+                                    current_cm = cm.get("base_type")
+
+                                    if expected_cm and (current_cm != expected_cm or "base_type" not in cm):
+                                        cm["base_type"] = expected_cm
+                                        total_base_types_fixed += 1
+                                        file_modified = True
+
+                            if file_modified:
+                                total_files_updated += 1
+                                modified_config = True
+
+                        if modified_config:
+                            try:
+                                with open(config_path, 'w', encoding='utf-8') as f:
+                                    json.dump(config_data, f, indent=4)
+                                total_configs_processed += 1
+                            except Exception as e:
+                                log(f"Failed to save {config_path}: {e}", "ERROR")
+
+                    except Exception as e:
+                        log(f"Error reading config {config_path}: {e}", "ERROR")
+
+    return (
+        f"Base type enrichment via config.json finished:\n"
+        f"• config.json files processed: {total_configs_processed}\n"
+        f"• Individual receiver files updated inside configs: {total_files_updated}\n"
+        f"• base_type fields corrected/added: {total_base_types_fixed}"
+    )
+
+def receiver_liquidity_candle(broker_name):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    
+    def log(msg, level="INFO"):
+        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] {msg}")
+
+    def resolve_marker(raw):
+        if not raw: return None, False
+        raw = str(raw).lower().strip()
+        if raw in ["arrow", "arrows", "singlearrow"]: return "arrow", False
+        if raw in ["doublearrow", "doublearrows"]: return "arrow", True
+        if raw in ["rightarrow", "right_arrow"]: return "rightarrow", False
+        if raw in ["leftarrow", "left_arrow"]: return "leftarrow", False
+        if "dot" in raw: return "dot", False
+        return raw, False
+
+    log(f"--- STARTING DUAL-TARGET LIQUIDITY ANALYSIS: {broker_name} ---")
+
+    # 1. Setup Environment
+    dev_dict = load_developers_dictionary()
+    cfg = dev_dict.get(broker_name)
+    if not cfg:
+        log(f"Broker '{broker_name}' not found.", "ERROR")
+        return f"Error: Broker {broker_name} not in dictionary."
+    
+    base_folder = cfg.get("BASE_FOLDER")
+    am_data = get_account_management(broker_name)
+    if not am_data:
+        log(f"accountmanagement.json missing for {broker_name}", "ERROR")
+        return "Error: accountmanagement.json missing."
+    
+    define_candles = am_data.get("chart", {}).get("define_candles", {})
+    liq_root = define_candles.get("liquidity_candle", {})
+    tf_comm_section = define_candles.get("timeframes_communication", {})
+    
+    total_configs_updated = 0
+    total_liq_found = 0
+
+    # 2. Iterate through apprehend_* definitions
+    for apprehend_key, liq_cfg in liq_root.items():
+        if not apprehend_key.startswith("apprehend_"): continue
+        
+        source_def_name = apprehend_key.replace("apprehend_", "")
+        source_def = define_candles.get(source_def_name, {})
+        
+        if not source_def:
+            log(f"No definition found for '{source_def_name}'. Skipping.", "WARNING")
+            continue
+
+        raw_filename = source_def.get("filename", "")
+        if not raw_filename: continue
+        
+        target_file_filter = raw_filename.replace(".json", "").lower()
+        # The primary chart image name (e.g., "highers.png")
+        primary_png_name = raw_filename.replace(".json", ".png")
+
+        log(f"Pattern: {apprehend_key} | Primary Key: {source_def_name} | Filter: {target_file_filter}")
+
+        # Resolve markers for this specific block
+        apprentice_cfg = liq_cfg.get("liquidity_apprentice_candle", {}).get("swing_types", {})
+        main_liq_cfg = liq_cfg.get("liquidity_candle", {})
+        liq_label_at = main_liq_cfg.get("label_at", {})
+        
+        markers = {
+            "liq_hh": resolve_marker(liq_label_at.get("higher_high_liquidity_candle_marker")),
+            "liq_hl": resolve_marker(liq_label_at.get("higher_low_liquidity_candle_marker")),
+            "liq_hh_txt": liq_label_at.get("higher_high_liquidity_candle_text", ""),
+            "liq_hl_txt": liq_label_at.get("higher_low_liquidity_candle_text", ""),
+            "app_hh": resolve_marker(apprentice_cfg.get("label_at", {}).get("swing_type_higher_high_marker")),
+            "app_hl": resolve_marker(apprentice_cfg.get("label_at", {}).get("swing_type_higher_low_marker"))
+        }
+
+        comm_cfg = tf_comm_section.get(apprehend_key, {})
+        if not comm_cfg: continue
+
+        sender_tfs = [s.strip().lower() for s in comm_cfg.get("timeframe_sender", "").split(",") if s.strip()]
+        receiver_tfs = [r.strip().lower() for r in comm_cfg.get("timeframe_receiver", "").split(",") if r.strip()]
+
+        for sym in sorted(os.listdir(base_folder)):
+            sym_p = os.path.join(base_folder, sym)
+            if not os.path.isdir(sym_p): continue
+
+            for s_tf, r_tf in zip(sender_tfs, receiver_tfs):
+                paths = get_analysis_paths(base_folder, broker_name, sym, s_tf, "new_old", 101, raw_filename, receiver_tf=r_tf)
+                output_dir = paths["output_dir"]
+                config_path = os.path.join(output_dir, "config.json")
+
+                if not os.path.exists(config_path): continue
+
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+
+                    config_modified = False
+                    
+                    # Iterate through all keys in config.json
+                    for file_key, candles in config_data.items():
+                        # TARGETING LOGIC: 
+                        # 1. Is it the primary key (e.g. "higherhighsandhigherlows")?
+                        # 2. Or is it a related key containing the filename (e.g. "15m_highers_bias...")?
+                        is_primary_key = (file_key == source_def_name)
+                        is_related_file = (target_file_filter in file_key.lower())
+
+                        if not (is_primary_key or is_related_file):
+                            continue
+                        
+                        if not isinstance(candles, list): continue
+
+                        # Resolve Image Path:
+                        # If primary key, use primary_png_name. Otherwise use file_key.png
+                        current_png = primary_png_name if is_primary_key else f"{file_key}.png"
+                        png_path = os.path.join(output_dir, current_png)
+                        img = cv2.imread(png_path) if os.path.exists(png_path) else None
+                        key_modified = False
+
+                        # Logic to find sweeps
+                        for i, swing_c in enumerate(candles):
+                            stype = str(swing_c.get("swing_type", "")).lower()
+                            if not stype: continue
+
+                            is_hh = "higher_high" in stype
+                            ref_price = swing_c.get("high") if is_hh else swing_c.get("low")
+                            if ref_price is None: continue
+
+                            for j in range(i + 1, len(candles)):
+                                target_c = candles[j]
+                                grabbed = False
+
+                                if is_hh and target_c.get("high", 0) >= ref_price:
+                                    grabbed, obj, dbl, txt, pos = True, *markers["liq_hh"], markers["liq_hh_txt"], "high"
+                                    app_obj, app_dbl = markers["app_hh"]
+                                elif not is_hh and target_c.get("low", 999999) <= ref_price:
+                                    grabbed, obj, dbl, txt, pos = True, *markers["liq_hl"], markers["liq_hl_txt"], "low"
+                                    app_obj, app_dbl = markers["app_hl"]
+
+                                if grabbed:
+                                    # Update JSON data for the candle
+                                    target_c["is_liquidity_candle"] = True
+                                    target_c["liquidity_candle"] = {
+                                        "from_swing_index": swing_c.get("candle_number"),
+                                        "swing_type_swept": stype,
+                                        "price_level": ref_price,
+                                        "draw_coords": {
+                                            "x": int(target_c.get("candle_left", 0) + (target_c.get("candle_width", 0) // 2)),
+                                            "y": int(target_c.get("candle_top", 0)),
+                                            "h": int(target_c.get("candle_height", 0)),
+                                            "text": txt
+                                        }
+                                    }
+
+                                    swing_c["swept_by_liquidity"] = True
+                                    swing_c["apprentice_metadata"] = {
+                                        "swept_by_candle": target_c.get("candle_number"),
+                                        "draw_coords": {
+                                            "x": int(swing_c.get("candle_left", 0) + (swing_c.get("candle_width", 0) // 2)),
+                                            "y": int(swing_c.get("candle_top", 0)),
+                                            "marker": app_obj
+                                        }
+                                    }
+
+                                    # Draw on image
+                                    if img is not None:
+                                        label_objects_and_text(img, target_c["liquidity_candle"]["draw_coords"]["x"], 
+                                                             target_c["liquidity_candle"]["draw_coords"]["y"], 
+                                                             target_c["liquidity_candle"]["draw_coords"]["h"], 
+                                                             custom_text=txt, object_type=obj, is_bullish_arrow=(not is_hh), 
+                                                             is_marked=True, double_arrow=dbl, arrow_color=(0, 255, 255), label_position=pos)
+                                        
+                                        label_objects_and_text(img, swing_c["apprentice_metadata"]["draw_coords"]["x"], 
+                                                             swing_c["apprentice_metadata"]["draw_coords"]["y"], 
+                                                             int(swing_c.get("candle_height", 0)), 
+                                                             custom_text="", object_type=app_obj, is_bullish_arrow=(not is_hh), 
+                                                             is_marked=True, double_arrow=app_dbl, arrow_color=(255, 165, 0), label_position=pos)
+
+                                    key_modified = True
+                                    config_modified = True
+                                    total_liq_found += 1
+                                    break 
+
+                        if key_modified and img is not None:
+                            cv2.imwrite(png_path, img)
+                            log(f"   [UPDATED CHART] {sym} -> {current_png}")
+
+                    if config_modified:
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            json.dump(config_data, f, indent=4)
+                        total_configs_updated += 1
+                        log(f"Saved config.json updates for {sym} [{r_tf}]")
+
+                except Exception as e:
+                    log(f"Error processing {sym} ({r_tf}): {e}", "ERROR")
+
+    log(f"--- DUAL-TARGET ANALYSIS COMPLETE ---")
+    log(f"Total Sweeps: {total_liq_found} | Configs Updated: {total_configs_updated}")
+    
+    return f"Success: {total_liq_found} sweeps across {total_configs_updated} files."
+
 def single():
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -2343,7 +2709,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & Higher Lows
-        hh_hl_results = pool.map(receiver_directional_bias, broker_names)
+        hh_hl_results = pool.map(receiver_liquidity_candle, broker_names)
         for r in hh_hl_results: print(r)
 
 def main():
@@ -2390,13 +2756,15 @@ def main():
 
         hh_hl_results = pool.map(receiver_directional_bias, broker_names)
         for r in hh_hl_results: print(r)
+
+        hh_hl_results = pool.map(enrich_base_types_via_config, broker_names)
+        for r in hh_hl_results: print(r)
         
 
     print("\n[SUCCESS] All tasks completed.")
 
 if __name__ == "__main__":
    single()
-    
 
 
 
