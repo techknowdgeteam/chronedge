@@ -18,41 +18,44 @@
                         "liquidity_apprentice_candle":{
                             "swing_types":{
                                 "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"",
+                                "swing_type_higher_low_text":"I",
                                 "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"",                    
+                                "swing_type_higher_high_text":"I",                    
                                 "label_at": {
                                     "swing_type_higher_low_marker": "rightarrow",
                                     "swing_type_higher_high_marker": "rightarrow"
                                 }
-                            },
-                            "liquidity_candle":{                   
+                            }
+                        },
+                        "liquidity_sweeper_candle":{                   
+                            "label_at": {
+                                "higher_low_liquidity_candle_marker": "leftarrow",
+                                "higher_high_liquidity_candle_marker": "leftarrow",
+                                "higher_low_liquidity_candle_text": "",
+                                "higher_high_liquidity_candle_text": ""
+                            }
+                        }
+                },
+                "apprehend_fvg":{
+                    "number_candles":"define_candle",
+                        "liquidity_apprentice_candle":{
+                            "swing_types":{
+                                "swing_type_higher_low":"low_price",
+                                "swing_type_higher_low_text":"I",
+                                "swing_type_higher_high":"high_price",
+                                "swing_type_higher_high_text":"I",                    
                                 "label_at": {
-                                    "higher_low_liquidity_candle_marker": "leftarrow",
-                                    "higher_high_liquidity_candle_marker": "leftarrow",
-                                    "higher_low_liquidity_candle_text": "",
-                                    "higher_high_liquidity_candle_text": ""
+                                    "swing_type_higher_low_marker": "rightarrow",
+                                    "swing_type_higher_high_marker": "rightarrow"
                                 }
-                            },
-                            "contour_maker":{
-                                "base_type_support":"low_price",
-                                "base_type_support_text":"",
-                                "base_type_resistance":"high_price",
-                                "base_type_resistance_text":"",                    
-                                "label_at": {
-                                    "base_type_support_marker": "circle",
-                                    "base_type_resistance_marker": "circle"
-                                }
-                            },
-                            "directional_bias":{
-                                "base_type_support":"low_price",
-                                "base_type_support_text":"",
-                                "base_type_resistance":"high_price",
-                                "base_type_resistance_text":"",                    
-                                "label_at": {
-                                    "base_type_support_marker": "star",
-                                    "base_type_resistance_marker": "star"
-                                }
+                            }
+                        },
+                        "liquidity_sweeper_candle":{                   
+                            "label_at": {
+                                "higher_low_liquidity_candle_marker": "leftarrow",
+                                "higher_high_liquidity_candle_marker": "leftarrow",
+                                "higher_low_liquidity_candle_text": "",
+                                "higher_high_liquidity_candle_text": ""
                             }
                         }
                 },
@@ -60,22 +63,22 @@
                     "number_candles":"define_candle",
                         "liquidity_apprentice_candle":{
                             "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"",                    
+                                "swing_type_lower_low":"low_price",
+                                "swing_type_lower_low_text":"I",
+                                "swing_type_lower_high":"high_price",
+                                "swing_type_lower_high_text":"I",                    
                                 "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
+                                    "swing_type_lower_low_marker": "rightarrow",
+                                    "swing_type_lower_high_marker": "rightarrow"
                                 }
                             }
                         },
-                        "liquidity_candle":{                   
+                        "liquidity_sweeper_candle":{                   
                             "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
+                                "lower_low_liquidity_candle_marker": "leftarrow",
+                                "lower_high_liquidity_candle_marker": "leftarrow",
+                                "lower_low_liquidity_candle_text": "I",
+                                "lower_high_liquidity_candle_text": "I"
                             }
                         }
                 }
@@ -105,9 +108,10 @@
                 }
             },
             "fvg": {
-                "name":"fvg",
-                "BARS": 301,
                 "filename":"fvg.json",
+                "BARS": 301,
+                "NEIGHBOR_LEFT": 14,
+                "NEIGHBOR_RIGHT": 14,
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
                 "condition":{
