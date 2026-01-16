@@ -12,213 +12,77 @@
     },
     "chart":{
         "define_candles": {
-            "entries": {
-                "apprehend_higherhighsandhigherlows":{
-                    "number_candles":"define_candle",
-                    "subject":"", 
-                    "liquidity_apprentice_candle":{
-                        "swing_types":{
-                            "swing_type_higher_low":"low_price",
-                            "swing_type_higher_low_text":"I",
-                            "swing_type_higher_high":"high_price",
-                            "swing_type_higher_high_text":"I",                    
-                            "label_at": {
-                                "swing_type_higher_low_marker": "rightarrow",
-                                "swing_type_higher_high_marker": "rightarrow"
+            "entries_poi_condition": {
+                "apprehend_higherhighsandlowerlows":{
+                    "entry_1":{
+                        "new_filename":"type_a",
+                        "number_candles":"define_candle",
+                        "subject":{
+                            "poi":"swept_candle",
+                            "drawing":{
+                                "swing_higher_high_or_lower_high":"low_price",
+                                "swing_lower_low_or_higher_low":"high_price",
+                                "tool":"box",
+                                "stop_at_its":"final_poi"
                             }
-                        }
-                    },
-                    "liquidity_sweeper_candle":{                   
-                        "label_at": {
-                            "higher_low_liquidity_candle_marker": "leftarrow",
-                            "higher_high_liquidity_candle_marker": "leftarrow",
-                            "higher_low_liquidity_candle_text": "",
-                            "higher_high_liquidity_candle_text": ""
+                        }, 
+                        "option":"swept_candle_opposite",
+                        "find_entry_after":"sweeper_candle",
+                        "before_entry":{
+                            "swing_1":{
+                                "swing":"sweeper_candle_opposite",
+                                "condition":"beyond_option",
+                                "drawing":{
+                                    "swing_higher_high_or_lower_high":"low_price",
+                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "tool":"horizontal_line",
+                                    "stop_at_its":"sweeper"
+                                }
+                            },
+                            "swing_2":{
+                                "swing":"swing_1_opposite",
+                                "condition":"behind_swing_1",
+                                "drawing":{
+                                    "swing_higher_high_or_lower_high":"low_price",
+                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "tool":"horizontal_line",
+                                    "stop_at_its":"entry_poi"
+                                }
+                            },
+                            "swing_3":{
+                                "swing":"swing_2_opposite",
+                                "condition":"beyond_swing_1",
+                                "drawing":{
+                                    "swing_higher_high_or_lower_high":"low_price",
+                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "tool":"horizontal_line",
+                                    "stop_at_its":"sweeper"
+                                }
+                            }
                         }
                     }
-                },
-                "apprehend_fvg":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_lowerhighsandlowerlows":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_lower_low":"low_price",
-                                "swing_type_lower_low_text":"I",
-                                "swing_type_lower_high":"high_price",
-                                "swing_type_lower_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_lower_low_marker": "rightarrow",
-                                    "swing_type_lower_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "lower_low_liquidity_candle_marker": "leftarrow",
-                                "lower_high_liquidity_candle_marker": "leftarrow",
-                                "lower_low_liquidity_candle_text": "I",
-                                "lower_high_liquidity_candle_text": "I"
-                            }
-                        }
                 }
             },
             "liquidity_candle": {
-                "apprehend_higherhighsandhigherlows_db":{
+                "apprehend_higherhighsandlowerlows":{
                     "number_candles":"define_candle",
                         "liquidity_apprentice_candle":{
                             "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
+                                "swing_type_lower_low":"low_price",
+                                "swing_type_lower_low_text":"I",
                                 "swing_type_higher_high":"high_price",
                                 "swing_type_higher_high_text":"I",                    
                                 "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
+                                    "swing_type_lower_low_marker": "rightarrow",
                                     "swing_type_higher_high_marker": "rightarrow"
                                 }
                             }
                         },
                         "liquidity_sweeper_candle":{                   
                             "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
+                                "lower_low_liquidity_candle_marker": "leftarrow",
                                 "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_higherhighsandhigherlows_kl":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_higherhighsandhigherlows_la":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_higherhighsandhigherlows_lb":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_higherhighsandhigherlows_lc":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_higherhighsandhigherlows_vv":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
+                                "lower_low_liquidity_candle_text": "",
                                 "higher_high_liquidity_candle_text": ""
                             }
                         }
@@ -227,99 +91,71 @@
                     "number_candles":"define_candle",
                         "liquidity_apprentice_candle":{
                             "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_fvg_liq":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
-                                "swing_type_higher_low":"low_price",
-                                "swing_type_higher_low_text":"I",
-                                "swing_type_higher_high":"high_price",
-                                "swing_type_higher_high_text":"I",                    
-                                "label_at": {
-                                    "swing_type_higher_low_marker": "rightarrow",
-                                    "swing_type_higher_high_marker": "rightarrow"
-                                }
-                            }
-                        },
-                        "liquidity_sweeper_candle":{                   
-                            "label_at": {
-                                "higher_low_liquidity_candle_marker": "leftarrow",
-                                "higher_high_liquidity_candle_marker": "leftarrow",
-                                "higher_low_liquidity_candle_text": "",
-                                "higher_high_liquidity_candle_text": ""
-                            }
-                        }
-                },
-                "apprehend_lowerhighsandlowerlows":{
-                    "number_candles":"define_candle",
-                        "liquidity_apprentice_candle":{
-                            "swing_types":{
                                 "swing_type_lower_low":"low_price",
                                 "swing_type_lower_low_text":"I",
-                                "swing_type_lower_high":"high_price",
-                                "swing_type_lower_high_text":"I",                    
+                                "swing_type_higher_high":"high_price",
+                                "swing_type_higher_high_text":"I",                    
                                 "label_at": {
                                     "swing_type_lower_low_marker": "rightarrow",
-                                    "swing_type_lower_high_marker": "rightarrow"
+                                    "swing_type_higher_high_marker": "rightarrow"
                                 }
                             }
                         },
                         "liquidity_sweeper_candle":{                   
                             "label_at": {
                                 "lower_low_liquidity_candle_marker": "leftarrow",
+                                "higher_high_liquidity_candle_marker": "leftarrow",
+                                "lower_low_liquidity_candle_text": "",
+                                "higher_high_liquidity_candle_text": ""
+                            }
+                        }
+                },
+                "apprehend_lowerhighsandhigherlows":{
+                    "number_candles":"define_candle",
+                        "liquidity_apprentice_candle":{
+                            "swing_types":{
+                                "swing_type_higherlow":"low_price",
+                                "swing_type_higherlow_text":"I",
+                                "swing_type_lower_high":"high_price",
+                                "swing_type_lower_high_text":"I",                    
+                                "label_at": {
+                                    "swing_type_higherlow_marker": "rightarrow",
+                                    "swing_type_lower_high_marker": "rightarrow"
+                                }
+                            }
+                        },
+                        "liquidity_sweeper_candle":{                   
+                            "label_at": {
+                                "higherlow_liquidity_candle_marker": "leftarrow",
                                 "lower_high_liquidity_candle_marker": "leftarrow",
-                                "lower_low_liquidity_candle_text": "I",
+                                "higherlow_liquidity_candle_text": "I",
                                 "lower_high_liquidity_candle_text": "I"
                             }
                         }
                 }
             },
-            "higherhighsandhigherlows_db": {
-                "BARS": 301,
-                "filename":"highers.json",
+            "lowerhighsandhigherlows": {
+                "filename":"childswing.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
+                "NEIGHBOR_LEFT": 6,
+                "NEIGHBOR_RIGHT": 6,
                 "label":{
-                    "higherhighs_text": "HH",
+                    "lowerhighs_text": "LH",
                     "higherlows_text": "HL",
-                    "directional_bias_text": "",
                     "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
+                        "higherlows":"low",
+                        "higherlows_color":"green",
+                        "higherlows_marker": "arrow",
+                        "lower_highs":"high",
+                        "lower_highs_color":"red",
+                        "lower_highs_marker": "arrow"
                     }
                 }
             },
-            "higherhighsandhigherlows_kl": {
+            "higherhighsandlowerlows": {
                 "BARS": 301,
-                "filename":"highers.json",
+                "filename":"parentswing.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
                 "timeframes_relation":"default",
@@ -327,110 +163,14 @@
                 "NEIGHBOR_RIGHT": 14,
                 "label":{
                     "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
+                    "lowerlows_text": "LL",
                     "directional_bias_text": "",
                     "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
-                    }
-                }
-            },
-            "higherhighsandhigherlows_la": {
-                "BARS": 301,
-                "filename":"highers.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "label":{
-                    "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
-                    "directional_bias_text": "",
-                    "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
-                    }
-                }
-            },
-            "higherhighsandhigherlows_lb": {
-                "BARS": 301,
-                "filename":"highers.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "label":{
-                    "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
-                    "directional_bias_text": "",
-                    "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
-                    }
-                }
-            },
-            "higherhighsandhigherlows_lc": {
-                "BARS": 301,
-                "filename":"highers.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "label":{
-                    "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
-                    "directional_bias_text": "",
-                    "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
-                        "higher_highs":"high",
-                        "higher_highs_color":"red",
-                        "higher_highs_marker": "doublearrows"
-                    }
-                }
-            },
-            "higherhighsandhigherlows_vv": {
-                "BARS": 301,
-                "filename":"highers.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "timeframes_relation":"default",
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "label":{
-                    "higherhighs_text": "HH",
-                    "higherlows_text": "HL",
-                    "directional_bias_text": "",
-                    "label_at": {
-                        "higher_lows":"low",
-                        "higher_lows_color":"green",
-                        "higher_lows_marker": "doublearrows",
-                        "higher_lows_contourmaker_marker": "",
-                        "higher_lows_directional_bias_marker": "",
+                        "lower_lows":"low",
+                        "lower_lows_color":"green",
+                        "lower_lows_marker": "doublearrows",
+                        "lower_lows_contourmaker_marker": "",
+                        "lower_lows_directional_bias_marker": "",
                         "higher_highs":"high",
                         "higher_highs_color":"red",
                         "higher_highs_marker": "doublearrows"
@@ -469,60 +209,8 @@
                     }
                 }
             },
-            "fvg_liq": {
-                "filename":"fvg_liq.json",
-                "BARS": 301,
-                "NEIGHBOR_LEFT": 14,
-                "NEIGHBOR_RIGHT": 14,
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "condition":{
-                    "c1_lookback": null,
-                    "strong_c1": "greater",
-                    "strong_fvg": "tallest_body",
-                    "fvg_body_size": "multiply_c3_height_by_2",
-                    "strong_c3": "greater",
-                    "c1_candle_type": "none",
-                    "c3_candle_type": "same_with_fvg",
-                    "c3_closing": "beyond_close",
-                    "c1_c3_higher_body_than_wicks": "none"
-                },
-                "validate_my_condition": true,
-                "label":{
-                    "bullish_text": "",
-                    "bearish_text": "",
-                    "label_at": {
-                        "bullish":"low",
-                        "bullish_color":"green",
-                        "bullish_marker": "arrow",
-                        "bearish":"high",
-                        "bearish_color":"red",
-                        "bearish_marker": "arrow"
-                    }
-                }
-            },
-            "lowerhighsandlowerlows": {
-                "BARS": 301,
-                "filename":"lowers.json",
-                "read_candles_from":"new_old",
-                "number_candles":"define_candle",
-                "NEIGHBOR_LEFT": 6,
-                "NEIGHBOR_RIGHT": 6,
-                "label":{
-                    "lowerhighs_text": "LH",
-                    "lowerlows_text": "LL",
-                    "label_at": {
-                        "lower_lows":"low",
-                        "lower_lows_color":"green",
-                        "lower_lows_marker": "arrow",
-                        "lower_highs":"high",
-                        "lower_highs_color":"red",
-                        "lower_highs_marker": "arrow"
-                    }
-                }
-            },
             "directional_bias_candles": {
-                "apprehend_higherhighsandhigherlows_db": {
+                "apprehend_higherhighsandlowerlows": {
                     "target":"contourmaker",          
                     "label":{
                         "directional_bias_candles_text": "",
@@ -547,7 +235,7 @@
                 }
             },
             "timeframes_communication": {
-                "apprehend_higherhighsandhigherlows_db": {
+                "apprehend_higherhighsandlowerlows": {
                     "number_candles":"define_candle",
                     "timeframe_sender":"4h, 1h",
                     "timeframe_receiver":"15m, 5m",
