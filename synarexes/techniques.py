@@ -2076,7 +2076,6 @@ def entry_point_of_interest_condition(broker_name):
         return None
 
     def is_swing_match(candle, target_swing_name):
-        """Checks if candle is a swing and matches the required type."""
         if not candle.get("is_swing"): return False
         candle_swing = candle.get("swing_type")
         if not target_swing_name or not candle_swing: return False
@@ -2094,32 +2093,23 @@ def entry_point_of_interest_condition(broker_name):
     def check_beyond_condition(candle, reference, new_to_find_type):
         norm = normalize_swing(new_to_find_type)
         if "high" in norm:
-            # If finding a high, it must be higher than reference high/low
             ref_val = reference.get("high") if "high" in normalize_swing(reference.get("swing_type")) else reference.get("low")
             return candle.get("high", 0) > ref_val
         if "low" in norm:
-            # If finding a low, it must be lower than reference high/low
             ref_val = reference.get("low") if "low" in normalize_swing(reference.get("swing_type")) else reference.get("high")
             return candle.get("low", 999999) < ref_val
         return False
 
     def check_behind_condition(candle, reference, new_to_find_type):
         norm = normalize_swing(new_to_find_type)
-        # Reference Subject Type
         ref_type = normalize_swing(reference.get("swing_type", ""))
-        
         if "high" in norm:
-            # Finding a Higher High BEHIND a Lower Low: New High must be HIGHER than ref Low
             if "low" in ref_type:
                 return candle.get("high", 0) > reference.get("low", 0)
-            # Finding a Higher High BEHIND a Higher High: New High must be LOWER than ref High
             return candle.get("high", 0) < reference.get("high", 0)
-            
         if "low" in norm:
-            # Finding a Lower Low BEHIND a Higher High: New Low must be LOWER than ref High
             if "high" in ref_type:
                 return candle.get("low", 999999) < reference.get("high", 999999)
-            # Finding a Lower Low BEHIND a Lower Low: New Low must be HIGHER than ref Low
             return candle.get("low", 999999) > reference.get("low", 999999)
         return False
 
@@ -2142,6 +2132,9 @@ def entry_point_of_interest_condition(broker_name):
     for apprehend_key, entry_cfg in entry_poi_root.items():
         if not apprehend_key.startswith("apprehend_"): continue
         source_def_name = apprehend_key.replace("apprehend_", "")
+        
+        source_def = define_candles.get(source_def_name, {})
+        source_png_filename = source_def.get("filename", "").replace(".json", ".png")
 
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
@@ -2149,8 +2142,11 @@ def entry_point_of_interest_condition(broker_name):
 
             for tf in os.listdir(sym_p):
                 tf_p = os.path.join(sym_p, tf)
+                if not os.path.isdir(tf_p): continue
+                
                 dev_output_dir = os.path.join(os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)), sym, tf)
                 config_path = os.path.join(dev_output_dir, "config.json")
+
                 if not os.path.exists(config_path): continue
 
                 try:
@@ -2160,17 +2156,36 @@ def entry_point_of_interest_condition(broker_name):
                     source_key = next((k for k in config_data if source_def_name.lower() in k.lower()), None)
                     if not source_key: continue
 
-                    source_value = config_data[source_key]
-                    source_candles = source_value.get("value") or source_value.get("data") if isinstance(source_value, dict) else source_value
-                    if not source_candles: continue
+                    source_candles = config_data.get(source_key)
+                    if not isinstance(source_candles, list):
+                        log(f"[{sym}|{tf}] WARNING: '{source_key}' is not a list → skipping", "WARNING")
+                        continue
 
                     new_candles = [candle.copy() for candle in source_candles]
-                    log(f"[{sym}|{tf}] Loaded {len(new_candles)} candles | Analyzing rules")
+                    log(f"[{sym}|{tf}] Loaded {len(new_candles)} candles from '{source_key}' | Analyzing rules")
+
+                    output_items_by_key = {}
 
                     for entry_key, entry_spec in entry_cfg.items():
                         if not entry_key.startswith("entry_"): continue
+
+                        new_filename = entry_spec.get("new_filename", "").strip()
+                        if not new_filename:
+                            log(f"  Skipping {entry_key} → no valid new_filename specified", "WARNING")
+                            continue
+
                         option_raw = entry_spec.get("option", "")
                         before_entry = entry_spec.get("before_entry", {})
+                        
+                        subject_cfg = entry_spec.get("subject", {})
+                        poi_target_role = subject_cfg.get("poi", "swept_candle").replace("_candle", "")
+                        drawing_cfg = subject_cfg.get("drawing", {})
+                        tool = drawing_cfg.get("tool", "box")
+
+                        log(f"  Processing entry pattern: {entry_key} → target file '{new_filename}'")
+
+                        if new_filename not in output_items_by_key:
+                            output_items_by_key[new_filename] = []
 
                         for i, candle in enumerate(new_candles):
                             if not candle.get("swept_by_liquidity"): continue
@@ -2183,8 +2198,6 @@ def entry_point_of_interest_condition(broker_name):
                             if not actual_sweeper_candle: continue
 
                             actual_sweeper_idx = new_candles.index(actual_sweeper_candle)
-                            
-                            # Acting Sweeper Logic
                             sweeper_candle = actual_sweeper_candle
                             sweeper_idx = actual_sweeper_idx
                             is_acting = False
@@ -2200,7 +2213,6 @@ def entry_point_of_interest_condition(broker_name):
 
                             log(f"  → Swept #{c_num} | Sweeper #{sweeper_candle['candle_number']} ({'Acting' if is_acting else 'Direct'})")
 
-                            # 1. Option Check
                             option_candle = None
                             required_opt = get_opposite_swing_type(swept_swing) if "opposite" in option_raw.lower() else swept_swing
                             
@@ -2212,16 +2224,21 @@ def entry_point_of_interest_condition(broker_name):
                             if not option_candle: continue
                             log(f"    → Option PASSED: Found {required_opt} at #{option_candle['candle_number']}")
 
-                            # 2. Before Entry Sequence
                             all_met = True
                             search_start = sweeper_idx + 1
-                            condition_history = {"option": option_candle, "sweeper": sweeper_candle, "swept": candle}
+                            last_found_idx = sweeper_idx
+                            condition_history = {
+                                "option": option_candle,
+                                "sweeper": sweeper_candle,
+                                "swept": candle
+                            }
 
-                            for s_key, s_cfg in sorted(before_entry.items()):
+                            sorted_cond_keys = sorted(before_entry.keys())
+                            for s_key in sorted_cond_keys:
+                                s_cfg = before_entry[s_key]
                                 target_str = s_cfg.get("swing", "").lower()
                                 cond_str = s_cfg.get("condition", "").lower()
                                 
-                                # Resolve Reference Candle
                                 if "option" in cond_str: ref_candle = condition_history["option"]
                                 elif "sweeper" in cond_str: ref_candle = condition_history["sweeper"]
                                 elif "swing_" in cond_str:
@@ -2229,7 +2246,6 @@ def entry_point_of_interest_condition(broker_name):
                                     ref_candle = condition_history.get(f"swing_{prev_id}")
                                 else: ref_candle = sweeper_candle
 
-                                # Resolve Search Type
                                 if "sweeper" in target_str: base_type = sweeper_candle.get("swing_type")
                                 elif "swing_" in target_str:
                                     prev_key = target_str.replace("_opposite", "")
@@ -2242,7 +2258,6 @@ def entry_point_of_interest_condition(broker_name):
                                 found_cond = False
                                 for k in range(search_start, len(new_candles)):
                                     k_c = new_candles[k]
-                                    # STICK TO is_swing: True
                                     if is_swing_match(k_c, search_type):
                                         beyond_ok = check_beyond_condition(k_c, ref_candle, search_type) if "beyond" in cond_str else True
                                         behind_ok = check_behind_condition(k_c, ref_candle, search_type) if "behind" in cond_str else True
@@ -2251,31 +2266,163 @@ def entry_point_of_interest_condition(broker_name):
                                             log(f"        → FOUND at #{k_c['candle_number']} | beyond={beyond_ok}, behind={behind_ok}")
                                             condition_history[s_key] = k_c
                                             search_start = k + 1
+                                            last_found_idx = k
                                             found_cond = True
                                             break
                                 
                                 if not found_cond:
                                     log(f"        → FAILED: No valid {search_type} found satisfying {cond_str}")
-                                    all_met = False; break
+                                    all_met = False
+                                    break
 
                             if all_met:
                                 log(f"    → SUCCESS for {entry_key} at swept candle #{c_num}")
-                                candle["entry_poi_type"] = entry_key
-                                total_entries_found += 1
+                                
+                                # ─── START MITIGATION LOGIC ───
+                                poi_candle = condition_history.get(poi_target_role)
+                                if not poi_candle:
+                                    if poi_target_role == "swept": poi_candle = candle
+                                    elif poi_target_role == "sweeper": poi_candle = sweeper_candle
+                                
+                                final_mitigation_candle_record = None 
 
-                    # Save updated candles
-                    if isinstance(config_data[source_key], dict):
-                        config_data[source_key]["value" if "value" in config_data[source_key] else "data"] = new_candles
-                    else: config_data[source_key] = new_candles
+                                if poi_candle:
+                                    poi_type = normalize_swing(poi_candle.get("swing_type", ""))
+                                    mitigation_found = False
+                                    
+                                    for m_idx in range(last_found_idx + 1, len(new_candles)):
+                                        m_candle_search = new_candles[m_idx]
+                                        is_mitigated = False
+                                        
+                                        if "high" in poi_type:
+                                            if m_candle_search.get("high", 0) >= poi_candle.get("high", 0):
+                                                is_mitigated = True
+                                        elif "low" in poi_type:
+                                            if m_candle_search.get("low", 999999) <= poi_candle.get("low", 999999):
+                                                is_mitigated = True
+                                        
+                                        if is_mitigated:
+                                            m_candle_search["mitigation_candle"] = True
+                                            m_candle_search[f"mitigated_{poi_type}_number"] = poi_candle.get("candle_number")
+                                            
+                                            # ADDING FLAGS TO THE SUBJECT POI ITSELF
+                                            poi_candle["mitigated"] = True
+                                            poi_candle["mitigated_by_candle_number"] = m_candle_search.get("candle_number")
+                                            
+                                            m_full_record = next((c for c in source_candles if c.get("candle_number") == m_candle_search.get("candle_number") and "candle_x" in c), m_candle_search)
+                                            final_mitigation_candle_record = m_full_record.copy()
+                                            final_mitigation_candle_record["mitigation_candle"] = True 
+                                            final_mitigation_candle_record["mitigated_candle_number"] = poi_candle.get("candle_number")
+
+                                            log(f"    → MITIGATION: POI #{poi_candle['candle_number']} mitigated by Candle #{m_candle_search['candle_number']}")
+                                            mitigation_found = True
+                                            break
+                                    
+                                    if not mitigation_found:
+                                        # MARKING AS PENDING IF NO MITIGATION FOUND
+                                        poi_candle["pending_entry_level"] = True
+                                        log(f"    → MITIGATION: No mitigation found. POI #{poi_candle['candle_number']} marked PENDING")
+                                # ─── END MITIGATION LOGIC ───
+
+                                total_entries_found += 1
+                                pattern_item = {
+                                    "pattern_type": entry_key,
+                                    "swept_candle_number": candle.get("candle_number"),
+                                    "sweeper_candle_number": sweeper_candle.get("candle_number"),
+                                    "option_candle_number": option_candle.get("candle_number") if option_candle else None,
+                                    "poi_target_role": poi_target_role,
+                                    "drawing_tool": tool,
+                                    "drawing_config": drawing_cfg
+                                }
+
+                                roles = [("swept", candle), ("sweeper", sweeper_candle), ("option", option_candle)]
+                                for s_key in sorted(condition_history.keys()):
+                                    if s_key in ["swept", "sweeper", "option"]: continue
+                                    roles.append((s_key, condition_history[s_key]))
+
+                                pattern_keys = []
+                                for role_name, c in roles:
+                                    if not c: continue
+                                    c_full = next((sc for sc in source_candles if sc.get("candle_number") == c.get("candle_number") and "candle_x" in sc), c)
+                                    candle_copy = c_full.copy()
+                                    candle_copy[role_name] = True
+                                    # Copy the new flags (mitigated/pending) into the pattern keys copy
+                                    if "mitigated" in c: candle_copy["mitigated"] = c["mitigated"]
+                                    if "mitigated_by_candle_number" in c: candle_copy["mitigated_by_candle_number"] = c["mitigated_by_candle_number"]
+                                    if "pending_entry_level" in c: candle_copy["pending_entry_level"] = c["pending_entry_level"]
+                                    pattern_keys.append(candle_copy)
+
+                                if final_mitigation_candle_record:
+                                    pattern_keys.append(final_mitigation_candle_record)
+
+                                pattern_item["pattern_keys"] = pattern_keys
+                                output_items_by_key[new_filename].append(pattern_item)
+
+                    # ─── Save Records and Generate Chart Image ───
+                    if output_items_by_key:
+                        for output_key, items in output_items_by_key.items():
+                            if not items: continue
+
+                            final_list = items[:]
+                            for candle_orig in source_candles:
+                                final_list.append(candle_orig.copy())
+                            
+                            config_data[output_key] = final_list
+                            log(f"[{sym}|{tf}] Saved {len(items)} patterns + {len(source_candles)} candles under key '{output_key}'")
+
+                            src_png_path = os.path.join(dev_output_dir, source_png_filename)
+                            if not os.path.exists(src_png_path):
+                                src_png_path = os.path.join(dev_output_dir, f"{source_key}.png")
+
+                            if os.path.exists(src_png_path):
+                                img = cv2.imread(src_png_path)
+                                if img is not None:
+                                    overlay = img.copy()
+                                    height, width, _ = img.shape
+                                    
+                                    for item in items:
+                                        target_role = item.get("poi_target_role", "swept")
+                                        tool = item.get("drawing_tool", "box")
+                                        d_cfg = item.get("drawing_config", {})
+                                        
+                                        poi_candle_draw = next((pk for pk in item.get("pattern_keys", []) if pk.get(target_role)), None)
+                                        
+                                        if poi_candle_draw:
+                                            c_top = poi_candle_draw.get("candle_top")
+                                            c_bottom = poi_candle_draw.get("candle_bottom")
+                                            c_left = poi_candle_draw.get("candle_left")
+                                            swing_t = normalize_swing(poi_candle_draw.get("swing_type", ""))
+
+                                            if all(v is not None for v in [c_top, c_bottom, c_left]):
+                                                if tool == "box":
+                                                    cv2.rectangle(overlay, (int(c_left), int(c_top)), (int(width), int(c_bottom)), (0, 0, 0), -1)
+                                                elif tool == "horizontal_line":
+                                                    line_y = None
+                                                    if "high" in swing_t:
+                                                        line_y = c_bottom if "low_price" in d_cfg.get("swing_higher_high_or_lower_high", "") else c_top
+                                                    elif "low" in swing_t:
+                                                        line_y = c_top if "high_price" in d_cfg.get("swing_lower_low_or_higher_low", "") else c_bottom
+                                                    
+                                                    if line_y is not None:
+                                                        cv2.line(overlay, (int(c_left), int(line_y)), (int(width), int(line_y)), (0, 0, 0), 2)
+                                    
+                                    alpha, beta = 0.7, 0.3
+                                    img = cv2.addWeighted(overlay, beta, img, alpha, 0)
+                                    target_png_path = os.path.join(dev_output_dir, f"{output_key}.png")
+                                    cv2.imwrite(target_png_path, img)
+                                    log(f"[{sym}|{tf}] Created POI overlay image: {output_key}.png")
 
                     with open(config_path, 'w', encoding='utf-8') as f:
                         json.dump(config_data, f, indent=4)
 
                 except Exception as e:
-                    log(f"Error processing {sym}: {e}", "ERROR")
+                    log(f"[{sym}|{tf}] CRITICAL ERROR: {str(e)}", "ERROR")
+                    import traceback
+                    traceback.print_exc()
 
-    log(f"--- COMPLETE --- Total Entries: {total_entries_found}")
-    return f"Completed: {total_entries_found} entry points found."
+    log(f"--- FINISHED ENTRY POI ANALYSIS: {total_entries_found} total patterns found ---")
+    return f"Success: Found {total_entries_found} patterns."
+
 
 def single():
     dev_dict = load_developers_dictionary()
