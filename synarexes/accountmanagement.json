@@ -19,10 +19,10 @@
                         "number_candles":"define_candle",
                         "option":"swept_candle_opposite",
                         "option_tool":{
-                            "swing_higher_high_or_lower_high":"low_price",
-                            "swing_lower_low_or_higher_low":"high_price",
+                            "swing_higher_high_or_lower_high":"high_price",
+                            "swing_lower_low_or_higher_low":"low_price",
                             "tool":"horizontal_line",
-                            "stop_at_its":"sweeper"
+                            "stop_at_its":"liquidator"
                         },
                         "find_entry_after":"sweeper_candle",
                         "before_entry":{
@@ -30,30 +30,30 @@
                                 "swing":"sweeper_candle_opposite",
                                 "condition":"beyond_option",
                                 "drawing":{
-                                    "swing_higher_high_or_lower_high":"low_price",
-                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "swing_higher_high_or_lower_high":"high_price",
+                                    "swing_lower_low_or_higher_low":"low_price",
                                     "tool":"horizontal_line",
-                                    "stop_at_its":"sweeper"
+                                    "stop_at_its":"liquidator"
                                 }
                             },
                             "swing_2":{
                                 "swing":"swing_1_opposite",
                                 "condition":"behind_swing_1",
                                 "drawing":{
-                                    "swing_higher_high_or_lower_high":"low_price",
-                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "swing_higher_high_or_lower_high":"high_price",
+                                    "swing_lower_low_or_higher_low":"low_price",
                                     "tool":"horizontal_line",
-                                    "stop_at_its":"subject_poi"
+                                    "stop_at_its":"liquidator"
                                 }
                             },
                             "swing_3":{
                                 "swing":"swing_2_opposite",
                                 "condition":"beyond_swing_1",
                                 "drawing":{
-                                    "swing_higher_high_or_lower_high":"low_price",
-                                    "swing_lower_low_or_higher_low":"high_price",
+                                    "swing_higher_high_or_lower_high":"high_price",
+                                    "swing_lower_low_or_higher_low":"low_price",
                                     "tool":"horizontal_line",
-                                    "stop_at_its":"sweeper"
+                                    "stop_at_its":"liquidator"
                                 }
                             }
                         },
