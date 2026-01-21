@@ -2710,10 +2710,10 @@ def entry_point_of_interest_condition(broker_name):
                     all_second_source_results.append(result)
                     log(f"  ✓ Second source '{candidate['key_id']}': Found {len(filtered_items)} patterns")
                 else:
-                    log(f"  ✗ Second source '{candidate['key_id']}': No patterns found (skipping)")
+                    log
             
             except Exception as e:
-                log(f"  Error processing second source {candidate['key_id']}: {str(e)}", "ERROR")
+                log
         
         return all_second_source_results if all_second_source_results else None
 
@@ -2784,8 +2784,13 @@ def entry_point_of_interest_condition(broker_name):
                         if not entry_key.startswith("entry_"): continue
                         new_filename = entry_spec.get("new_filename", "").strip()
                         if not new_filename: continue
-
+                        
+                        # ─── CHECK SECOND SOURCE PROCESSING FLAG ─────────────────────
+                        process_second_source = entry_spec.get("process_second_source_files", "").strip().lower()
+                        should_process_second_source = (process_second_source == "yes")
+                        
                         log(f"\n[PROCESSING] Entry: {entry_key} on {sym}/{tf}")
+                        log(f"  Second source processing: {'ENABLED (yes)' if should_process_second_source else 'DISABLED (no/empty)'}")
                         
                         # Get save configuration
                         save_cfg = entry_spec.get("save_to", {}).get("new_filename_folder", {})
@@ -2796,7 +2801,7 @@ def entry_point_of_interest_condition(broker_name):
                         pending_folder = data_cfg.get("pending_folder", "limit_orders")
                         mitigated_folder = data_cfg.get("mitigated_folder", "executed_orders")
                         
-                        # ─── PROCESS PRIMARY SOURCE ─────────────────────
+                        # ─── PROCESS PRIMARY SOURCE (ALWAYS) ─────────────────────
                         primary_items = []
                         primary_pending_orders = []
                         primary_executed_orders = []
@@ -3090,10 +3095,14 @@ def entry_point_of_interest_condition(broker_name):
                         if len(filtered_primary_items) != len(primary_items):
                             log(f"  Primary data selection: {len(primary_items)} → {len(filtered_primary_items)} items")
                         
-                        # ─── PROCESS SECOND SOURCE INDEPENDENTLY ─────────────────────
-                        second_source_results = process_second_source_independently(
-                            entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name
-                        )
+                        # ─── PROCESS SECOND SOURCE (CONDITIONALLY) ─────────────────────
+                        second_source_results = None
+                        if should_process_second_source:
+                            second_source_results = process_second_source_independently(
+                                entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name
+                            )
+                        else:
+                            log(f"process_second_source_files not enabled")
                         
                         # ─── SAVE ALL RESULTS TO CONFIG.JSON ─────────────────────
                         # Create entry output directory
@@ -3113,7 +3122,9 @@ def entry_point_of_interest_condition(broker_name):
                                     "chart_folder": chart_folder,
                                     "pending_folder": pending_folder,
                                     "mitigated_folder": mitigated_folder
-                                }
+                                },
+                                "second_source_processing": "enabled" if should_process_second_source else "disabled",
+                                "process_second_source_files": process_second_source
                             },
                             "primary_source": {},
                             "secondary_sources": {},
@@ -3131,7 +3142,7 @@ def entry_point_of_interest_condition(broker_name):
                                 "executed_count": len(primary_executed_orders)
                             }
                         
-                        # Add secondary sources data to config
+                        # Add secondary sources data to config (only if processed)
                         if second_source_results:
                             for ss_result in second_source_results:
                                 second_source_key = ss_result["key_id"]
@@ -3171,36 +3182,32 @@ def entry_point_of_interest_condition(broker_name):
                             primary_pending_file = os.path.join(pending_dir, f"primary_{pending_folder}.json")
                             with open(primary_pending_file, 'w', encoding='utf-8') as f:
                                 json.dump(primary_pending_orders, f, indent=4, default=str)
-                            log(f"  Saved {len(primary_pending_orders)} primary pending orders to {primary_pending_file}")
                         
                         if primary_executed_orders:
                             primary_executed_file = os.path.join(mitigated_dir, f"primary_{mitigated_folder}.json")
                             with open(primary_executed_file, 'w', encoding='utf-8') as f:
                                 json.dump(primary_executed_orders, f, indent=4, default=str)
-                            log(f"  Saved {len(primary_executed_orders)} primary executed orders to {primary_executed_file}")
                         
-                        # Save collective secondary records
-                        secondary_pending_orders_all = []
-                        secondary_executed_orders_all = []
-                        
+                        # Save collective secondary records (only if processed)
                         if second_source_results:
+                            secondary_pending_orders_all = []
+                            secondary_executed_orders_all = []
+                            
                             for ss_result in second_source_results:
                                 if ss_result["pending_orders"]:
                                     secondary_pending_orders_all.extend(ss_result["pending_orders"])
                                 if ss_result["executed_orders"]:
                                     secondary_executed_orders_all.extend(ss_result["executed_orders"])
-                        
-                        if secondary_pending_orders_all:
-                            secondary_pending_file = os.path.join(pending_dir, f"secondary_{pending_folder}.json")
-                            with open(secondary_pending_file, 'w', encoding='utf-8') as f:
-                                json.dump(secondary_pending_orders_all, f, indent=4, default=str)
-                            log(f"  Saved {len(secondary_pending_orders_all)} secondary pending orders to {secondary_pending_file}")
-                        
-                        if secondary_executed_orders_all:
-                            secondary_executed_file = os.path.join(mitigated_dir, f"secondary_{mitigated_folder}.json")
-                            with open(secondary_executed_file, 'w', encoding='utf-8') as f:
-                                json.dump(secondary_executed_orders_all, f, indent=4, default=str)
-                            log(f"  Saved {len(secondary_executed_orders_all)} secondary executed orders to {secondary_executed_file}")
+                            
+                            if secondary_pending_orders_all:
+                                secondary_pending_file = os.path.join(pending_dir, f"secondary_{pending_folder}.json")
+                                with open(secondary_pending_file, 'w', encoding='utf-8') as f:
+                                    json.dump(secondary_pending_orders_all, f, indent=4, default=str)
+                            
+                            if secondary_executed_orders_all:
+                                secondary_executed_file = os.path.join(mitigated_dir, f"secondary_{mitigated_folder}.json")
+                                with open(secondary_executed_file, 'w', encoding='utf-8') as f:
+                                    json.dump(secondary_executed_orders_all, f, indent=4, default=str)
                         
                         # ─── SAVE CHARTS (only for sources with patterns) ──────
                         chart_dir = os.path.join(entry_output_dir, chart_folder, sym)
@@ -3267,9 +3274,9 @@ def entry_point_of_interest_condition(broker_name):
                                     img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
                                     chart_path = os.path.join(chart_dir, f"{tf}_{entry_key}_PRIMARY_CHART.png")
                                     cv2.imwrite(chart_path, img)
-                                    log(f"  Saved primary chart: {chart_path}")
+                                    log
                         
-                        # Save secondary charts (only if they have patterns)
+                        # Save secondary charts (only if processed and they have patterns)
                         if second_source_results:
                             for ss_result in second_source_results:
                                 if ss_result["filtered_patterns"] > 0 and ss_result["chart_files"]:
@@ -3341,12 +3348,15 @@ def entry_point_of_interest_condition(broker_name):
                                             img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
                                             drawn_chart_path = os.path.join(chart_dir, f"{tf}_{entry_key}_SECONDARY_DRAWN_{safe_key}.png")
                                             cv2.imwrite(drawn_chart_path, img)
-                                            log(f"  Saved drawn second source chart: {drawn_chart_path}")
                                 
                                 elif ss_result["filtered_patterns"] == 0:
-                                    log(f"  ✗ Skipping empty second source '{ss_result['key_id']}' - no patterns")
+                                    log
                         
-                        log(f"✓ Entry {entry_key} completed: {len(filtered_primary_items)} primary, {len(second_source_results) if second_source_results else 0} secondary sources")
+                        log(f"✓ Entry {entry_key} completed: {len(filtered_primary_items)} primary patterns")
+                        if should_process_second_source:
+                            log(f"  Secondary sources: {len(second_source_results) if second_source_results else 0} sources processed")
+                        else:
+                            log(f"  Secondary sources: SKIPPED (process_second_source_files != 'yes')")
                         
                 except Exception as e:
                     log(f"[{sym}|{tf}|{entry_key}] ERROR: {str(e)}", "ERROR")
@@ -3355,7 +3365,7 @@ def entry_point_of_interest_condition(broker_name):
     log(f"Total primary patterns: {total_entries_found}")
     log(f"Total secondary source patterns: {total_second_source_entries}")
     
-    return f"Success: Found {total_entries_found} primary patterns and {total_second_source_entries} secondary patterns with independent data pipelines."
+    return f"Success: Found {total_entries_found} primary patterns and {total_second_source_entries} secondary patterns with independent data pipelines."   
 
 def single():  
     dev_dict = load_developers_dictionary()
