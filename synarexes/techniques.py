@@ -102,7 +102,7 @@ def label_objects_and_text(
     cx,
     y_rect,
     h_rect,
-    c_num=None,                 
+    fvg_swing_type=None,                 
     custom_text=None,           
     object_type="arrow",        
     is_bullish_arrow=True,      
@@ -214,7 +214,7 @@ def label_objects_and_text(
                 cv2.fillPoly(img, [np.array(pts, np.int32)], color)
 
     # 3. Text Placement Logic
-    if not (custom_text or c_num is not None):
+    if not (custom_text or fvg_swing_type is not None):
         return
 
     if is_marked:
@@ -237,14 +237,14 @@ def label_objects_and_text(
         (tw, th), _ = cv2.getTextSize(custom_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness)
         cv2.putText(img, custom_text, (cx - tw // 2, int(base_text_y)),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, arrow_color, text_thickness)
-        c_num_y = (base_text_y - 15) if place_at_high else (base_text_y + 15)
+        fvg_swing_type_y = (base_text_y - 15) if place_at_high else (base_text_y + 15)
     else:
-        c_num_y = base_text_y
+        fvg_swing_type_y = base_text_y
 
-    if c_num is not None:
-        cv2.putText(img, str(c_num), (cx - 8, int(c_num_y)), 
+    if fvg_swing_type is not None:
+        cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
-        cv2.putText(img, str(c_num), (cx - 8, int(c_num_y)), 
+        cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)                   
 
 def lower_highs_higher_lows(broker_name):
@@ -380,11 +380,11 @@ def lower_highs_higher_lows(broker_name):
                     n = len(data)
                     swing_count_in_chart = 0
                     for i in range(neighbor_left, n - neighbor_right):
-                        c_num = data[i].get('candle_number')
+                        fvg_swing_type = data[i].get('candle_number')
                         
                         # --- EXCLUSION CHECK ---
                         # If the Parent already claimed this candle, we skip it
-                        if c_num in parent_claimed_candles:
+                        if fvg_swing_type in parent_claimed_candles:
                             continue
 
                         curr_h, curr_l = data[i]['high'], data[i]['low']
@@ -407,7 +407,7 @@ def lower_highs_higher_lows(broker_name):
 
                             label_objects_and_text(
                                 img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"], 
-                                c_num=c_num,
+                                fvg_swing_type=fvg_swing_type,
                                 custom_text=custom_text, object_type=obj_type,
                                 is_bullish_arrow=is_bull, is_marked=True,
                                 double_arrow=dbl_arrow, arrow_color=active_color,
@@ -607,7 +607,7 @@ def higher_highs_lower_lows(broker_name):
 
                         label_objects_and_text(
                             img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
-                            c_num=data[i]['candle_number'],
+                            fvg_swing_type=data[i]['candle_number'],
                             custom_text=custom_text,
                             object_type=obj_type,
                             is_bullish_arrow=is_bull,
@@ -1187,7 +1187,7 @@ def fair_value_gaps(broker_name):
                     max_gap_found = max([p["fvg_gap_size"] for p in potential_fvgs_map.values()], default=0)
                     
                     for idx, candle in enumerate(data):
-                        c_num = candle.get('candle_number')
+                        fvg_swing_type = candle.get('candle_number')
                         
                         # Apply contour/coordinate data to every candle
                         if idx < len(contours):
@@ -1200,8 +1200,8 @@ def fair_value_gaps(broker_name):
                             })
 
                         # If this candle is C2 (The FVG)
-                        if c_num in potential_fvgs_map:
-                            entry = potential_fvgs_map[c_num]
+                        if fvg_swing_type in potential_fvgs_map:
+                            entry = potential_fvgs_map[fvg_swing_type]
                             # Sync coordinates from the base candle to the enriched one
                             coord_keys = ["candle_x", "candle_y", "candle_width", "candle_height", "candle_left", "candle_right", "candle_top", "candle_bottom", "draw_x", "draw_y", "draw_w", "draw_h", "draw_left", "draw_right", "draw_top", "draw_bottom"]
                             entry.update({k: candle[k] for k in coord_keys if k in candle})
@@ -1217,7 +1217,7 @@ def fair_value_gaps(broker_name):
                                 x_rect, y_rect, w_rect, h_rect = cv2.boundingRect(contours[c_idx])
                                 label_objects_and_text(
                                     img=img, cx=x_rect + w_rect // 2, y_rect=y_rect, h_rect=h_rect,
-                                    c_num=c_num if (number_all or number_only_marked) else None,
+                                    fvg_swing_type=fvg_swing_type if (number_all or number_only_marked) else None,
                                     custom_text=bull_text if entry["fvg_type"] == "bullish" else bear_text,
                                     object_type=bull_obj if entry["fvg_type"] == "bullish" else bear_obj,
                                     is_bullish_arrow=entry["_is_bull_c2"], is_marked=True,
@@ -1231,10 +1231,10 @@ def fair_value_gaps(broker_name):
                                 continue 
                         
                         # If this candle is C1 or C3 for an FVG, apply the tags
-                        if c_num in c1_tags:
-                            candle.update(c1_tags[c_num])
-                        if c_num in c3_tags:
-                            candle.update(c3_tags[c_num])
+                        if fvg_swing_type in c1_tags:
+                            candle.update(c1_tags[fvg_swing_type])
+                        if fvg_swing_type in c3_tags:
+                            candle.update(c3_tags[fvg_swing_type])
 
                         fvg_results.append(candle)
                     
@@ -1302,10 +1302,9 @@ def fvg_higherhighsandlowerlows(broker_name):
     NEIGHBOR_LEFT = fvg_cfg.get("NEIGHBOR_LEFT", 5)
     NEIGHBOR_RIGHT = fvg_cfg.get("NEIGHBOR_RIGHT", 5)
 
-    log(f"Swing detection → Left: {NEIGHBOR_LEFT} | Right: {NEIGHBOR_RIGHT}")
-
     HH_TEXT = "fvg-HH"
     ll_TEXT = "fvg-ll"
+    CM_TEXT = "m"  
     color_map = {"green": (0, 255, 0), "red": (255, 0, 0)}
     HH_COLOR = color_map["red"]
     ll_COLOR = color_map["green"]
@@ -1334,34 +1333,25 @@ def fvg_higherhighsandlowerlows(broker_name):
 
                 data = config_content.get(config_key)
                 if not data or not isinstance(data, list):
-                    log(f"No valid candle list found under key '{config_key}' → {sym}/{tf}", "SKIP")
                     continue
 
-                # Initial sort
                 data = sorted(data, key=lambda x: x.get('candle_number', 0))
-
                 img = cv2.imread(chart_path)
-                if img is None:
-                    log(f"Cannot read output chart: {chart_path}", "ERROR")
-                    continue
+                if img is None: continue
 
                 n = len(data)
-                min_required = NEIGHBOR_LEFT + NEIGHBOR_RIGHT + 1
-                if n < min_required:
-                    log(f"Too few candles ({n} < {min_required}) → {sym}/{tf}", "SKIP")
-                    continue
+                min_req = NEIGHBOR_LEFT + NEIGHBOR_RIGHT + 1
+                if n < min_req: continue
 
                 swing_count = 0
                 swings_found = []
 
-                # --- STEP 1: DETECT SWINGS ---
+                # --- STEP 1: DETECT SWINGS & MARK CONTOUR MAKERS ---
                 for i in range(NEIGHBOR_LEFT, n - NEIGHBOR_RIGHT):
-                    curr_h = data[i]['high']
-                    curr_l = data[i]['low']
-
+                    curr_h, curr_l = data[i]['high'], data[i]['low']
                     left_highs = [d['high'] for d in data[i - NEIGHBOR_LEFT:i]]
-                    left_lows  = [d['low']  for d in data[i - NEIGHBOR_LEFT:i]]
                     right_highs = [d['high'] for d in data[i + 1:i + 1 + NEIGHBOR_RIGHT]]
+                    left_lows  = [d['low']  for d in data[i - NEIGHBOR_LEFT:i]]
                     right_lows  = [d['low']  for d in data[i + 1:i + 1 + NEIGHBOR_RIGHT]]
 
                     is_hh = curr_h > max(left_highs) and curr_h > max(right_highs)
@@ -1372,21 +1362,37 @@ def fvg_higherhighsandlowerlows(broker_name):
                     swing_count += 1
                     is_bullish_swing = is_ll
                     swing_color = ll_COLOR if is_bullish_swing else HH_COLOR
-                    label_text = ll_TEXT if is_bullish_swing else HH_TEXT
-
-                    x, y, h = data[i].get("candle_x"), data[i].get("candle_y"), data[i].get("candle_height")
-                    if not all(v is not None for v in [x, y, h]): continue
-
+                    
                     label_objects_and_text(
-                        img=img, cx=x, y_rect=y, h_rect=h,
-                        c_num=data[i].get('candle_number'),
-                        custom_text=label_text, object_type="arrow",
+                        img=img, cx=data[i].get("candle_x"), y_rect=data[i].get("candle_y"), h_rect=data[i].get("candle_height"),
+                        fvg_swing_type=data[i].get('candle_number'),
+                        custom_text=ll_TEXT if is_bullish_swing else HH_TEXT, object_type="arrow",
                         is_bullish_arrow=is_bullish_swing, is_marked=True,
                         double_arrow=False, arrow_color=swing_color,
                         label_position="low" if is_bullish_swing else "high"
                     )
 
+                    m_idx = i + NEIGHBOR_RIGHT
+                    contour_maker_data = None
+                    if m_idx < n:
+                        label_objects_and_text(
+                            img=img, cx=data[m_idx].get("candle_x"), y_rect=data[m_idx].get("candle_y"), h_rect=data[m_idx].get("candle_height"),
+                            custom_text=CM_TEXT, object_type="dot",
+                            is_bullish_arrow=is_bullish_swing, is_marked=True,
+                            double_arrow=False, arrow_color=swing_color,
+                            label_position="low" if is_bullish_swing else "high"
+                        )
+                        
+                        data[m_idx].update({"is_contour_maker": True, "contour_maker_for_swing_candle": data[i]['candle_number']})
+                        contour_maker_data = {
+                            "candle_number": data[m_idx]['candle_number'],
+                            "candle_x": data[m_idx].get("candle_x"),
+                            "candle_y": data[m_idx].get("candle_y"),
+                            "data_index": m_idx
+                        }
+
                     swing_entry = {
+                        "candle_number": data[i].get('candle_number'),
                         "swing_type": "higher_low" if is_bullish_swing else "higher_high",
                         "high": curr_h,
                         "low": curr_l
@@ -1395,68 +1401,109 @@ def fvg_higherhighsandlowerlows(broker_name):
                         "swing_type": swing_entry["swing_type"],
                         "is_swing": True,
                         "swing_color_bgr": [int(c) for c in swing_color],
-                        "swing_neighbor_left": NEIGHBOR_LEFT,
-                        "swing_neighbor_right": NEIGHBOR_RIGHT,
-                        "swing_detected_on": "fvg_processed_data",
-                        "swing_config_key": config_key
+                        "m_idx": m_idx if m_idx < n else None,
+                        "contour_maker": contour_maker_data
                     })
                     swings_found.append(swing_entry)
 
-                # --- STEP 2: LOCATE AND FLAG FVG COMPONENTS DIRECTLY ---
+                # --- STEP 2: ASSIGN BASE TYPE (SUPPORT/RESISTANCE) ---
                 for candle in data:
                     ref_price = candle.get("low")
                     new_flag = None
                     for s in swings_found:
                         if s["swing_type"] == "higher_low" and s["low"] > ref_price:
-                            new_flag = "support_fvg"
+                            new_flag = "support"
                             break
                         elif s["swing_type"] == "higher_high" and s["high"] < ref_price:
-                            new_flag = "resistance_fvg"
+                            new_flag = "resistance"
                             break
                     
                     if new_flag:
-                        if candle.get("fvg_c1") is True:
-                            candle["fvg_c1_base"] = new_flag
-                        if candle.get("is_fvg") is True:
-                            candle["fvg_base"] = new_flag
-                        if candle.get("fvg_c3") is True:
-                            candle["fvg_c3_base"] = new_flag
+                        if candle.get("fvg_c1") is True: candle["fvg_c1_base"] = new_flag
+                        if candle.get("is_fvg") is True: candle["fvg_base"] = new_flag
+                        if candle.get("fvg_c3") is True: candle["fvg_c3_base"] = new_flag
 
-                # --- STEP 3: DEDUPLICATE AND ENRICH ---
-                # This logic merges records sharing the same candle_number
+                # --- STEP 3: DEDUPLICATE ---
                 unique_data_dict = {}
                 for entry in data:
                     c_num = entry.get("candle_number")
-                    if c_num not in unique_data_dict:
-                        unique_data_dict[c_num] = entry
+                    if c_num not in unique_data_dict: unique_data_dict[c_num] = entry
                     else:
-                        # Enrich existing entry with any new fields from the duplicate
-                        for key, value in entry.items():
+                        for key, val in entry.items():
                             if key not in unique_data_dict[c_num] or unique_data_dict[c_num][key] is None:
-                                unique_data_dict[c_num][key] = value
-                            # Specifically ensure boolean flags are combined (True wins)
-                            if isinstance(value, bool) and value is True:
-                                unique_data_dict[c_num][key] = True
-
-                # Convert back to sorted list
+                                unique_data_dict[c_num][key] = val
                 data = sorted(unique_data_dict.values(), key=lambda x: x.get('candle_number', 0))
+
+                # --- STEP 4: ASSOCIATE SWINGS AND FIND LIQUIDITY ---
+                for i in range(2, len(data)):
+                    if data[i].get("fvg_c3") is True:
+                        c1, c2, c3 = data[i-2], data[i-1], data[i]
+                        family_str = f"{c1['candle_number']}, {c2['candle_number']}, {c3['candle_number']}"
+                        
+                        target_swing_idx = -1
+                        cm_idx = -1
+                        for j in range(i + 1, len(data)):
+                            if data[j].get("is_swing"):
+                                data[j]["swing_type_for_fvgf_number"] = family_str
+                                target_swing_idx = j
+                                cm_idx = data[j].get("m_idx", -1)
+                                break
+                        
+                        if target_swing_idx != -1 and cm_idx != -1:
+                            target_candles = [("c1", c1), ("c2", c2), ("c3", c3)]
+                            
+                            for label, triad_candle in target_candles:
+                                triad_h = triad_candle['high']
+                                triad_l = triad_candle['low']
+                                found_h_liq = False
+                                found_l_liq = False
+                                
+                                for k in range(cm_idx + 1, len(data)):
+                                    liq_cand = data[k]
+                                    l_open = liq_cand['open']
+                                    l_high = liq_cand['high']
+                                    l_low  = liq_cand['low']
+                                    l_num  = liq_cand['candle_number']
+                                    
+                                    # --- High Liquidation Check ---
+                                    if not found_h_liq:
+                                        if l_open > triad_h:
+                                            if l_low < triad_h: found_h_liq = True
+                                        else:
+                                            if l_high > triad_h: found_h_liq = True
+                                        
+                                        if found_h_liq:
+                                            triad_candle[f"fvg_{label}_high_liquidated_by_candle_number"] = l_num
+                                            liq_cand[f"liquidates_fvg_{label}_high"] = True
+
+                                    # --- Low Liquidation Check ---
+                                    if not found_l_liq:
+                                        if l_open < triad_l:
+                                            if l_high > triad_l: found_l_liq = True
+                                        else:
+                                            if l_low < triad_l: found_l_liq = True
+                                        
+                                        if found_l_liq:
+                                            triad_candle[f"fvg_{label}_low_liquidated_by_candle_number"] = l_num
+                                            liq_cand[f"liquidates_fvg_{label}_low"] = True
+
+                                    if found_h_liq and found_l_liq: 
+                                        break
 
                 if swing_count > 0:
                     cv2.imwrite(chart_path, img)
                     config_content[config_key] = data
+                    config_content[f"{config_key}_candle_list"] = data 
                     with open(config_path, 'w', encoding='utf-8') as f:
                         json.dump(config_content, f, indent=4)
-
                     processed_charts += 1
                     total_swings_added += swing_count
-                    log(f"Added {swing_count} swings, updated flags, and deduplicated → {sym}/{tf}")
+                    log(f"Processed {sym}/{tf}: Swings, Base Types, & Liquidity mapped.")
 
             except Exception as e:
-                log(f"Error in swing detection {sym}/{tf}: {e}", "ERROR")
+                log(f"Error in {sym}/{tf}: {e}", "ERROR")
 
-    msg = f"HH/ll swing detection finished | Swings added: {total_swings_added} | Charts updated: {processed_charts}"
-    log(msg)
-    return msg
+    return f"Finished. Total Swings: {total_swings_added}, Charts: {processed_charts}"
 
 def timeframes_communication(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -1608,16 +1655,15 @@ def timeframes_communication(broker_name):
                             addplots = [mpf.make_addplot(scatter_data, type='scatter', markersize=300, marker='o', color='yellow', alpha=0.9)]
 
                             fig, _ = mpf.plot(df_chart, type='candle', style=custom_style, addplot=addplots, 
-                                               returnfig=True, figsize=(28, 10), tight_layout=False)
+                                              returnfig=True, figsize=(28, 10), tight_layout=False)
                             fig.suptitle(f"{sym} ({receiver_tf}) | Key: {final_key_name}", fontsize=16, fontweight='bold', y=0.95)
                             
                             os.makedirs(dev_output_dir, exist_ok=True)
                             fig.savefig(os.path.join(dev_output_dir, f"{final_key_name}.png"), bbox_inches="tight", dpi=120)
                             plt.close(fig)
 
-                            # 5. RECORD DATA INTO CONFIG OBJECT WITH ALL REQUESTED FIELDS
-                            forward_candles_data = []
-                            candle_numbers_list = []
+                            # 5. BUILD THE LIST OF CANDLES (this will be the direct value)
+                            forward_candles = []
 
                             for _, r in df_chart.iterrows():
                                 current_idx = candle_index_map[r.name]
@@ -1631,20 +1677,16 @@ def timeframes_communication(broker_name):
                                     "timeframe": receiver_tf,
                                     "candle_number": current_idx
                                 }
-                                forward_candles_data.append(candle_obj)
-                                candle_numbers_list.append(current_idx)
-                            
-                            # Insert the structured entry into the local_config
-                            local_config[final_key_name] = {
-                                "data": forward_candles_data,
-                                "candle_numbers": candle_numbers_list
-                            }
+                                forward_candles.append(candle_obj)
+
+                            # 6. SAVE THE LIST DIRECTLY UNDER THE KEY
+                            local_config[final_key_name] = forward_candles
 
                             config_updated = True
                             total_marked_all += 1
                             log(f"tf Communication {final_key_name} Processed")
 
-                    # 6. SAVE UPDATED CONFIG.JSON (Once per symbol/timeframe)
+                    # 7. SAVE UPDATED CONFIG.JSON (once per symbol/timeframe pair)
                     if config_updated:
                         with open(config_json_path, 'w', encoding='utf-8') as f:
                             json.dump(local_config, f, indent=4)
@@ -1750,21 +1792,18 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                     
                     config_updated = False
                     # Pattern example: 5m_output_contourmaker_15m_45
-                    # We match keys that start with the receiver timeframe and contain the source file name
                     search_pattern = f"{r_tf}_{source_filename.replace('.json','')}"
 
                     for key in list(config_data.keys()):
                         if not key.startswith(search_pattern):
                             continue
                         
-                        # Data in config.json is now a dict: {"data": [...], "candle_numbers": [...]}
-                        # We only want to process the "data" part
-                        entry = config_data[key]
-                        if not isinstance(entry, dict) or "data" not in entry:
+                        # Now the value is directly a list of candles
+                        raw_candles = config_data.get(key)
+                        if not isinstance(raw_candles, list):
                             continue
 
-                        raw_candles = entry["data"]
-                        # Sort ascending (oldest → newest)
+                        # Sort ascending by candle_number (oldest → newest)
                         data = sorted(raw_candles, key=lambda x: x.get('candle_number', 0))
                         
                         png_path = os.path.join(dev_output_dir, f"{key}.png")
@@ -1772,7 +1811,8 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                             continue
 
                         img = cv2.imread(png_path)
-                        if img is None: continue
+                        if img is None: 
+                            continue
 
                         # 2. IMAGE PROCESSING (Contour detection)
                         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -1780,7 +1820,8 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                                cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
                         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                         
-                        if not contours: continue
+                        if not contours: 
+                            continue
                         contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
 
                         min_len = min(len(data), len(contours))
@@ -1791,10 +1832,14 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                         for i in range(min_len):
                             x, y, w, h = cv2.boundingRect(contours[i])
                             data[i].update({
-                                "candle_x": int(x + w // 2), "candle_y": int(y),
-                                "candle_width": int(w), "candle_height": int(h),
-                                "candle_left": int(x), "candle_right": int(x + w),
-                                "candle_top": int(y), "candle_bottom": int(y + h)
+                                "candle_x": int(x + w // 2),
+                                "candle_y": int(y),
+                                "candle_width": int(w),
+                                "candle_height": int(h),
+                                "candle_left": int(x),
+                                "candle_right": int(x + w),
+                                "candle_top": int(y),
+                                "candle_bottom": int(y + h)
                             })
 
                         # 4. SWING DETECTION
@@ -1803,15 +1848,16 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                         for i in range(neighbor_left, n - neighbor_right):
                             curr_h, curr_l = data[i]['high'], data[i]['low']
                             
-                            l_h = [d['high'] for d in data[i-neighbor_left : i]]
-                            r_h = [d['high'] for d in data[i+1 : i+1+neighbor_right]]
-                            l_l = [d['low'] for d in data[i-neighbor_left : i]]
-                            r_l = [d['low'] for d in data[i+1 : i+1+neighbor_right]]
+                            l_h = [d['high'] for d in data[i-neighbor_left : i]     if 'high' in d]
+                            r_h = [d['high'] for d in data[i+1 : i+1+neighbor_right] if 'high' in d]
+                            l_l = [d['low']  for d in data[i-neighbor_left : i]     if 'low'  in d]
+                            r_l = [d['low']  for d in data[i+1 : i+1+neighbor_right] if 'low'  in d]
 
                             is_hh = curr_h > max(l_h) and curr_h > max(r_h) if l_h and r_h else False
                             is_ll = curr_l < min(l_l) and curr_l < min(r_l) if l_l and r_l else False
 
-                            if not (is_hh or is_ll): continue
+                            if not (is_hh or is_ll): 
+                                continue
 
                             is_bull = is_ll
                             active_color = ll_col if is_bull else hh_col
@@ -1822,17 +1868,23 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
 
                             # Draw on image
                             label_objects_and_text(
-                                img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
-                                c_num=data[i]['candle_number'],
-                                custom_text=label_text, object_type=obj_type,
-                                is_bullish_arrow=is_bull, is_marked=True,
-                                double_arrow=dbl_arrow, arrow_color=active_color,
+                                img, 
+                                data[i]["candle_x"], 
+                                data[i]["candle_y"], 
+                                data[i]["candle_height"],
+                                fvg_swing_type=data[i]['candle_number'],
+                                custom_text=label_text, 
+                                object_type=obj_type,
+                                is_bullish_arrow=is_bull, 
+                                is_marked=True,
+                                double_arrow=dbl_arrow, 
+                                arrow_color=active_color,
                                 label_position=pos
                             )
 
                             data[i].update({
                                 "swing_type": "lower_low" if is_bull else "higher_high",
-                                "active_color": active_color,
+                                "active_color": [int(c) for c in active_color],  # make serializable
                                 "is_swing": True
                             })
                             
@@ -1841,11 +1893,17 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
                             if m_idx < n:
                                 data[m_idx]["is_contour_maker"] = True
                                 label_objects_and_text(
-                                    img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
-                                    custom_text=cm_text, object_type=(ll_cm_obj if is_bull else hh_cm_obj),
-                                    is_bullish_arrow=is_bull, is_marked=True,
+                                    img, 
+                                    data[m_idx]["candle_x"], 
+                                    data[m_idx]["candle_y"], 
+                                    data[m_idx]["candle_height"],
+                                    custom_text=cm_text, 
+                                    object_type=(ll_cm_obj if is_bull else hh_cm_obj),
+                                    is_bullish_arrow=is_bull, 
+                                    is_marked=True,
                                     double_arrow=(ll_cm_dbl if is_bull else hh_cm_dbl),
-                                    arrow_color=active_color, label_position=pos
+                                    arrow_color=active_color, 
+                                    label_position=pos
                                 )
 
                             modified = True
@@ -1853,7 +1911,8 @@ def receiver_comm_higher_highs_lower_lows(broker_name):
 
                         if modified:
                             cv2.imwrite(png_path, img)
-                            config_data[key]["data"] = data # Update the data back to config
+                            # Write the list directly back under the key
+                            config_data[key] = data
                             config_updated = True
                             processed_keys_all += 1
                             log(f"receiver {key} swing processed")
@@ -1904,11 +1963,13 @@ def liquidity_candles(broker_name):
     total_liq_found = 0
 
     for apprehend_key, liq_cfg in liq_root.items():
-        if not apprehend_key.startswith("apprehend_"): continue
+        if not apprehend_key.startswith("apprehend_"): 
+            continue
         
         source_def_name = apprehend_key.replace("apprehend_", "")
         source_def = define_candles.get(source_def_name, {})
-        if not source_def: continue
+        if not source_def: 
+            continue
 
         raw_filename = source_def.get("filename", "")
         target_file_filter = raw_filename.replace(".json", "").lower()
@@ -1934,16 +1995,23 @@ def liquidity_candles(broker_name):
 
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
+            if not os.path.isdir(sym_p): 
+                continue
 
             for tf in os.listdir(sym_p):
                 tf_p = os.path.join(sym_p, tf)
-                if not os.path.isdir(tf_p): continue
+                if not os.path.isdir(tf_p): 
+                    continue
                 
-                dev_output_dir = os.path.join(os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)), sym, tf)
+                dev_output_dir = os.path.join(
+                    os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)), 
+                    sym, 
+                    tf
+                )
                 config_path = os.path.join(dev_output_dir, "config.json")
 
-                if not os.path.exists(config_path): continue
+                if not os.path.exists(config_path): 
+                    continue
 
                 try:
                     with open(config_path, 'r', encoding='utf-8') as f:
@@ -1952,12 +2020,30 @@ def liquidity_candles(broker_name):
                     config_modified = False
                     
                     for file_key in list(config_data.keys()):
-                        if not (file_key.lower() == source_def_name.lower() or target_file_filter in file_key.lower()):
+                        if not (file_key.lower() == source_def_name.lower() or 
+                                target_file_filter in file_key.lower()):
                             continue
 
                         entry = config_data[file_key]
-                        candles = entry["data"] if isinstance(entry, dict) and "data" in entry else entry
-                        if not isinstance(candles, list) or len(candles) < 2: continue
+
+                        # ────────────────────────────────────────────────
+                        # NEW: Only accept direct list of candles
+                        # ────────────────────────────────────────────────
+                        if not isinstance(entry, list):
+                            log(f"Skipping {file_key} — value is not a list (expected direct array of candles)", "WARN")
+                            continue
+
+                        candles = entry
+
+                        if len(candles) < 2:
+                            log(f"Skipping {file_key} — fewer than 2 candles", "WARN")
+                            continue
+
+                        # Optional: basic validation that items look like candles
+                        if not all(isinstance(c, dict) for c in candles):
+                            log(f"Skipping {file_key} — not all items are dictionaries", "WARN")
+                            continue
+                        # ────────────────────────────────────────────────
 
                         png_path = os.path.join(dev_output_dir, f"{file_key}.png")
                         if not os.path.exists(png_path):
@@ -1968,66 +2054,91 @@ def liquidity_candles(broker_name):
 
                         for i in range(len(candles) - 1):
                             base_c = candles[i]
-                            next_c = candles[i+1]
+                            next_c = candles[i + 1]
                             
-                            b_h, b_l = base_c.get("high"), base_c.get("low")
-                            n_h, n_l = next_c.get("high"), next_c.get("low")
+                            b_h = base_c.get("high")
+                            b_l = base_c.get("low")
+                            n_h = next_c.get("high")
+                            n_l = next_c.get("low")
                             
-                            if None in [b_h, b_l, n_h, n_l]: continue
+                            if None in [b_h, b_l, n_h, n_l]: 
+                                continue
 
-                            target_side = None # high, low, or None (skip)
+                            target_side = None
+                            ref_price = None
 
-                            # 1. Check if covered (Outside Bar / Engulfed) -> Skip
                             if n_h >= b_h and n_l <= b_l:
                                 continue 
                             
-                            # 2. Next candle is higher (High & Low above) -> Room for Low to be checked
                             elif n_h > b_h and n_l > b_l:
                                 target_side = "low"
                                 ref_price = b_l
                                 
-                            # 3. Next candle is lower (High & Low below) -> Room for High to be checked
                             elif n_l < b_l and n_h < b_h:
                                 target_side = "high"
                                 ref_price = b_h
                             
                             else:
-                                continue # No clear space created
+                                continue
 
-                            # Look forward starting from the 2nd candle after base
                             for j in range(i + 2, len(candles)):
                                 sweeper_c = candles[j]
                                 swept = False
 
                                 if target_side == "low" and sweeper_c.get("low", 999999) <= ref_price:
-                                    swept, pos, m_key, a_key = True, "low", "liq_ll", "app_ll"
+                                    swept = True
+                                    pos = "low"
+                                    m_key = "liq_ll"
+                                    a_key = "app_ll"
                                 elif target_side == "high" and sweeper_c.get("high", 0) >= ref_price:
-                                    swept, pos, m_key, a_key = True, "high", "liq_hh", "app_hh"
+                                    swept = True
+                                    pos = "high"
+                                    m_key = "liq_hh"
+                                    a_key = "app_hh"
 
                                 if swept:
                                     log(f"[SPACE SWEEP] {sym} {tf}: {pos} of candle {base_c.get('candle_number')} swept by {sweeper_c.get('candle_number')}")
                                     
                                     obj, dbl = markers[m_key]
                                     app_obj, app_dbl = markers[a_key]
-                                    txt = markers[f"{m_key}_txt"]
+                                    txt = markers.get(f"{m_key}_txt", "")
 
-                                    sweeper_c.update({"is_liquidity_sweep": True, "liquidity_price": ref_price})
-                                    base_c.update({"swept_by_liquidity": True, "swept_by_candle_number": sweeper_c.get("candle_number")})
+                                    sweeper_c.update({
+                                        "is_liquidity_sweep": True, 
+                                        "liquidity_price": ref_price
+                                    })
+                                    base_c.update({
+                                        "swept_by_liquidity": True, 
+                                        "swept_by_candle_number": sweeper_c.get("candle_number")
+                                    })
 
                                     if img is not None:
-                                        # Label the Sweeper
                                         label_objects_and_text(img, 
-                                            int(sweeper_c.get("candle_x", 0)), int(sweeper_c.get("candle_y", 0)), int(sweeper_c.get("candle_height", 0)),
-                                            custom_text=txt, object_type=obj, is_bullish_arrow=(target_side=="low"),
-                                            is_marked=True, double_arrow=dbl, arrow_color=(0, 255, 255), label_position=pos)
+                                            int(sweeper_c.get("candle_x", 0)), 
+                                            int(sweeper_c.get("candle_y", 0)), 
+                                            int(sweeper_c.get("candle_height", 0)),
+                                            custom_text=txt, 
+                                            object_type=obj, 
+                                            is_bullish_arrow=(target_side == "low"),
+                                            is_marked=True, 
+                                            double_arrow=dbl, 
+                                            arrow_color=(0, 255, 255), 
+                                            label_position=pos)
                                         
-                                        # Label the Base
                                         label_objects_and_text(img, 
-                                            int(base_c.get("candle_x", 0)), int(base_c.get("candle_y", 0)), int(base_c.get("candle_height", 0)),
-                                            custom_text="", object_type=app_obj, is_bullish_arrow=(target_side=="low"),
-                                            is_marked=True, double_arrow=app_dbl, arrow_color=(255, 165, 0), label_position=pos)
+                                            int(base_c.get("candle_x", 0)), 
+                                            int(base_c.get("candle_y", 0)), 
+                                            int(base_c.get("candle_height", 0)),
+                                            custom_text="", 
+                                            object_type=app_obj, 
+                                            is_bullish_arrow=(target_side == "low"),
+                                            is_marked=True, 
+                                            double_arrow=app_dbl, 
+                                            arrow_color=(255, 165, 0), 
+                                            label_position=pos)
 
-                                    key_modified = config_modified = True
+                                    key_modified = True
+                                    config_modified = True
                                     total_liq_found += 1
                                     break 
 
@@ -2039,7 +2150,7 @@ def liquidity_candles(broker_name):
                             json.dump(config_data, f, indent=4)
 
                 except Exception as e:
-                    log(f"Error in {sym} ({tf}): {e}", "ERROR")
+                    log(f"Error processing {sym} ({tf}): {e}", "ERROR")
 
     log(f"--- LIQUIDITY COMPLETE --- Total Space Sweeps: {total_liq_found}")
     return f"Completed: {total_liq_found} sweeps."
@@ -2147,7 +2258,6 @@ def entry_point_of_interest_condition(broker_name):
         if data_selection_value == "all":
             return items
         
-        # Group items by swing type of the swept candle
         swing_type_groups = {}
         
         for item in items:
@@ -2155,7 +2265,6 @@ def entry_point_of_interest_condition(broker_name):
             if swept_candle_num is None:
                 continue
                 
-            # Find the swept candle in source_candles
             swept_candle = next((c for c in source_candles if c.get("candle_number") == swept_candle_num), None)
             if not swept_candle:
                 continue
@@ -2172,12 +2281,10 @@ def entry_point_of_interest_condition(broker_name):
         filtered_items = []
         
         for swing_type, group_items in swing_type_groups.items():
-            # Only filter if there's more than one item with the same swing type
             if len(group_items) <= 1:
                 filtered_items.extend(group_items)
                 continue
             
-            # Get the swept candle for each item to extract prices
             items_with_prices = []
             for item in group_items:
                 swept_candle_num = item.get("swept_candle_number")
@@ -2195,35 +2302,420 @@ def entry_point_of_interest_condition(broker_name):
                 continue
             
             if data_selection_value == "extreme":
-                # For extreme selection - MOST EXTREME
                 if "higherhigh" in swing_type or "lowerhigh" in swing_type:
-                    # For high swings: pick the one with highest high (most extreme high)
                     best_item = max(items_with_prices, key=lambda x: x["high"])
                     filtered_items.append(best_item["item"])
                 elif "lowerlow" in swing_type or "higherlow" in swing_type:
-                    # For low swings: pick the one with lowest low (most extreme low)
                     best_item = min(items_with_prices, key=lambda x: x["low"])
                     filtered_items.append(best_item["item"])
                 else:
                     filtered_items.extend(group_items)
                     
             elif data_selection_value == "non_extreme":
-                # For non_extreme selection - LEAST EXTREME
                 if "lowerlow" in swing_type or "higherlow" in swing_type:
-                    # For low swings: pick the one with highest low (least extreme low)
                     best_item = max(items_with_prices, key=lambda x: x["low"])
                     filtered_items.append(best_item["item"])
                 elif "higherhigh" in swing_type or "lowerhigh" in swing_type:
-                    # For high swings: pick the one with lowest high (least extreme high)
                     best_item = min(items_with_prices, key=lambda x: x["high"])
                     filtered_items.append(best_item["item"])
                 else:
                     filtered_items.extend(group_items)
             else:
-                # Unknown selection value, keep all
                 filtered_items.extend(group_items)
         
         return filtered_items
+
+    def extract_timeframe_from_key(key_id):
+        """Extract timeframe from key ID (first timeframe in the key)"""
+        import re
+        # Common timeframe patterns
+        timeframe_patterns = [
+            r'\b1m\b', r'\b5m\b', r'\b15m\b', r'\b30m\b', 
+            r'\b1h\b', r'\b2h\b', r'\b4h\b', r'\b1d\b',
+            r'\b1w\b', r'\b1M\b'
+        ]
+        
+        for pattern in timeframe_patterns:
+            match = re.search(pattern, key_id.lower())
+            if match:
+                return match.group(0)
+        
+        return None
+
+    def process_second_source_independently(entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name):
+        """Process second source independently with full data pipeline"""
+        log(f"\n[SECOND SOURCE] Processing independent analysis for {entry_key} on {sym}/{tf}")
+        
+        # Find all potential second source keys
+        second_source_candidates = []
+        for key_id, candle_data in config_data.items():
+            if not isinstance(key_id, str) or key_id.endswith("_candle_list"):
+                continue
+            
+            # Skip the primary source keys (those containing the source_def_name)
+            if source_def_name.lower() in key_id.lower():
+                continue
+            
+            # Look for secondary patterns
+            if isinstance(candle_data, list) and len(candle_data) >= 5:
+                # Check if this looks like a pattern detection result
+                has_swings = any(c.get("is_swing") for c in candle_data[:10] if isinstance(c, dict))
+                has_swept = any(c.get("swept_by_liquidity") for c in candle_data[:10] if isinstance(c, dict))
+                
+                if has_swings or has_swept:
+                    second_source_candidates.append({
+                        "key_id": key_id,
+                        "candle_data": candle_data,
+                        "has_swings": has_swings,
+                        "has_swept": has_swept
+                    })
+        
+        if not second_source_candidates:
+            log(f"  No second source candidates found for {entry_key}")
+            return None
+        
+        # Process each candidate independently
+        all_second_source_results = []
+        
+        for candidate in second_source_candidates:
+            try:
+                # Process candle data like primary source
+                raw_second_candles = candidate["candle_data"]
+                merged_second_candles_map = {}
+                
+                for c in raw_second_candles:
+                    c_num = c.get("candle_number")
+                    if c_num is None: continue
+                    if c_num not in merged_second_candles_map:
+                        merged_second_candles_map[c_num] = c.copy()
+                    else:
+                        for key, value in c.items():
+                            if key not in merged_second_candles_map[c_num] or merged_second_candles_map[c_num][key] in [None, ""]:
+                                merged_second_candles_map[c_num][key] = value
+                            if key == "swing_type" and value:
+                                merged_second_candles_map[c_num][key] = value
+                                merged_second_candles_map[c_num]["is_swing"] = True
+                
+                second_candles = [merged_second_candles_map[num] for num in sorted(merged_second_candles_map.keys())]
+                second_new_candles = [candle.copy() for candle in second_candles]
+                
+                # Get entry configuration
+                start_search_with = entry_spec.get("start_search_with", "swept_candle").lower()
+                before_entry = entry_spec.get("before_entry", {})
+                data_selection_value = before_entry.get("data_selection", "all")
+                comm_swings_field = before_entry.get("communicate_only2_swings", "")
+                comm_mode = before_entry.get("swings_communication_condition", "follow_rules")
+                comm_pair = []
+                if comm_swings_field:
+                    parts = comm_swings_field.split("_and_")
+                    if len(parts) == 2: comm_pair = [parts[0].strip(), parts[1].strip()]
+
+                subject_cfg = entry_spec.get("subject", {})
+                record_prices_cfg = entry_spec.get("record_prices", {})
+                poi_target_role = subject_cfg.get("poi", "swept_candle")
+                find_after_key = entry_spec.get("find_entry_after", "").lower()
+                
+                # Find patterns in second source data
+                second_source_items = []
+                second_pending_orders = []
+                second_executed_orders = []
+                
+                for i, candle in enumerate(second_new_candles):
+                    is_swept = candle.get("swept_by_liquidity")
+                    is_swing = is_valid_swing_type(candle.get("swing_type"))
+                    
+                    if "swing" in start_search_with:
+                        if not is_swing: continue
+                    else:
+                        if not is_swept: continue
+
+                    c_num = candle.get("candle_number")
+                    anchor_swing_type = candle.get("swing_type")
+                    
+                    orig_sweeper_num = candle.get("swept_by_candle_number")
+                    orig_sweeper_candle = next((c for c in second_new_candles if c.get("candle_number") == orig_sweeper_num), None)
+                    if not orig_sweeper_candle:
+                        orig_sweeper_candle, orig_sweeper_num = candle, c_num
+                    orig_sweeper_idx = second_new_candles.index(orig_sweeper_candle)
+                    
+                    acting_sweeper_candle, acting_sweeper_idx, has_acting = None, None, False
+                    if orig_sweeper_candle.get("is_swing"):
+                        acting_sweeper_candle, acting_sweeper_idx, has_acting = orig_sweeper_candle, orig_sweeper_idx, True
+                    else:
+                        allowed = get_allowed_acting_sweeper_types(anchor_swing_type)
+                        for k in range(orig_sweeper_idx + 1, len(second_new_candles)):
+                            cand = second_new_candles[k]
+                            if cand.get("is_swing") and any(normalize_swing(cand.get("swing_type")) == normalize_swing(t) for t in allowed):
+                                acting_sweeper_candle, acting_sweeper_idx, has_acting = cand, k, True
+                                break
+
+                    option_raw = entry_spec.get("option", "")
+                    required_opt = get_opposite_swing_type(anchor_swing_type) if "opposite" in option_raw.lower() else anchor_swing_type
+                    option_candle, option_idx = None, None
+                    bound_idx = acting_sweeper_idx if has_acting else orig_sweeper_idx
+                    s_min, s_max = min(i, bound_idx), max(i, bound_idx)
+                    for k in range(s_min + 1, s_max):
+                        if is_swing_match(second_new_candles[k], required_opt):
+                            option_candle, option_idx = second_new_candles[k], k
+                            break
+                    
+                    if not option_candle: continue
+
+                    search_start = None
+                    if "original_sweeper" in find_after_key:
+                        search_start = orig_sweeper_idx + 1
+                    elif "acting_sweeper" in find_after_key:
+                        if has_acting: search_start = acting_sweeper_idx + 1
+                    elif any(x in find_after_key for x in ["swept_candle", "swing_candle"]):
+                        search_start = i + 1
+                    elif "option" in find_after_key:
+                        search_start = option_idx + 1
+
+                    if search_start is None: continue
+
+                    all_met = True
+                    ref_sweeper = acting_sweeper_candle if has_acting else orig_sweeper_candle
+                    condition_history = {
+                        "option": option_candle, 
+                        "sweeper": ref_sweeper, 
+                        "swept": candle, 
+                        "swing": candle,
+                        "swing_candle": candle,
+                        "subject": None
+                    }
+                    
+                    sorted_cond_keys = [k for k in sorted(before_entry.keys()) if k.startswith("swing_")]
+                    temp_search_start, temp_last_idx = search_start, search_start - 1
+                    
+                    for s_key in sorted_cond_keys:
+                        s_cfg = before_entry[s_key]
+                        
+                        def validate_single(cfg, start_from, history):
+                            t_str = cfg.get("swing", "").lower()
+                            c_str = cfg.get("condition", "").lower()
+
+                            if "sweeper" in t_str:
+                                b_type = history["sweeper"].get("swing_type")
+                            elif "option" in t_str:
+                                b_type = history["option"].get("swing_type")
+                            elif any(x in t_str for x in ["swing_candle", "swept_candle"]):
+                                b_type = history["swing"].get("swing_type")
+                            elif "swing_" in t_str:
+                                bk = t_str.replace("_opposite", "").replace("_identical", "")
+                                b_type = history.get(bk, {}).get("swing_type")
+                            else:
+                                swept = history.get("swept", {})
+                                b_type = swept.get("swing_type")
+                            
+                            s_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
+
+                            parts = c_str.split('_')
+                            constraints = []
+                            
+                            i = 0
+                            while i < len(parts):
+                                mode = parts[i]
+                                if mode not in ["beyond", "behind"]:
+                                    i += 1
+                                    continue
+                                    
+                                ref_obj = None
+                                if i + 1 < len(parts):
+                                    next_part = parts[i+1]
+                                    if next_part == "option":
+                                        ref_obj = history.get("option")
+                                        i += 2
+                                    elif next_part == "sweeper":
+                                        ref_obj = history.get("sweeper")
+                                        i += 2
+                                    elif next_part == "swing" or next_part == "swept":
+                                        if i + 2 < len(parts) and parts[i+2] == "candle":
+                                            ref_obj = history.get("swing")
+                                            i += 3
+                                        elif i + 2 < len(parts):
+                                            target_key = f"swing_{parts[i+2]}"
+                                            ref_obj = history.get(target_key)
+                                            i += 3
+                                        else:
+                                            i += 1
+                                
+                                if ref_obj:
+                                    constraints.append((mode, ref_obj))
+                                else:
+                                    i += 1
+
+                            for k in range(start_from, len(second_new_candles)):
+                                kc = second_new_candles[k]
+                                if is_swing_match(kc, s_type):
+                                    match_all_conditions = True
+                                    for mode, ref in constraints:
+                                        if mode == "beyond":
+                                            if not check_beyond_condition(kc, ref, s_type):
+                                                match_all_conditions = False
+                                                break
+                                        elif mode == "behind":
+                                            if not check_behind_condition(kc, ref, s_type):
+                                                match_all_conditions = False
+                                                break
+                                    
+                                    if match_all_conditions:
+                                        return kc, k
+                                        
+                            return None, None
+
+                        if s_key in comm_pair and comm_mode == "rules_or_opposite":
+                            other_key = comm_pair[1] if s_key == comm_pair[0] else comm_pair[0]
+                            other_cfg = before_entry.get(other_key)
+                            found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history)
+                            if not found_c and other_cfg:
+                                found_c, found_idx = validate_single(other_cfg, temp_search_start, condition_history)
+                            if found_c:
+                                condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
+                            else:
+                                all_met = False; break
+                        else:
+                            found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history)
+                            if found_c:
+                                condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
+                            else:
+                                all_met = False; break
+
+                    if all_met:
+                        if "swing_candle" in poi_target_role or "swept_candle" in poi_target_role:
+                            poi_candle = candle
+                        elif "option" in poi_target_role:
+                            poi_candle = option_candle
+                        elif "sweeper" in poi_target_role:
+                            poi_candle = ref_sweeper
+                        elif "swing_" in poi_target_role:
+                            lookup_key = poi_target_role.replace("_candle", "")
+                            poi_candle = condition_history.get(lookup_key)
+                        else:
+                            poi_candle = candle
+
+                        mitigation_found, desc, final_mit_rec = False, "pending entry level", None
+                        if poi_candle:
+                            p_type = normalize_swing(poi_candle.get("swing_type", ""))
+                            for m_idx in range(temp_last_idx + 1, len(second_new_candles)):
+                                mc, is_mit = second_new_candles[m_idx], False
+                                if "high" in p_type:
+                                    if mc.get("high", 0) >= poi_candle.get("high", 0): is_mit = True
+                                elif "low" in p_type:
+                                    if mc.get("low", 999999) <= poi_candle.get("low", 999999): is_mit = True
+                                
+                                if is_mit:
+                                    mc["mitigation_candle"] = True
+                                    poi_candle["mitigated"] = True
+                                    poi_candle["mitigated_by_candle_number"] = mc.get("candle_number")
+                                    final_mit_rec = mc.copy()
+                                    final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
+                                    mitigation_found, desc = True, "mitigated entry"
+                                    break
+                            if not mitigation_found: poi_candle["pending_entry_level"] = True
+
+                        # Extract timeframe from second source key
+                        source_timeframe = extract_timeframe_from_key(candidate['key_id'])
+                        found_in_timeframe = tf  # Current timeframe being analyzed
+                        
+                        # Create SECOND SOURCE trade info
+                        trade_info = {
+                            "symbol": sym,
+                            "description": desc,
+                            "pattern": entry_key,
+                            "signal_from": f"{entry_key}_SECOND_SOURCE_{candidate['key_id']}",
+                            "second_source_key": candidate['key_id'],
+                            "is_secondary_source": True,
+                            "source_definition": "secondary_source",
+                            "found_in_timeframe": found_in_timeframe,
+                            "timeframe": source_timeframe or tf
+                        }
+                        
+                        for role in ["entry", "exit", "target"]:
+                            r_cfg = record_prices_cfg.get(role, {})
+                            source_role_raw = r_cfg.get("record", "").replace("_candle", "")
+                            if source_role_raw in ["swing", "swing_candle"]: source_role_raw = "swept"
+                            price = get_price_from_cfg(condition_history.get(source_role_raw), r_cfg)
+                            trade_info[role] = price
+                        
+                        ot_cfg = record_prices_cfg.get("order_type_if_entry_swing_is", {})
+                        if "high" in normalize_swing(poi_candle.get("swing_type", "")):
+                            trade_info["order_type"] = ot_cfg.get("swing_higher_high_or_lower_high")
+                        else:
+                            trade_info["order_type"] = ot_cfg.get("swing_lower_low_or_higher_low")
+                        
+                        if mitigation_found:
+                            second_executed_orders.append(trade_info)
+                        else:
+                            second_pending_orders.append(trade_info)
+
+                        pattern_item = {
+                            "pattern_type": f"{entry_key}_SECOND_SOURCE",
+                            "swept_candle_number": candle.get("candle_number"),
+                            "sweeper_candle_number": ref_sweeper.get("candle_number"),
+                            "poi_target_role": poi_target_role,
+                            "subject_drawing": subject_cfg.get("drawing", {}),
+                            "option_drawing": entry_spec.get("option_tool", {}),
+                            "swings_drawing": {k: v.get("drawing", {}) for k, v in before_entry.items() if k.startswith("swing_")},
+                            "second_source_key": candidate['key_id']
+                        }
+
+                        p_keys = []
+                        roles_to_check = [("swept", candle), ("sweeper", ref_sweeper), ("option", option_candle)]
+                        for skey in sorted(condition_history.keys()):
+                            if skey not in ["swept", "sweeper", "option", "subject", "swing", "swing_candle"]: 
+                                roles_to_check.append((skey, condition_history[skey]))
+
+                        for role_name, rc in roles_to_check:
+                            if not rc: continue
+                            c_copy = rc.copy()
+                            c_copy[role_name] = True
+                            if role_name == "option" or role_name.startswith("swing_"):
+                                liq_sw = find_liquidation_for_candle(rc, second_new_candles)
+                                if liq_sw:
+                                    c_copy["is_liquidated"] = True
+                                    c_copy["liquidated_by_candle_number"] = liq_sw.get("candle_number")
+                                    sw_rec = liq_sw.copy()
+                                    sw_rec["is_liquidity"] = True
+                                    sw_rec["liquidated_candle_number"] = rc.get("candle_number")
+                                    sw_rec[f"{role_name}_sweeper"] = True
+                                    p_keys.extend([c_copy, sw_rec]); continue
+                            p_keys.append(c_copy)
+
+                        if final_mit_rec: p_keys.append(final_mit_rec)
+                        pattern_item["pattern_keys"] = p_keys
+                        second_source_items.append(pattern_item)
+                
+                if second_source_items:
+                    # Apply data selection filtering
+                    filtered_items = filter_data_selection(
+                        second_source_items, 
+                        start_search_with, 
+                        data_selection_value, 
+                        second_candles
+                    )
+                    
+                    result = {
+                        "key_id": candidate['key_id'],
+                        "candle_count": len(second_candles),
+                        "patterns_found": len(second_source_items),
+                        "filtered_patterns": len(filtered_items),
+                        "items": filtered_items,
+                        "pending_orders": second_pending_orders,
+                        "executed_orders": second_executed_orders,
+                        "candles": second_candles,
+                        "chart_files": [f for f in os.listdir(dev_output_dir) 
+                                      if f.lower().endswith('.png') and candidate['key_id'].lower() in f.lower()]
+                    }
+                    
+                    all_second_source_results.append(result)
+                    log(f"  ✓ Second source '{candidate['key_id']}': Found {len(filtered_items)} patterns")
+                else:
+                    log(f"  ✗ Second source '{candidate['key_id']}': No patterns found (skipping)")
+            
+            except Exception as e:
+                log(f"  Error processing second source {candidate['key_id']}: {str(e)}", "ERROR")
+        
+        return all_second_source_results if all_second_source_results else None
 
     # ─── Main logic ───────────────────────────────────────────────────────
     log(f"--- STARTING ENTRY POI CONDITION ANALYSIS: {broker_name} ---")
@@ -2240,8 +2732,7 @@ def entry_point_of_interest_condition(broker_name):
     entry_poi_root = define_candles.get("entries_poi_condition", {})
 
     total_entries_found = 0
-    global_pending_data = {} 
-    global_executed_data = {} 
+    total_second_source_entries = 0
 
     for apprehend_key, entry_cfg in entry_poi_root.items():
         if not apprehend_key.startswith("apprehend_"): continue
@@ -2287,16 +2778,29 @@ def entry_point_of_interest_condition(broker_name):
 
                     source_candles = [merged_candles_map[num] for num in sorted(merged_candles_map.keys())]
                     new_candles = [candle.copy() for candle in source_candles]
-                    output_items_by_key = {}
-
+                    
+                    # Process each entry independently
                     for entry_key, entry_spec in entry_cfg.items():
                         if not entry_key.startswith("entry_"): continue
                         new_filename = entry_spec.get("new_filename", "").strip()
                         if not new_filename: continue
 
-                        if new_filename not in output_items_by_key:
-                            output_items_by_key[new_filename] = []
-
+                        log(f"\n[PROCESSING] Entry: {entry_key} on {sym}/{tf}")
+                        
+                        # Get save configuration
+                        save_cfg = entry_spec.get("save_to", {}).get("new_filename_folder", {})
+                        chart_cfg = save_cfg.get("save_charts", {})
+                        data_cfg = save_cfg.get("save_data", {})
+                        
+                        chart_folder = chart_cfg.get("folder", "chart")
+                        pending_folder = data_cfg.get("pending_folder", "limit_orders")
+                        mitigated_folder = data_cfg.get("mitigated_folder", "executed_orders")
+                        
+                        # ─── PROCESS PRIMARY SOURCE ─────────────────────
+                        primary_items = []
+                        primary_pending_orders = []
+                        primary_executed_orders = []
+                        
                         start_search_with = entry_spec.get("start_search_with", "swept_candle").lower()
                         before_entry = entry_spec.get("before_entry", {})
                         data_selection_value = before_entry.get("data_selection", "all")
@@ -2386,8 +2890,6 @@ def entry_point_of_interest_condition(broker_name):
                                     t_str = cfg.get("swing", "").lower()
                                     c_str = cfg.get("condition", "").lower()
 
-                                    # 1. Determine the Swing Type we are looking for (S_TYPE)
-                                    # ------------------------------------------------------
                                     if "sweeper" in t_str:
                                         b_type = history["sweeper"].get("swing_type")
                                     elif "option" in t_str:
@@ -2398,29 +2900,22 @@ def entry_point_of_interest_condition(broker_name):
                                         bk = t_str.replace("_opposite", "").replace("_identical", "")
                                         b_type = history.get(bk, {}).get("swing_type")
                                     else:
-                                        # Fallback to swept candle's type
                                         swept = history.get("swept", {})
                                         b_type = swept.get("swing_type")
                                     
                                     s_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
 
-                                    # 2. Parse References and Logical Constraints
-                                    # ------------------------------------------------------
-                                    # We break the condition string into parts to identify multiple references
-                                    # e.g., "beyond_option_behind_swept_candle" -> ['beyond', 'option', 'behind', 'swept', 'candle']
                                     parts = c_str.split('_')
-                                    
-                                    constraints = [] # List of tuples: (comparison_type, reference_object)
+                                    constraints = []
                                     
                                     i = 0
                                     while i < len(parts):
-                                        mode = parts[i] # 'beyond' or 'behind'
+                                        mode = parts[i]
                                         if mode not in ["beyond", "behind"]:
                                             i += 1
                                             continue
                                             
                                         ref_obj = None
-                                        # Look ahead to find the object
                                         if i + 1 < len(parts):
                                             next_part = parts[i+1]
                                             if next_part == "option":
@@ -2430,11 +2925,9 @@ def entry_point_of_interest_condition(broker_name):
                                                 ref_obj = history.get("sweeper")
                                                 i += 2
                                             elif next_part == "swing" or next_part == "swept":
-                                                # Check for swing_candle or swept_candle
                                                 if i + 2 < len(parts) and parts[i+2] == "candle":
-                                                    ref_obj = history.get("swing") # Logic treats swing/swept_candle as "swing" history
+                                                    ref_obj = history.get("swing")
                                                     i += 3
-                                                # Check for swing_N
                                                 elif i + 2 < len(parts):
                                                     target_key = f"swing_{parts[i+2]}"
                                                     ref_obj = history.get(target_key)
@@ -2447,15 +2940,10 @@ def entry_point_of_interest_condition(broker_name):
                                         else:
                                             i += 1
 
-                                    # 3. Search through candles
-                                    # ------------------------------------------------------
                                     for k in range(start_from, len(new_candles)):
                                         kc = new_candles[k]
-                                        
-                                        # Must match the basic swing type first (High vs Low)
                                         if is_swing_match(kc, s_type):
                                             match_all_conditions = True
-                                            
                                             for mode, ref in constraints:
                                                 if mode == "beyond":
                                                     if not check_beyond_condition(kc, ref, s_type):
@@ -2470,7 +2958,6 @@ def entry_point_of_interest_condition(broker_name):
                                                 return kc, k
                                                 
                                     return None, None
-
 
                                 if s_key in comm_pair and comm_mode == "rules_or_opposite":
                                     other_key = comm_pair[1] if s_key == comm_pair[0] else comm_pair[0]
@@ -2490,7 +2977,7 @@ def entry_point_of_interest_condition(broker_name):
                                         all_met = False; break
 
                             if all_met:
-                                log(f"    → SUCCESS for {entry_key} at candle #{c_num}")
+                                log(f"    → PRIMARY: Pattern found at candle #{c_num}")
                                 
                                 if "swing_candle" in poi_target_role or "swept_candle" in poi_target_role:
                                     poi_candle = candle
@@ -2524,7 +3011,21 @@ def entry_point_of_interest_condition(broker_name):
                                             break
                                     if not mitigation_found: poi_candle["pending_entry_level"] = True
 
-                                trade_info = {"symbol": sym, "timeframe": tf, "description": desc, "pattern": entry_key, "signal_from": new_filename}
+                                # Create PRIMARY trade info
+                                trade_info = {
+                                    "symbol": sym,
+                                    "timeframe": tf,
+                                    "description": desc,
+                                    "pattern": entry_key,
+                                    "signal_from": new_filename,
+                                    "is_primary": True,
+                                    "source_definition": "primary_source",
+                                    "entry": None,
+                                    "exit": None,
+                                    "target": None,
+                                    "order_type": None
+                                }
+                                
                                 for role in ["entry", "exit", "target"]:
                                     r_cfg = record_prices_cfg.get(role, {})
                                     source_role_raw = r_cfg.get("record", "").replace("_candle", "")
@@ -2538,8 +3039,10 @@ def entry_point_of_interest_condition(broker_name):
                                 else:
                                     trade_info["order_type"] = ot_cfg.get("swing_lower_low_or_higher_low")
                                 
-                                if mitigation_found: global_executed_data.setdefault(new_filename, []).append(trade_info)
-                                else: global_pending_data.setdefault(new_filename, []).append(trade_info)
+                                if mitigation_found:
+                                    primary_executed_orders.append(trade_info)
+                                else:
+                                    primary_pending_orders.append(trade_info)
 
                                 total_entries_found += 1
                                 pattern_item = {
@@ -2549,7 +3052,8 @@ def entry_point_of_interest_condition(broker_name):
                                     "poi_target_role": poi_target_role,
                                     "subject_drawing": subject_cfg.get("drawing", {}),
                                     "option_drawing": entry_spec.get("option_tool", {}),
-                                    "swings_drawing": {k: v.get("drawing", {}) for k, v in before_entry.items() if k.startswith("swing_")}
+                                    "swings_drawing": {k: v.get("drawing", {}) for k, v in before_entry.items() if k.startswith("swing_")},
+                                    "is_primary": True
                                 }
 
                                 p_keys = []
@@ -2576,42 +3080,143 @@ def entry_point_of_interest_condition(broker_name):
 
                                 if final_mit_rec: p_keys.append(final_mit_rec)
                                 pattern_item["pattern_keys"] = p_keys
-                                output_items_by_key[new_filename].append(pattern_item)
-
-                    if output_items_by_key:
-                        for out_key, items in output_items_by_key.items():
-                            if not items: continue
-                            
-                            # Apply data selection filtering before drawing
-                            first_entry_key = items[0]["pattern_type"]
-                            before_entry = entry_cfg[first_entry_key].get("before_entry", {})
-                            data_selection_value = before_entry.get("data_selection", "all")
-                            start_search_with = entry_cfg[first_entry_key].get("start_search_with", "swept_candle").lower()
-                            
-                            filtered_items = filter_data_selection(items, start_search_with, data_selection_value, source_candles)
-                            
-                            if len(filtered_items) != len(items):
-                                log(f"    → Data selection filtered {len(items)} items down to {len(filtered_items)} items for {out_key}")
-                            
-                            # Update total entries found count
-                            total_entries_found -= (len(items) - len(filtered_items))
-                            
-                            # Use filtered items for further processing
-                            config_data[out_key] = filtered_items + [c.copy() for c in source_candles]
-                            target_base_dir = os.path.join(os.path.dirname(base_folder), "developers", broker_name, out_key)
-                            
-                            save_cfg = entry_cfg[first_entry_key].get("save_to", {}).get("new_filename_folder", {})
-                            chart_subfolder = save_cfg.get("save_charts", {}).get("folder", "chart")
-                            chart_dir = os.path.join(target_base_dir, chart_subfolder, sym)
-                            os.makedirs(chart_dir, exist_ok=True)
-                            
+                                primary_items.append(pattern_item)
+                        
+                        # Apply data selection filtering for primary
+                        filtered_primary_items = filter_data_selection(
+                            primary_items, start_search_with, data_selection_value, source_candles
+                        )
+                        
+                        if len(filtered_primary_items) != len(primary_items):
+                            log(f"  Primary data selection: {len(primary_items)} → {len(filtered_primary_items)} items")
+                        
+                        # ─── PROCESS SECOND SOURCE INDEPENDENTLY ─────────────────────
+                        second_source_results = process_second_source_independently(
+                            entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name
+                        )
+                        
+                        # ─── SAVE ALL RESULTS TO CONFIG.JSON ─────────────────────
+                        # Create entry output directory
+                        entry_output_dir = os.path.join(os.path.dirname(base_folder), "developers", broker_name, new_filename)
+                        os.makedirs(entry_output_dir, exist_ok=True)
+                        
+                        # Prepare config structure
+                        config_structure = {
+                            "metadata": {
+                                "entry_name": entry_key,
+                                "broker": broker_name,
+                                "symbol": sym,
+                                "base_timeframe": tf,
+                                "source_definition": source_def_name,
+                                "processed_at": datetime.now(lagos_tz).isoformat(),
+                                "save_config": {
+                                    "chart_folder": chart_folder,
+                                    "pending_folder": pending_folder,
+                                    "mitigated_folder": mitigated_folder
+                                }
+                            },
+                            "primary_source": {},
+                            "secondary_sources": {},
+                            "source_candles": [c.copy() for c in source_candles]
+                        }
+                        
+                        # Add primary source data to config
+                        if filtered_primary_items:
+                            config_structure["primary_source"] = {
+                                "patterns": filtered_primary_items,
+                                "pending_orders": primary_pending_orders,
+                                "executed_orders": primary_executed_orders,
+                                "patterns_count": len(filtered_primary_items),
+                                "pending_count": len(primary_pending_orders),
+                                "executed_count": len(primary_executed_orders)
+                            }
+                        
+                        # Add secondary sources data to config
+                        if second_source_results:
+                            for ss_result in second_source_results:
+                                second_source_key = ss_result["key_id"]
+                                safe_key = second_source_key.replace("/", "_").replace("\\", "_")
+                                
+                                if ss_result["filtered_patterns"] > 0:  # Only add if there are patterns
+                                    total_second_source_entries += ss_result["filtered_patterns"]
+                                    
+                                    config_structure["secondary_sources"][safe_key] = {
+                                        "original_key": second_source_key,
+                                        "patterns": ss_result["items"],
+                                        "pending_orders": ss_result["pending_orders"],
+                                        "executed_orders": ss_result["executed_orders"],
+                                        "patterns_count": ss_result["filtered_patterns"],
+                                        "pending_count": len(ss_result["pending_orders"]),
+                                        "executed_count": len(ss_result["executed_orders"]),
+                                        "candle_count": ss_result["candle_count"],
+                                        "chart_files": ss_result["chart_files"]
+                                    }
+                        
+                        # Save config.json
+                        config_path = os.path.join(entry_output_dir, "config.json")
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            json.dump(config_structure, f, indent=4, default=str)
+                        
+                        log(f"  Saved all data to config.json")
+                        
+                        # ─── SAVE COLLECTIVE PRICE RECORDS ─────────────────────
+                        # Create folders
+                        pending_dir = os.path.join(entry_output_dir, pending_folder)
+                        mitigated_dir = os.path.join(entry_output_dir, mitigated_folder)
+                        os.makedirs(pending_dir, exist_ok=True)
+                        os.makedirs(mitigated_dir, exist_ok=True)
+                        
+                        # Save collective primary records
+                        if primary_pending_orders:
+                            primary_pending_file = os.path.join(pending_dir, f"primary_{pending_folder}.json")
+                            with open(primary_pending_file, 'w', encoding='utf-8') as f:
+                                json.dump(primary_pending_orders, f, indent=4, default=str)
+                            log(f"  Saved {len(primary_pending_orders)} primary pending orders to {primary_pending_file}")
+                        
+                        if primary_executed_orders:
+                            primary_executed_file = os.path.join(mitigated_dir, f"primary_{mitigated_folder}.json")
+                            with open(primary_executed_file, 'w', encoding='utf-8') as f:
+                                json.dump(primary_executed_orders, f, indent=4, default=str)
+                            log(f"  Saved {len(primary_executed_orders)} primary executed orders to {primary_executed_file}")
+                        
+                        # Save collective secondary records
+                        secondary_pending_orders_all = []
+                        secondary_executed_orders_all = []
+                        
+                        if second_source_results:
+                            for ss_result in second_source_results:
+                                if ss_result["pending_orders"]:
+                                    secondary_pending_orders_all.extend(ss_result["pending_orders"])
+                                if ss_result["executed_orders"]:
+                                    secondary_executed_orders_all.extend(ss_result["executed_orders"])
+                        
+                        if secondary_pending_orders_all:
+                            secondary_pending_file = os.path.join(pending_dir, f"secondary_{pending_folder}.json")
+                            with open(secondary_pending_file, 'w', encoding='utf-8') as f:
+                                json.dump(secondary_pending_orders_all, f, indent=4, default=str)
+                            log(f"  Saved {len(secondary_pending_orders_all)} secondary pending orders to {secondary_pending_file}")
+                        
+                        if secondary_executed_orders_all:
+                            secondary_executed_file = os.path.join(mitigated_dir, f"secondary_{mitigated_folder}.json")
+                            with open(secondary_executed_file, 'w', encoding='utf-8') as f:
+                                json.dump(secondary_executed_orders_all, f, indent=4, default=str)
+                            log(f"  Saved {len(secondary_executed_orders_all)} secondary executed orders to {secondary_executed_file}")
+                        
+                        # ─── SAVE CHARTS (only for sources with patterns) ──────
+                        chart_dir = os.path.join(entry_output_dir, chart_folder, sym)
+                        os.makedirs(chart_dir, exist_ok=True)
+                        
+                        # Save primary chart
+                        if filtered_primary_items:
                             src_png_path = os.path.join(dev_output_dir, source_png_filename)
-                            if not os.path.exists(src_png_path): src_png_path = os.path.join(dev_output_dir, f"{source_key}.png")
+                            if not os.path.exists(src_png_path): 
+                                src_png_path = os.path.join(dev_output_dir, f"{source_key}.png")
+                            
                             if os.path.exists(src_png_path):
                                 img = cv2.imread(src_png_path)
                                 if img is not None:
                                     overlay, h, w = img.copy(), img.shape[0], img.shape[1]
-                                    for item in filtered_items:  # Use filtered items for drawing
+                                    for item in filtered_primary_items:
                                         pk_list = item.get("pattern_keys", [])
                                         mit_c = next((pk for pk in pk_list if pk.get("mitigation_candle")), None)
                                         
@@ -2660,26 +3265,97 @@ def entry_point_of_interest_condition(broker_name):
                                                     if s_ly is not None: draw_line_logic(overlay, scl, s_right, s_ly, s_tool)
 
                                     img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
-                                    cv2.imwrite(os.path.join(chart_dir, f"{tf}_{out_key}.png"), img)
+                                    chart_path = os.path.join(chart_dir, f"{tf}_{entry_key}_PRIMARY_CHART.png")
+                                    cv2.imwrite(chart_path, img)
+                                    log(f"  Saved primary chart: {chart_path}")
                         
-                        with open(config_path, 'w', encoding='utf-8') as f:
-                            json.dump(config_data, f, indent=4)
+                        # Save secondary charts (only if they have patterns)
+                        if second_source_results:
+                            for ss_result in second_source_results:
+                                if ss_result["filtered_patterns"] > 0 and ss_result["chart_files"]:
+                                    chart_file = ss_result["chart_files"][0]
+                                    chart_path = os.path.join(dev_output_dir, chart_file)
+                                    
+                                    if os.path.exists(chart_path):
+                                        second_source_key = ss_result["key_id"]
+                                        safe_key = second_source_key.replace("/", "_").replace("\\", "_")
+                                        
+                                        # Copy original chart
+                                        import shutil
+                                        new_chart_name = f"{tf}_{entry_key}_SECONDARY_{safe_key}.png"
+                                        new_chart_path = os.path.join(chart_dir, new_chart_name)
+                                        shutil.copy2(chart_path, new_chart_path)
+                                        
+                                        # Draw patterns on second source chart
+                                        img = cv2.imread(chart_path)
+                                        if img is not None:
+                                            overlay, h, w = img.copy(), img.shape[0], img.shape[1]
+                                            for item in ss_result["items"]:
+                                                pk_list = item.get("pattern_keys", [])
+                                                mit_c = next((pk for pk in pk_list if pk.get("mitigation_candle")), None)
+                                                
+                                                # Draw Options and Swings
+                                                for role_prefix in ["option", "swing_"]:
+                                                    role_keys = [pk for pk in pk_list if any(k.startswith(role_prefix) and pk.get(k) is True for k in pk.keys())]
+                                                    for r_candle in role_keys:
+                                                        act_r = next((k for k in r_candle.keys() if (k.startswith(role_prefix) and r_candle[k] is True)), None)
+                                                        d_cfg = item.get("option_drawing", {}) if act_r == "option" else item.get("swings_drawing", {}).get(act_r, {})
+                                                        tool, ct, cb, cl = d_cfg.get("tool"), r_candle.get("candle_top"), r_candle.get("candle_bottom"), r_candle.get("candle_left")
+                                                        if any(v is None for v in [ct, cb, cl]): continue
+                                                        rb = int(w)
+                                                        if d_cfg.get("stop_at_its") == "liquidator" and r_candle.get("is_liquidated"):
+                                                            liq_n = r_candle.get("liquidated_by_candle_number")
+                                                            liq_c = next((pk for pk in pk_list if pk.get("candle_number") == liq_n and pk.get("is_liquidity")), None)
+                                                            if liq_c and liq_c.get("candle_left"): rb = int(liq_c.get("candle_left"))
+                                                        
+                                                        st = normalize_swing(r_candle.get("swing_type", ""))
+                                                        if tool == "box": 
+                                                            cv2.rectangle(overlay, (int(cl), int(ct)), (rb, int(cb)), (0, 0, 255), -1)
+                                                        elif tool in ["horizontal_line", "dashed_horizontal_line"]:
+                                                            ly = None
+                                                            if "high" in st: ly = cb if "low_price" in d_cfg.get("swing_higher_high_or_lower_high", "") else ct
+                                                            elif "low" in st: ly = ct if "high_price" in d_cfg.get("swing_lower_low_or_higher_low", "") else cb
+                                                            if ly is not None: draw_line_logic(overlay, cl, rb, ly, tool, color=(0, 0, 255))
+
+                                                # Draw Subject (POI)
+                                                poi_target_role_clean = item.get("poi_target_role", "swept")
+                                                if any(x in poi_target_role_clean for x in ["swing_candle", "swept_candle"]): search_flag = "swept"
+                                                elif "swing_" in poi_target_role_clean: search_flag = poi_target_role_clean.replace("_candle", "")
+                                                else: search_flag = poi_target_role_clean
+                                                
+                                                poi_draw = next((pk for pk in pk_list if pk.get(search_flag)), None)
+                                                if poi_draw:
+                                                    sd_cfg = item.get("subject_drawing", {})
+                                                    s_tool, sct, scb, scl = sd_cfg.get("tool", "box"), poi_draw.get("candle_top"), poi_draw.get("candle_bottom"), poi_draw.get("candle_left")
+                                                    s_right = int(mit_c.get("candle_left")) if mit_c and mit_c.get("candle_left") else int(w)
+                                                    if all(v is not None for v in [sct, scb, scl]):
+                                                        if s_tool == "box":
+                                                            cv2.rectangle(overlay, (int(scl), int(sct)), (s_right, int(scb)), (0, 255, 0), -1)
+                                                        elif s_tool in ["horizontal_line", "dashed_horizontal_line"]:
+                                                            s_st = normalize_swing(poi_draw.get("swing_type", ""))
+                                                            s_ly = None
+                                                            if "high" in s_st: s_ly = scb if "low_price" in sd_cfg.get("swing_higher_high_or_lower_high", "") else sct
+                                                            elif "low" in s_st: s_ly = sct if "high_price" in sd_cfg.get("swing_lower_low_or_higher_low", "") else scb
+                                                            if s_ly is not None: draw_line_logic(overlay, scl, s_right, s_ly, s_tool, color=(0, 255, 0))
+
+                                            img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
+                                            drawn_chart_path = os.path.join(chart_dir, f"{tf}_{entry_key}_SECONDARY_DRAWN_{safe_key}.png")
+                                            cv2.imwrite(drawn_chart_path, img)
+                                            log(f"  Saved drawn second source chart: {drawn_chart_path}")
+                                
+                                elif ss_result["filtered_patterns"] == 0:
+                                    log(f"  ✗ Skipping empty second source '{ss_result['key_id']}' - no patterns")
+                        
+                        log(f"✓ Entry {entry_key} completed: {len(filtered_primary_items)} primary, {len(second_source_results) if second_source_results else 0} secondary sources")
+                        
                 except Exception as e:
-                    log(f"[{sym}|{tf}] ERROR: {str(e)}", "ERROR")
+                    log(f"[{sym}|{tf}|{entry_key}] ERROR: {str(e)}", "ERROR")
 
-    all_fnames = set(list(global_pending_data.keys()) + list(global_executed_data.keys()))
-    for fname in all_fnames:
-        t_base = os.path.join(os.path.dirname(base_folder), "developers", broker_name, fname)
-        for d_type, d_list in [("limit_orders", global_pending_data.get(fname, [])), ("executed_orders", global_executed_data.get(fname, []))]:
-            if d_list:
-                f_path = os.path.join(t_base, d_type)
-                os.makedirs(f_path, exist_ok=True)
-                with open(os.path.join(f_path, f"{fname}.json"), 'w', encoding='utf-8') as f:
-                    json.dump(d_list, f, indent=4)
-                log(f"Saved {len(d_list)} {d_type} records to {fname}/{d_type}")
-
-    log(f"--- FINISHED ENTRY POI ANALYSIS: {total_entries_found} patterns ---")
-    return f"Success: Found {total_entries_found} patterns."   
+    log(f"--- FINISHED ENTRY POI ANALYSIS ---")
+    log(f"Total primary patterns: {total_entries_found}")
+    log(f"Total secondary source patterns: {total_second_source_entries}")
+    
+    return f"Success: Found {total_entries_found} primary patterns and {total_second_source_entries} secondary patterns with independent data pipelines."
 
 def single():  
     dev_dict = load_developers_dictionary()
