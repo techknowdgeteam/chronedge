@@ -247,6 +247,162 @@ def label_objects_and_text(
         cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)                   
 
+def label_objects(
+    img,
+    cx,
+    y_rect,
+    h_rect,
+    fvg_swing_type=None,                  
+    custom_text=None,           
+    object_type="arrow",       
+    is_bullish_arrow=True,     
+    is_marked=False,
+    double_arrow=False,
+    arrow_color=(0, 255, 0),
+    object_color=(0, 255, 0),
+    font_scale=0.55,
+    text_thickness=2,
+    label_position="auto",
+    end_x=None,
+    box_w=None,           # External function provides this
+    box_h=None,           # External function provides this
+    box_alpha=0.3,        # Transparency threshold
+    start_x=None,         # NEW: For horizontal line start point
+    stop_x=None,          # NEW: For horizontal line end point
+    box_color=(0, 0, 0),  # NEW: Box color parameter
+    no_border=True        # NEW: Box border control
+):
+    color = object_color if object_color != (0, 255, 0) else arrow_color
+
+    # Dimensions for markers
+    shaft_length = 26
+    head_size = 9
+    thickness = 2
+    wing_size = 7 if double_arrow else 6
+
+    # 1. Determine Vertical Placement (Anchor Point)
+    if label_position == "auto":
+        place_at_high = not is_bullish_arrow  # HH/LH → top, ll/LL → bottom
+    else:
+        place_at_high = (label_position.lower() == "high")
+
+    # tip_y is the exact pixel of the wick tip (top or bottom)
+    tip_y = y_rect if place_at_high else (y_rect + h_rect)
+
+    # 2. Draw Objects (Arrows/Shapes/Lines) ONLY if is_marked is True
+    if is_marked:
+        if object_type in ["arrow", "reverse_arrow"]:
+            def draw_single_arrow_logic(center_x: int, is_reverse=False):
+                if not is_reverse:
+                    if place_at_high: # Tip at top, shaft goes UP
+                        shaft_start_y = tip_y - head_size
+                        cv2.line(img, (center_x, shaft_start_y), (center_x, shaft_start_y - shaft_length), arrow_color, thickness)
+                        pts = np.array([[center_x, tip_y - 2], [center_x - wing_size, tip_y - head_size], [center_x + wing_size, tip_y - head_size]], np.int32)
+                    else: # Tip at bottom, shaft goes DOWN
+                        shaft_start_y = tip_y + head_size
+                        cv2.line(img, (center_x, shaft_start_y), (center_x, shaft_start_y + shaft_length), arrow_color, thickness)
+                        pts = np.array([[center_x, tip_y + 2], [center_x - wing_size, tip_y + head_size], [center_x + wing_size, tip_y + head_size]], np.int32)
+                else:
+                    base_y = tip_y - 5 if place_at_high else tip_y + 5
+                    end_y = base_y - shaft_length if place_at_high else base_y + shaft_length
+                    cv2.line(img, (center_x, base_y), (center_x, end_y), arrow_color, thickness)
+                    tip_offset = -head_size if place_at_high else head_size
+                    pts = np.array([[center_x, end_y + tip_offset], [center_x - wing_size, end_y], [center_x + wing_size, end_y]], np.int32)
+                cv2.fillPoly(img, [pts], arrow_color)
+
+            is_rev = (object_type == "reverse_arrow")
+            if double_arrow:
+                draw_single_arrow_logic(cx - 5, is_reverse=is_rev)
+                draw_single_arrow_logic(cx + 5, is_reverse=is_rev)
+            else:
+                draw_single_arrow_logic(cx, is_reverse=is_rev)
+
+        elif object_type == "rightarrow":
+            base_x, tip_x = cx - 30, cx - 10
+            cv2.line(img, (base_x, tip_y), (tip_x, tip_y), color, thickness)
+            pts = np.array([[tip_x, tip_y], [tip_x - head_size, tip_y - wing_size], [tip_x - head_size, tip_y + wing_size]], np.int32)
+            cv2.fillPoly(img, [pts], color)
+
+        elif object_type == "leftarrow":
+            base_x, tip_x = cx + 30, cx + 10
+            cv2.line(img, (base_x, tip_y), (tip_x, tip_y), color, thickness)
+            pts = np.array([[tip_x, tip_y], [tip_x + head_size, tip_y - wing_size], [tip_x + head_size, tip_y + wing_size]], np.int32)
+            cv2.fillPoly(img, [pts], color)
+
+        elif object_type == "lline":
+            # Thin 1px horizontal line with start and stop points
+            start_x_final = start_x if start_x is not None else cx
+            stop_x_final = stop_x if stop_x is not None else (end_x if end_x is not None else img.shape[1])
+            cv2.line(img, (int(start_x_final), tip_y), (int(stop_x_final), tip_y), color, 1)
+
+        elif object_type == "box_transparent":
+            if box_w is not None and box_h is not None:
+                # Calculate coordinates based on passed width/height
+                x1, y1 = cx - (box_w // 2), tip_y - (box_h // 2)
+                x2, y2 = x1 + box_w, y1 + box_h
+                
+                # Overlay for transparency
+                overlay = img.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), box_color, -1)
+                cv2.addWeighted(overlay, box_alpha, img, 1 - box_alpha, 0, img)
+                
+                # Border only if not specified as no border
+                if not no_border:
+                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)
+
+        else:
+            shape_y = tip_y - 12 if place_at_high else tip_y + 12
+            if object_type == "circle":
+                cv2.circle(img, (cx, shape_y), 6, color, thickness=thickness)
+            elif object_type == "dot":
+                cv2.circle(img, (cx, shape_y), 6, color, thickness=-1)
+            elif object_type == "pentagon":
+                radius = 8
+                pts = np.array([[cx, shape_y - radius], [cx + int(radius * 0.95), shape_y - int(radius * 0.31)], [cx + int(radius * 0.58), shape_y + int(radius * 0.81)], [cx - int(radius * 0.58), shape_y + int(radius * 0.81)], [cx - int(radius * 0.95), shape_y - int(radius * 0.31)]], np.int32)
+                cv2.fillPoly(img, [pts], color)
+            elif object_type == "star":
+                outer_rad, inner_rad = 11, 5
+                pts = []
+                for i in range(10):
+                    angle = i * (np.pi / 5) - (np.pi / 2)
+                    r = outer_rad if i % 2 == 0 else inner_rad
+                    pts.append([cx + int(np.cos(angle) * r), shape_y + int(np.sin(angle) * r)])
+                cv2.fillPoly(img, [np.array(pts, np.int32)], color)
+
+    # 3. Text Placement Logic
+    if not (custom_text or fvg_swing_type is not None):
+        return
+
+    if is_marked:
+        is_vertical_obj = object_type in ["arrow", "reverse_arrow"]
+        if is_vertical_obj:
+            reach = (shaft_length + head_size + 4)
+        elif object_type == "box_transparent" and box_h is not None:
+            reach = (box_h // 2) + 4
+        else:
+            reach = 14
+    else:
+        reach = 4
+
+    if place_at_high:
+        base_text_y = tip_y - reach
+    else:
+        base_text_y = tip_y + reach + 10
+
+    if custom_text:
+        (tw, th), _ = cv2.getTextSize(custom_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_thickness)
+        cv2.putText(img, custom_text, (cx - tw // 2, int(base_text_y)),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, arrow_color, text_thickness)
+        fvg_swing_type_y = (base_text_y - 15) if place_at_high else (base_text_y + 15)
+    else:
+        fvg_swing_type_y = base_text_y
+
+    if fvg_swing_type is not None:
+        cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
+        cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        
 def lower_highs_higher_lows(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
@@ -2155,3054 +2311,862 @@ def liquidity_candles(broker_name):
     log(f"--- LIQUIDITY COMPLETE --- Total Space Sweeps: {total_liq_found}")
     return f"Completed: {total_liq_found} sweeps."
 
-def entry_point_of_interest_condition(broker_name):
+def entry_point_of_interest(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
-
+    
     def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
+        ts = datetime.now(lagos_tz).strftime('%H:%M:%S')
+        print(f"[{ts}] {msg}")
 
-    # ─── Helper functions ────────────────────────────────────────────────
-    def normalize_swing(s):
-        if not s: return ""
-        return str(s).lower().replace("_", "").replace(" ", "")
+    def process_entry_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path):
+        """Inner function to handle the actual file synchronization for a specific entry."""
+        new_folder_name = entry_settings.get("new_filename")
+        process_receiver = str(entry_settings.get("process_receiver_files", "no")).lower()
+        identify_config = entry_settings.get("identify_definitions", {})
+        sync_count = 0
 
-    def normalize_fvg_type(s):
-        if not s: return ""
-        return str(s).lower().replace("_", "").replace(" ", "")
-    
-    def normalize_fvg_family(s):
-        """Normalize any FVG family type"""
-        if not s: return ""
-        norm = str(s).lower().replace("_", "").replace(" ", "")
-        if "fvgc1" in norm:
-            return "fvg_c1"
-        elif "fvgc3" in norm:
-            return "fvg_c3"
-        elif "fvg" in norm and "c1" not in norm and "c3" not in norm and "swing" not in norm:
-            return "fvg"
-        return norm
-
-    def is_valid_swing_type(swing):
-        if not swing: return False
-        norm = normalize_swing(swing)
-        return norm in ["higherhigh", "lowerhigh", "higherlow", "lowerlow"]
-
-    def is_valid_fvg_c1(fvg_flag):
-        if fvg_flag is None: return False
-        return bool(fvg_flag) if isinstance(fvg_flag, bool) else str(fvg_flag).lower() in ["true", "1", "yes"]
-    
-    def is_valid_fvg_c2(fvg_flag):
-        if fvg_flag is None: return False
-        return bool(fvg_flag) if isinstance(fvg_flag, bool) else str(fvg_flag).lower() in ["true", "1", "yes"]
-    
-    def is_valid_fvg_c3(fvg_flag):
-        if fvg_flag is None: return False
-        return bool(fvg_flag) if isinstance(fvg_flag, bool) else str(fvg_flag).lower() in ["true", "1", "yes"]
-
-    def get_fvg_base_type(candle, fvg_type):
-        """Get FVG base type (support/resistance) for specific FVG type"""
-        if fvg_type == "fvg_c1":
-            base = candle.get("fvg_c1_base")
-        elif fvg_type == "fvg_c3":
-            base = candle.get("fvg_c3_base")
-        else:  # fvg
-            base = candle.get("fvg_base")
-        
-        if not base:
-            return None
-        return str(base).lower().strip()
-
-    def get_fvg_number(candle, fvg_type):
-        """Get the fvg_number for a specific FVG type"""
-        if not candle: return None
-        
-        if fvg_type == "fvg_c1":
-            return candle.get("c1_for_fvg_number")
-        elif fvg_type == "fvg_c3":
-            return candle.get("c3_for_fvg_number")
-        elif fvg_type == "fvg":
-            return candle.get("fvg_number")
-        
-        return None
-
-    def find_fvg_family_by_number(candles, target_fvg_number, target_fvg_type):
-        """Find all FVG family members with the same fvg_number"""
-        if target_fvg_number is None: return []
-        
-        family_members = []
-        
-        for candle in candles:
-            # Check fvg_c1
-            if target_fvg_type != "fvg_c1":
-                c1_number = candle.get("c1_for_fvg_number")
-                if c1_number == target_fvg_number and is_valid_fvg_c1(candle.get("fvg_c1")):
-                    family_members.append({
-                        "candle": candle,
-                        "type": "fvg_c1",
-                        "number": c1_number
-                    })
-            
-            # Check fvg_c3
-            if target_fvg_type != "fvg_c3":
-                c3_number = candle.get("c3_for_fvg_number")
-                if c3_number == target_fvg_number and is_valid_fvg_c3(candle.get("fvg_c3")):
-                    family_members.append({
-                        "candle": candle,
-                        "type": "fvg_c3",
-                        "number": c3_number
-                    })
-            
-            # Check regular fvg
-            if target_fvg_type != "fvg":
-                fvg_number = candle.get("fvg_number")
-                if fvg_number == target_fvg_number and is_valid_fvg_c2(candle.get("is_fvg")):
-                    family_members.append({
-                        "candle": candle,
-                        "type": "fvg",
-                        "number": fvg_number
-                    })
-        
-        return family_members
-
-    def get_opposite_swing_type(swing_type):
-        if not swing_type: return None
-        norm = normalize_swing(swing_type)
-        if "high" in norm: return "lower_low"
-        if "low" in norm: return "higher_high"
-        return None
-    
-    def get_opposite_fvg_type(fvg_type):
-        """Get opposite FVG type (support <-> resistance)"""
-        if not fvg_type: return None
-        return None
-
-    def is_swing_match(candle, target_swing_name):
-        """Check if candle matches target swing type"""
-        if not candle.get("is_swing"): return False
-        candle_swing = candle.get("swing_type")
-        if not target_swing_name or not candle_swing: return False
-        
-        # Handle fvg_swing as a special case - it matches any swing_type
-        if normalize_swing(target_swing_name) == "fvgswing":
-            return True
-        
-        return target_swing_name.replace("_", "") in normalize_swing(candle_swing)
-    
-    def is_fvg_match(candle, target_fvg_name, reference_candle=None):
-        """Check if candle matches target FVG type, with family linking support"""
-        if not target_fvg_name: 
-            return False
-        
-        norm_target = normalize_fvg_family(target_fvg_name)
-        
-        # Special handling for fvg_swing - it's NOT a FVG type
-        if norm_target == "fvgswing":
-            return False
-        
-        # Direct match check
-        if norm_target == "fvg_c1":
-            if is_valid_fvg_c1(candle.get("fvg_c1")):
-                return True
-        elif norm_target == "fvg_c3":
-            if is_valid_fvg_c3(candle.get("fvg_c3")):
-                return True
-        elif norm_target == "fvg":
-            if is_valid_fvg_c2(candle.get("is_fvg")):
-                return True
-        
-        # Family linking check - if we have a reference candle with fvg_number
-        if reference_candle:
-            # Get fvg_number from reference candle based on its type
-            ref_fvg_type = None
-            if is_valid_fvg_c1(reference_candle.get("fvg_c1")):
-                ref_fvg_type = "fvg_c1"
-            elif is_valid_fvg_c3(reference_candle.get("fvg_c3")):
-                ref_fvg_type = "fvg_c3"
-            elif is_valid_fvg_c2(reference_candle.get("is_fvg")):
-                ref_fvg_type = "fvg"
-            
-            if ref_fvg_type:
-                ref_fvg_number = get_fvg_number(reference_candle, ref_fvg_type)
-                if ref_fvg_number is not None:
-                    # Check if current candle has matching fvg_number for target type
-                    target_fvg_number = get_fvg_number(candle, norm_target)
-                    if target_fvg_number == ref_fvg_number:
-                        return True
-        
-        return False
-
-    def is_fvg_family_candle(candle, target_name):
-        """Check if candle is any FVG family type (fvg, fvg_c1, fvg_c3)"""
-        if not target_name: return False
-        
-        norm_target = normalize_fvg_family(target_name)
-        
-        # fvg_swing is NOT a FVG family type
-        if norm_target == "fvgswing":
-            return False
-        
-        if is_fvg_match(candle, norm_target):
-            return True
-        
-        if norm_target == "fvg":
-            return (is_valid_fvg_c2(candle.get("is_fvg")) or 
-                    is_valid_fvg_c1(candle.get("fvg_c1")) or 
-                    is_valid_fvg_c3(candle.get("fvg_c3")))
-        
-        return False
-
-    def is_fvg_swing_candle(candle):
-        """Check if candle is a fvg_swing (regular swing candle)"""
-        return is_valid_swing_type(candle.get("swing_type"))
-
-    def get_allowed_acting_sweeper_types(swept_swing):
-        if not swept_swing: return []
-        norm = normalize_swing(swept_swing)
-        if "higherhigh" in norm: return ["higher_high"]
-        if "lowerhigh" in norm: return ["higher_high", "lower_high"]
-        if "lowerlow" in norm: return ["lower_low"]
-        if "higherlow" in norm: return ["higher_low", "lower_low"]
-        return []
-    
-    def get_allowed_acting_sweeper_fvg_types(swept_fvg_type):
-        """Get allowed acting sweeper types for FVG"""
-        if not swept_fvg_type: return []
-        norm = normalize_fvg_family(swept_fvg_type)
-        return []
-
-    def check_beyond_condition(candle, reference, new_to_find_type):
-        norm = normalize_swing(new_to_find_type)
-        if "high" in norm:
-            ref_val = reference.get("high") if "high" in normalize_swing(reference.get("swing_type")) else reference.get("low")
-            return candle.get("high", 0) > ref_val
-        if "low" in norm:
-            ref_val = reference.get("low") if "low" in normalize_swing(reference.get("swing_type")) else reference.get("high")
-            return candle.get("low", 999999) < ref_val
-        return False
-    
-    def check_beyond_condition_fvg(candle, reference, new_to_find_type, fvg_base):
-        """Check beyond condition for FVG family"""
-        if not fvg_base: return False
-        
-        norm_base = str(fvg_base).lower()
-        if "resistance" in norm_base:
-            ref_val = reference.get("high", 0)
-            return candle.get("high", 0) > ref_val
-        elif "support" in norm_base:
-            ref_val = reference.get("low", 999999)
-            return candle.get("low", 999999) < ref_val
-        return False
-    
-    def check_beyond_fvg_condition(candle, reference, fvg_type):
-        """Check beyond condition for specific FVG type"""
-        # Get reference FVG base type
-        ref_fvg_base = None
-        if is_fvg_match(reference, "fvg"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg")
-        elif is_fvg_match(reference, "fvg_c1"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c1")
-        elif is_fvg_match(reference, "fvg_c3"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c3")
-        
-        if not ref_fvg_base: return False
-        
-        # Handle fvg_swing case
-        if fvg_type == "fvg_swing":
-            # For fvg_swing, check based on swing_type
-            candle_swing_type = normalize_swing(candle.get("swing_type", ""))
-            if not candle_swing_type: return False
-            
-            if "resistance" in ref_fvg_base:
-                if "high" in candle_swing_type:
-                    return candle.get("high", 0) > reference.get("high", 0)
-            elif "support" in ref_fvg_base:
-                if "low" in candle_swing_type:
-                    return candle.get("low", 999999) < reference.get("low", 999999)
-            return False
-        
-        # Handle regular FVG types
-        candle_fvg_base = None
-        if is_fvg_match(candle, "fvg"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg")
-        elif is_fvg_match(candle, "fvg_c1"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg_c1")
-        elif is_fvg_match(candle, "fvg_c3"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg_c3")
-        
-        if not candle_fvg_base: return False
-        
-        if "resistance" in ref_fvg_base and "resistance" in candle_fvg_base:
-            return candle.get("high", 0) > reference.get("high", 0)
-        elif "support" in ref_fvg_base and "support" in candle_fvg_base:
-            return candle.get("low", 999999) < reference.get("low", 999999)
-        elif "resistance" in ref_fvg_base and "support" in candle_fvg_base:
-            return candle.get("low", 999999) < reference.get("high", 999999)
-        elif "support" in ref_fvg_base and "resistance" in candle_fvg_base:
-            return candle.get("high", 0) > reference.get("low", 999999)
-        
-        return False
-
-    def check_behind_condition(candle, reference, new_to_find_type):
-        norm = normalize_swing(new_to_find_type)
-        ref_type = normalize_swing(reference.get("swing_type", ""))
-        if "high" in norm:
-            if "low" in ref_type:
-                return candle.get("high", 0) > reference.get("low", 0)
-            return candle.get("high", 0) < reference.get("high", 0)
-        if "low" in norm:
-            if "high" in ref_type:
-                return candle.get("low", 999999) < reference.get("high", 999999)
-            return candle.get("low", 999999) > reference.get("low", 999999)
-        return False
-    
-    def check_behind_condition_fvg(candle, reference, new_to_find_type, fvg_base):
-        """Check behind condition for FVG family"""
-        if not fvg_base: return False
-        
-        norm_base = str(fvg_base).lower()
-        ref_fvg_base = None
-        
-        if is_fvg_match(reference, "fvg"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg")
-        elif is_fvg_match(reference, "fvg_c1"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c1")
-        elif is_fvg_match(reference, "fvg_c3"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c3")
-        
-        if "resistance" in norm_base:
-            if ref_fvg_base and "support" in ref_fvg_base:
-                return candle.get("high", 0) > reference.get("low", 0)
-            return candle.get("high", 0) < reference.get("high", 0)
-        elif "support" in norm_base:
-            if ref_fvg_base and "resistance" in ref_fvg_base:
-                return candle.get("low", 999999) < reference.get("high", 999999)
-            return candle.get("low", 999999) > reference.get("low", 999999)
-        return False
-    
-    def check_behind_fvg_condition(candle, reference, fvg_type):
-        """Check behind condition for specific FVG type"""
-        # Get reference FVG base type
-        ref_fvg_base = None
-        if is_fvg_match(reference, "fvg"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg")
-        elif is_fvg_match(reference, "fvg_c1"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c1")
-        elif is_fvg_match(reference, "fvg_c3"):
-            ref_fvg_base = get_fvg_base_type(reference, "fvg_c3")
-        
-        if not ref_fvg_base: return False
-        
-        # Handle fvg_swing case
-        if fvg_type == "fvg_swing":
-            # For fvg_swing, check based on swing_type
-            candle_swing_type = normalize_swing(candle.get("swing_type", ""))
-            if not candle_swing_type: return False
-            
-            if "resistance" in ref_fvg_base:
-                if "high" in candle_swing_type:
-                    return candle.get("high", 0) < reference.get("high", 0)
-            elif "support" in ref_fvg_base:
-                if "low" in candle_swing_type:
-                    return candle.get("low", 999999) > reference.get("low", 999999)
-            return False
-        
-        # Handle regular FVG types
-        candle_fvg_base = None
-        if is_fvg_match(candle, "fvg"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg")
-        elif is_fvg_match(candle, "fvg_c1"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg_c1")
-        elif is_fvg_match(candle, "fvg_c3"):
-            candle_fvg_base = get_fvg_base_type(candle, "fvg_c3")
-        
-        if not candle_fvg_base: return False
-        
-        if "resistance" in ref_fvg_base and "resistance" in candle_fvg_base:
-            return candle.get("high", 0) < reference.get("high", 0)
-        elif "support" in ref_fvg_base and "support" in candle_fvg_base:
-            return candle.get("low", 999999) > reference.get("low", 999999)
-        elif "resistance" in ref_fvg_base and "support" in candle_fvg_base:
-            return candle.get("low", 999999) > reference.get("high", 999999)
-        elif "support" in ref_fvg_base and "resistance" in candle_fvg_base:
-            return candle.get("high", 0) < reference.get("low", 999999)
-        
-        return False
-
-    def find_liquidation_for_candle(target_candle, candle_list):
-        """Find the liquidation candle for a target candle"""
-        target_num = target_candle.get("candle_number")
-        if target_num is None: return None
-        swing_t = normalize_swing(target_candle.get("swing_type", ""))
-        for search_c in candle_list:
-            search_num = search_c.get("candle_number")
-            if search_num is None or search_num <= target_num: continue
-            if "high" in swing_t:
-                if search_c.get("high", 0) >= target_candle.get("high", 0): return search_c
-            elif "low" in swing_t:
-                if search_c.get("low", 999999) <= target_candle.get("low", 999999): return search_c
-        return None
-    
-    def find_liquidation_for_fvg(target_candle, candle_list):
-        """Find liquidation for FVG candle using FVG-specific liquidation fields"""
-        target_num = target_candle.get("candle_number")
-        if target_num is None: return None
-        
-        # Determine FVG type
-        fvg_type = None
-        if is_fvg_match(target_candle, "fvg_c1"):
-            fvg_type = "fvg_c1"
-        elif is_fvg_match(target_candle, "fvg_c3"):
-            fvg_type = "fvg_c3"
-        elif is_fvg_match(target_candle, "fvg"):
-            fvg_type = "fvg_c2"  # Using fvg_c2 for regular fvg
-        
-        if not fvg_type: return None
-        
-        # Get FVG base type
-        fvg_base = get_fvg_base_type(target_candle, fvg_type.replace("_c2", ""))
-        if not fvg_base: return None
-        
-        # Find liquidation based on FVG type and base
-        for search_c in candle_list:
-            search_num = search_c.get("candle_number")
-            if search_num is None or search_num <= target_num: continue
-            
-            if "resistance" in fvg_base:
-                # Check for high liquidation
-                liq_field = f"{fvg_type}_high_liquidated_by_candle_number"
-                liq_num = target_candle.get(liq_field)
-                if liq_num and search_num == liq_num:
-                    return search_c
-            elif "support" in fvg_base:
-                # Check for low liquidation
-                liq_field = f"{fvg_type}_low_liquidated_by_candle_number"
-                liq_num = target_candle.get(liq_field)
-                if liq_num and search_num == liq_num:
-                    return search_c
-        
-        return None
-
-    def get_price_from_cfg(candle, cfg_block):
-        if not candle: return None
-        
-        # Check if it's a fvg_swing (regular swing candle)
-        if is_fvg_swing_candle(candle):
-            stype = normalize_swing(candle.get("swing_type", ""))
-            if "high" in stype:
-                field = cfg_block.get("swing_higher_high_or_lower_high", "high_price")
-                return candle.get("high") if field == "high_price" else candle.get("low")
-            elif "low" in stype:
-                field = cfg_block.get("swing_lower_low_or_higher_low", "low_price")
-                return candle.get("high") if field == "high_price" else candle.get("low")
-        
-        # Check if it's a FVG family candle
-        fvg_type = None
-        if is_fvg_match(candle, "fvg_c1"):
-            fvg_type = "fvg_c1"
-        elif is_fvg_match(candle, "fvg_c3"):
-            fvg_type = "fvg_c3"
-        elif is_fvg_match(candle, "fvg"):
-            fvg_type = "fvg"
-        
-        if fvg_type:
-            fvg_base = get_fvg_base_type(candle, fvg_type)
-            if fvg_base:
-                if "resistance" in fvg_base:
-                    field = cfg_block.get("resistance_fvg", "high_price")
-                    return candle.get("high") if field == "high_price" else candle.get("low")
-                elif "support" in fvg_base:
-                    field = cfg_block.get("support_fvg", "low_price")
-                    return candle.get("high") if field == "high_price" else candle.get("low")
-        
-        return None
-
-    def draw_line_logic(img, x_start, x_end, y, tool_type, color=(0, 0, 0), thickness=2):
-        """Helper to handle solid and dashed lines"""
-        if tool_type == "horizontal_line":
-            cv2.line(img, (int(x_start), int(y)), (int(x_end), int(y)), color, thickness)
-        elif tool_type == "dashed_horizontal_line":
-            dist = int(x_end - x_start)
-            dash_len = 10
-            for j in range(0, dist, dash_len * 2):
-                end_segment = min(int(x_start + j + dash_len), int(x_end))
-                cv2.line(img, (int(x_start + j), int(y)), (end_segment, int(y)), color, thickness)
-    
-    def filter_data_selection(items, start_search_with, data_selection_value, source_candles):
-        """Filter items based on data_selection value (extreme, non_extreme, or all)"""
-        if not items or len(items) <= 1:
-            return items
-            
-        if data_selection_value == "all":
-            return items
-        
-        swing_type_groups = {}
-        
-        for item in items:
-            swept_candle_num = item.get("swept_candle_number")
-            if swept_candle_num is None:
-                continue
-                
-            swept_candle = next((c for c in source_candles if c.get("candle_number") == swept_candle_num), None)
-            if not swept_candle:
-                continue
-                
-            swing_type = swept_candle.get("swing_type")
-            if not swing_type:
-                continue
-                
-            normalized_swing = normalize_swing(swing_type)
-            if normalized_swing not in swing_type_groups:
-                swing_type_groups[normalized_swing] = []
-            swing_type_groups[normalized_swing].append(item)
-        
-        filtered_items = []
-        
-        for swing_type, group_items in swing_type_groups.items():
-            if len(group_items) <= 1:
-                filtered_items.extend(group_items)
-                continue
-            
-            items_with_prices = []
-            for item in group_items:
-                swept_candle_num = item.get("swept_candle_number")
-                swept_candle = next((c for c in source_candles if c.get("candle_number") == swept_candle_num), None)
-                if swept_candle:
-                    items_with_prices.append({
-                        "item": item,
-                        "high": swept_candle.get("high", 0),
-                        "low": swept_candle.get("low", 999999),
-                        "swing_type": swept_candle.get("swing_type", "")
-                    })
-            
-            if not items_with_prices:
-                filtered_items.extend(group_items)
-                continue
-            
-            if data_selection_value == "extreme":
-                if "higherhigh" in swing_type or "lowerhigh" in swing_type:
-                    best_item = max(items_with_prices, key=lambda x: x["high"])
-                    filtered_items.append(best_item["item"])
-                elif "lowerlow" in swing_type or "higherlow" in swing_type:
-                    best_item = min(items_with_prices, key=lambda x: x["low"])
-                    filtered_items.append(best_item["item"])
-                else:
-                    filtered_items.extend(group_items)
-                    
-            elif data_selection_value == "non_extreme":
-                if "lowerlow" in swing_type or "higherlow" in swing_type:
-                    best_item = max(items_with_prices, key=lambda x: x["low"])
-                    filtered_items.append(best_item["item"])
-                elif "higherhigh" in swing_type or "lowerhigh" in swing_type:
-                    best_item = min(items_with_prices, key=lambda x: x["high"])
-                    filtered_items.append(best_item["item"])
-                else:
-                    filtered_items.extend(group_items)
-            else:
-                filtered_items.extend(group_items)
-        
-        return filtered_items
-
-    def extract_timeframe_from_key(key_id):
-        """Extract timeframe from key ID (first timeframe in the key)"""
-        import re
-        timeframe_patterns = [
-            r'\b1m\b', r'\b5m\b', r'\b15m\b', r'\b30m\b', 
-            r'\b1h\b', r'\b2h\b', r'\b4h\b', r'\b1d\b',
-            r'\b1w\b', r'\b1M\b'
-        ]
-        
-        for pattern in timeframe_patterns:
-            match = re.search(pattern, key_id.lower())
-            if match:
-                return match.group(0)
-        
-        return None
-
-    def check_intruder_violation(option_candle, last_swing_candle, subject_poi_candle, candles, if_intruder_value):
-        """Check for intruder candles between option and last swing that violate subject synchronization"""
-        if if_intruder_value != "terminate":
-            return False
-        
-        if not option_candle or not last_swing_candle or not subject_poi_candle:
-            return False
-        
-        option_num = option_candle.get("candle_number")
-        last_swing_num = last_swing_candle.get("candle_number")
-        
-        if option_num is None or last_swing_num is None:
-            return False
-        
-        start_idx = min(option_num, last_swing_num)
-        end_idx = max(option_num, last_swing_num)
-        
-        # Check subject type (could be fvg_swing or FVG)
-        is_subject_fvg_swing = is_fvg_swing_candle(subject_poi_candle)
-        is_subject_fvg = is_fvg_family_candle(subject_poi_candle, "fvg")
-        
-        for candle in candles:
-            c_num = candle.get("candle_number")
-            if c_num is None or c_num <= start_idx or c_num >= end_idx:
-                continue
-            
-            if is_subject_fvg_swing:
-                # Check for matching swing_type
-                if not candle.get("is_swing"):
-                    continue
-                
-                candle_swing_type = normalize_swing(candle.get("swing_type", ""))
-                subject_swing_type = normalize_swing(subject_poi_candle.get("swing_type", ""))
-                
-                if candle_swing_type != subject_swing_type:
-                    continue
-                
-                if "high" in subject_swing_type:
-                    if candle.get("high", 0) >= subject_poi_candle.get("high", 0):
-                        return True
-                elif "low" in subject_swing_type:
-                    if candle.get("low", 999999) <= subject_poi_candle.get("low", 999999):
-                        return True
-            
-            elif is_subject_fvg:
-                # Check for matching FVG type or family member
-                subject_fvg_type = None
-                subject_fvg_number = None
-                
-                if is_fvg_match(subject_poi_candle, "fvg_c1"):
-                    subject_fvg_type = "fvg_c1"
-                    subject_fvg_number = get_fvg_number(subject_poi_candle, "fvg_c1")
-                elif is_fvg_match(subject_poi_candle, "fvg_c3"):
-                    subject_fvg_type = "fvg_c3"
-                    subject_fvg_number = get_fvg_number(subject_poi_candle, "fvg_c3")
-                elif is_fvg_match(subject_poi_candle, "fvg"):
-                    subject_fvg_type = "fvg"
-                    subject_fvg_number = get_fvg_number(subject_poi_candle, "fvg")
-                
-                if not subject_fvg_type:
-                    continue
-                
-                # Check if candle matches the same FVG type OR is a family member
-                candle_matches = False
-                
-                # Direct type match
-                if is_fvg_match(candle, subject_fvg_type):
-                    candle_matches = True
-                # Family member match
-                elif subject_fvg_number is not None:
-                    # Check all possible FVG types for this candle
-                    for check_type in ["fvg_c1", "fvg_c3", "fvg"]:
-                        candle_fvg_number = get_fvg_number(candle, check_type)
-                        if candle_fvg_number == subject_fvg_number and (
-                            (check_type == "fvg_c1" and is_valid_fvg_c1(candle.get("fvg_c1"))) or
-                            (check_type == "fvg_c3" and is_valid_fvg_c3(candle.get("fvg_c3"))) or
-                            (check_type == "fvg" and is_valid_fvg_c2(candle.get("is_fvg")))
-                        ):
-                            candle_matches = True
-                            break
-                
-                if not candle_matches:
-                    continue
-                
-                # Check price violation
-                subject_fvg_base = get_fvg_base_type(subject_poi_candle, subject_fvg_type)
-                if not subject_fvg_base:
-                    continue
-                
-                if "resistance" in subject_fvg_base:
-                    if candle.get("high", 0) >= subject_poi_candle.get("high", 0):
-                        return True
-                elif "support" in subject_fvg_base:
-                    if candle.get("low", 999999) <= subject_poi_candle.get("low", 999999):
-                        return True
-        
-        return False
-
-    def check_intruder_violation_between_candles(prev_candle, current_candle, condition_type, candles, if_intruder_value):
-        """Check for intruder candles between two candles based on condition type"""
-        if if_intruder_value != "terminate":
-            return False
-        
-        if not prev_candle or not current_candle:
-            return False
-        
-        prev_num = prev_candle.get("candle_number")
-        current_num = current_candle.get("candle_number")
-        
-        if prev_num is None or current_num is None:
-            return False
-        
-        # Determine the condition type
-        is_behind_condition = "behind" in condition_type.lower()
-        is_beyond_condition = "beyond" in condition_type.lower()
-        
-        if not is_behind_condition:
-            # Only check intruder for "behind" conditions
-            return False
-        
-        # Determine swing types
-        prev_is_swing = is_valid_swing_type(prev_candle.get("swing_type"))
-        current_is_swing = is_valid_swing_type(current_candle.get("swing_type"))
-        
-        # Determine what to check based on swing types
-        check_high = False
-        check_low = False
-        
-        if prev_is_swing:
-            prev_swing_type = normalize_swing(prev_candle.get("swing_type", ""))
-            check_high = "high" in prev_swing_type
-            check_low = "low" in prev_swing_type
-        else:
-            # If not a swing, try to determine from other attributes
-            # Check if it's a FVG candle
-            if is_fvg_match(prev_candle, "fvg"):
-                fvg_base = get_fvg_base_type(prev_candle, "fvg")
-                if fvg_base and "resistance" in fvg_base:
-                    check_high = True
-                elif fvg_base and "support" in fvg_base:
-                    check_low = True
-            elif is_fvg_match(prev_candle, "fvg_c1"):
-                fvg_base = get_fvg_base_type(prev_candle, "fvg_c1")
-                if fvg_base and "resistance" in fvg_base:
-                    check_high = True
-                elif fvg_base and "support" in fvg_base:
-                    check_low = True
-            elif is_fvg_match(prev_candle, "fvg_c3"):
-                fvg_base = get_fvg_base_type(prev_candle, "fvg_c3")
-                if fvg_base and "resistance" in fvg_base:
-                    check_high = True
-                elif fvg_base and "support" in fvg_base:
-                    check_low = True
-        
-        if not check_high and not check_low:
-            return False
-        
-        # Check all candles between prev_candle and current_candle
-        for candle in candles:
-            c_num = candle.get("candle_number")
-            if c_num is None or c_num <= prev_num or c_num >= current_num:
-                continue
-            
-            # Check if this candle violates the "behind" condition
-            if check_high:
-                # For high swings/FVGs, all intervening highs must be lower
-                if candle.get("high", 0) >= prev_candle.get("high", 0):
-                    return True
-            elif check_low:
-                # For low swings/FVGs, all intervening lows must be higher
-                if candle.get("low", 999999) <= prev_candle.get("low", 999999):
-                    return True
-        
-        return False
-
-    def get_fvg_liquidation_candle(fvg_candle, candles):
-        """Get liquidation candle for FVG using FVG-specific liquidation fields"""
-        if not fvg_candle: return None
-        
-        # Determine FVG type
-        fvg_type = None
-        if is_fvg_match(fvg_candle, "fvg_c1"):
-            fvg_type = "fvg_c1"
-        elif is_fvg_match(fvg_candle, "fvg_c3"):
-            fvg_type = "fvg_c3"
-        elif is_fvg_match(fvg_candle, "fvg"):
-            fvg_type = "fvg_c2"
-        
-        if not fvg_type: return None
-        
-        # Get FVG base type
-        fvg_base = get_fvg_base_type(fvg_candle, fvg_type.replace("_c2", ""))
-        if not fvg_base: return None
-        
-        # Find liquidation based on FVG type and base
-        if "resistance" in fvg_base:
-            liq_field = f"{fvg_type}_high_liquidated_by_candle_number"
-            liq_num = fvg_candle.get(liq_field)
-        elif "support" in fvg_base:
-            liq_field = f"{fvg_type}_low_liquidated_by_candle_number"
-            liq_num = fvg_candle.get(liq_field)
-        else:
-            return None
-        
-        if not liq_num: return None
-        
-        # Find the liquidation candle
-        for candle in candles:
-            if candle.get("candle_number") == liq_num:
-                return candle
-        
-        return None
-
-    def check_fvg_mitigation(fvg_candle, candles):
-        """Check if FVG candle is mitigated (liquidated)"""
-        liq_candle = get_fvg_liquidation_candle(fvg_candle, candles)
-        return liq_candle is not None
-
-    def check_fvg_pending_entry(fvg_candle):
-        """Check if FVG candle has pending entry level (not liquidated)"""
-        # Determine FVG type
-        fvg_type = None
-        if is_fvg_match(fvg_candle, "fvg_c1"):
-            fvg_type = "fvg_c1"
-        elif is_fvg_match(fvg_candle, "fvg_c3"):
-            fvg_type = "fvg_c3"
-        elif is_fvg_match(fvg_candle, "fvg"):
-            fvg_type = "fvg_c2"
-        
-        if not fvg_type: return False
-        
-        # Get FVG base type
-        fvg_base = get_fvg_base_type(fvg_candle, fvg_type.replace("_c2", ""))
-        if not fvg_base: return False
-        
-        # Check if liquidation fields exist
-        if "resistance" in fvg_base:
-            liq_field = f"{fvg_type}_high_liquidated_by_candle_number"
-            liq_num = fvg_candle.get(liq_field)
-            return liq_num is None or liq_num == ""
-        elif "support" in fvg_base:
-            liq_field = f"{fvg_type}_low_liquidated_by_candle_number"
-            liq_num = fvg_candle.get(liq_field)
-            return liq_num is None or liq_num == ""
-        
-        return False
-
-    def find_fvg_family_member(candles, reference_candle, target_fvg_type):
-        """Find a FVG family member based on reference candle's fvg_number"""
-        if not reference_candle: return None
-        
-        # Determine reference FVG type and number
-        ref_fvg_type = None
-        ref_fvg_number = None
-        
-        if is_valid_fvg_c1(reference_candle.get("fvg_c1")):
-            ref_fvg_type = "fvg_c1"
-            ref_fvg_number = get_fvg_number(reference_candle, "fvg_c1")
-        elif is_valid_fvg_c3(reference_candle.get("fvg_c3")):
-            ref_fvg_type = "fvg_c3"
-            ref_fvg_number = get_fvg_number(reference_candle, "fvg_c3")
-        elif is_valid_fvg_c2(reference_candle.get("is_fvg")):
-            ref_fvg_type = "fvg"
-            ref_fvg_number = get_fvg_number(reference_candle, "fvg")
-        
-        if not ref_fvg_number: return None
-        
-        # If reference is already the target type, return it
-        if ref_fvg_type == target_fvg_type:
-            return reference_candle
-        
-        # Search for family member with same fvg_number
-        for candle in candles:
-            if candle.get("candle_number") == reference_candle.get("candle_number"):
-                continue
-            
-            # Check if this candle has the target FVG type with matching fvg_number
-            if target_fvg_type == "fvg_c1":
-                if is_valid_fvg_c1(candle.get("fvg_c1")):
-                    candle_fvg_number = get_fvg_number(candle, "fvg_c1")
-                    if candle_fvg_number == ref_fvg_number:
-                        return candle
-            elif target_fvg_type == "fvg_c3":
-                if is_valid_fvg_c3(candle.get("fvg_c3")):
-                    candle_fvg_number = get_fvg_number(candle, "fvg_c3")
-                    if candle_fvg_number == ref_fvg_number:
-                        return candle
-            elif target_fvg_type == "fvg":
-                if is_valid_fvg_c2(candle.get("is_fvg")):
-                    candle_fvg_number = get_fvg_number(candle, "fvg")
-                    if candle_fvg_number == ref_fvg_number:
-                        return candle
-        
-        return None
-
-    def process_second_source_independently(entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name):
-        
-        second_source_candidates = []
-        for key_id, candle_data in config_data.items():
-            if not isinstance(key_id, str) or key_id.endswith("_candle_list"):
-                continue
-            
-            if source_def_name.lower() in key_id.lower():
-                continue
-            
-            if isinstance(candle_data, list) and len(candle_data) >= 5:
-                has_swings = any(c.get("is_swing") for c in candle_data[:10] if isinstance(c, dict))
-                has_swept = any(c.get("swept_by_liquidity") for c in candle_data[:10] if isinstance(c, dict))
-                has_fvg = any(is_valid_fvg_c2(c.get("is_fvg")) or is_valid_fvg_c1(c.get("fvg_c1")) or is_valid_fvg_c3(c.get("fvg_c3")) 
-                            for c in candle_data[:10] if isinstance(c, dict))
-                
-                if has_swings or has_swept or has_fvg:
-                    second_source_candidates.append({
-                        "key_id": key_id,
-                        "candle_data": candle_data,
-                        "has_swings": has_swings,
-                        "has_swept": has_swept,
-                        "has_fvg": has_fvg
-                    })
-        
-        if not second_source_candidates:
-            return None
-        
-        all_second_source_results = []
-        
-        for candidate in second_source_candidates:
-            try:
-                raw_second_candles = candidate["candle_data"]
-                merged_second_candles_map = {}
-                
-                for c in raw_second_candles:
-                    c_num = c.get("candle_number")
-                    if c_num is None: continue
-                    if c_num not in merged_second_candles_map:
-                        merged_second_candles_map[c_num] = c.copy()
-                    else:
-                        for key, value in c.items():
-                            if key not in merged_second_candles_map[c_num] or merged_second_candles_map[c_num][key] in [None, ""]:
-                                merged_second_candles_map[c_num][key] = value
-                            if key == "swing_type" and value:
-                                merged_second_candles_map[c_num][key] = value
-                                merged_second_candles_map[c_num]["is_swing"] = True
-                
-                second_candles = [merged_second_candles_map[num] for num in sorted(merged_second_candles_map.keys())]
-                second_new_candles = [candle.copy() for candle in second_candles]
-                
-                start_search_with = entry_spec.get("start_search_with", "swept_candle").lower()
-                start_search_with_tool = entry_spec.get("start_search_with_tool", {})
-                before_entry = entry_spec.get("before_entry", {})
-                data_selection_value = before_entry.get("data_selection", "all")
-                comm_swings_field = before_entry.get("communicate_only2_swings", "")
-                comm_mode = before_entry.get("swings_communication_condition", "follow_rules")
-                comm_pair = []
-                if comm_swings_field:
-                    parts = comm_swings_field.split("_and_")
-                    if len(parts) == 2: comm_pair = [parts[0].strip(), parts[1].strip()]
-
-                subject_cfg = entry_spec.get("subject", {})
-                if_intruder_value = subject_cfg.get("if_intruder", "skip")
-                record_prices_cfg = entry_spec.get("record_prices", {})
-                poi_target_role = subject_cfg.get("poi", "swept_candle")
-                find_after_key = entry_spec.get("find_entry_after", "").lower()
-                
-                option_raw = entry_spec.get("option", "")
-                option_condition = entry_spec.get("option_condition", "default").lower()
-                
-                valid_option_conditions = ["default", "after_start"]
-                if option_condition not in valid_option_conditions:
-                    option_condition = "default"
-                
-                second_source_items = []
-                second_pending_orders = []
-                second_executed_orders = []
-                
-                for i, candle in enumerate(second_new_candles):
-                    is_swept = candle.get("swept_by_liquidity")
-                    is_swing = is_valid_swing_type(candle.get("swing_type"))
-                    is_fvg_c1 = is_valid_fvg_c1(candle.get("fvg_c1"))
-                    is_fvg_c2 = is_valid_fvg_c2(candle.get("is_fvg"))
-                    is_fvg_c3 = is_valid_fvg_c3(candle.get("fvg_c3"))
-                    
-                    # Check start_search_with criteria - handle fvg_swing
-                    if "fvg_swing" in start_search_with:
-                        if not is_swing: 
-                            continue
-                    elif "swing" in start_search_with and "fvg_swing" not in start_search_with:
-                        if not is_swing: 
-                            continue
-                    elif "fvg_c1" in start_search_with:
-                        if not is_fvg_c1: 
-                            continue
-                    elif "fvg" in start_search_with and "fvg_swing" not in start_search_with:
-                        if not is_fvg_c2: 
-                            continue
-                    elif "fvg_c3" in start_search_with:
-                        if not is_fvg_c3: 
-                            continue
-                    else:
-                        if not is_swept: 
-                            continue
-
-                    c_num = candle.get("candle_number")
-                    ######log(f"Processing candle {c_num}: {start_search_with.upper()} found")
-                    
-                    anchor_swing_type = candle.get("swing_type")
-                    
-                    orig_sweeper_num = candle.get("swept_by_candle_number")
-                    orig_sweeper_candle = next((c for c in second_new_candles if c.get("candle_number") == orig_sweeper_num), None)
-                    if not orig_sweeper_candle:
-                        orig_sweeper_candle, orig_sweeper_num = candle, c_num
-                    orig_sweeper_idx = second_new_candles.index(orig_sweeper_candle)
-                    
-                    acting_sweeper_candle, acting_sweeper_idx, has_acting = None, None, False
-                    if orig_sweeper_candle.get("is_swing"):
-                        acting_sweeper_candle, acting_sweeper_idx, has_acting = orig_sweeper_candle, orig_sweeper_idx, True
-                    else:
-                        allowed = get_allowed_acting_sweeper_types(anchor_swing_type)
-                        for k in range(orig_sweeper_idx + 1, len(second_new_candles)):
-                            cand = second_new_candles[k]
-                            if cand.get("is_swing") and any(normalize_swing(cand.get("swing_type")) == normalize_swing(t) for t in allowed):
-                                acting_sweeper_candle, acting_sweeper_idx, has_acting = cand, k, True
-                                break
-
-                    required_opt = None
-                    if "fvg_c1" in option_raw.lower() or "fvg" in option_raw.lower() or "fvg_c3" in option_raw.lower() or "fvg_swing" in option_raw.lower():
-                        required_opt = option_raw
-                    else:
-                        required_opt = get_opposite_swing_type(anchor_swing_type) if "opposite" in option_raw.lower() else anchor_swing_type
-                    
-                    option_candle, option_idx = None, None
-                    
-                    #log(f"Processing candle {c_num}: Looking for option ({required_opt})...")
-                    
-                    if option_condition == "default":
-                        bound_idx = acting_sweeper_idx if has_acting else orig_sweeper_idx
-                        s_min, s_max = min(i, bound_idx), max(i, bound_idx)
-                        for k in range(s_min + 1, s_max):
-                            if "fvg" in option_raw.lower():
-                                # Check direct match or family member
-                                if is_fvg_match(second_new_candles[k], required_opt, option_candle):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-                                elif "fvg_swing" in option_raw.lower() and is_fvg_swing_candle(second_new_candles[k]):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-                            else:
-                                if is_swing_match(second_new_candles[k], required_opt):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-
-                    elif option_condition == "after_start":
-                        start_idx = i + 1
-                        
-                        for k in range(start_idx, len(second_new_candles)):
-                            if "fvg" in option_raw.lower():
-                                # Check direct match or family member
-                                if is_fvg_match(second_new_candles[k], required_opt, option_candle):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-                                elif "fvg_swing" in option_raw.lower() and is_fvg_swing_candle(second_new_candles[k]):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-                            else:
-                                if is_swing_match(second_new_candles[k], required_opt):
-                                    option_candle, option_idx = second_new_candles[k], k
-                                    break
-
-                    if not option_candle: 
-                        #log(f"Processing candle {c_num}: ✗ No option found ({required_opt})")
-                        continue
-                    
-                    #log(f"Processing candle {c_num}: ✓ Found option at candle {option_candle.get('candle_number')}")
-
-                    search_start = None
-                    if "original_sweeper" in find_after_key:
-                        search_start = orig_sweeper_idx + 1
-                    elif "acting_sweeper" in find_after_key:
-                        if has_acting: search_start = acting_sweeper_idx + 1
-                    elif any(x in find_after_key for x in ["swept_candle", "swing_candle"]):
-                        search_start = i + 1
-                    elif "option" in find_after_key:
-                        search_start = option_idx + 1
-                    elif "fvg_c1" in find_after_key:
-                        if option_candle and is_fvg_match(option_candle, "fvg_c1"):
-                            search_start = option_idx + 1
-                    elif "fvg_c3" in find_after_key:
-                        if option_candle and is_fvg_match(option_candle, "fvg_c3"):
-                            search_start = option_idx + 1
-                    elif "fvg" in find_after_key:
-                        if option_candle and is_fvg_match(option_candle, "fvg"):
-                            search_start = option_idx + 1
-                    elif "fvg_swing" in find_after_key:
-                        if option_candle and is_fvg_swing_candle(option_candle):
-                            search_start = option_idx + 1
-
-                    if search_start is None: 
-                        #log(f"Processing candle {c_num}: ✗ Invalid find_entry_after: {find_after_key}")
-                        continue
-                    
-                    #log(f"Processing candle {c_num}: find_entry_after = '{find_after_key}'")
-
-                    all_met = True
-                    ref_sweeper = acting_sweeper_candle if has_acting else orig_sweeper_candle
-                    condition_history = {
-                        "option": option_candle, 
-                        "sweeper": ref_sweeper, 
-                        "swept": candle, 
-                        "swing": candle,
-                        "swing_candle": candle,
-                        "subject": None
-                    }
-                    
-                    sorted_cond_keys = [k for k in sorted(before_entry.keys()) if k.startswith("swing_")]
-                    temp_search_start, temp_last_idx = search_start, search_start - 1
-                    last_swing_candle = None
-                    prev_swing_candle = None
-                    
-                    def validate_single(cfg, start_from, history, outlaw_behavior="check_further", prev_swing=None):
-                        t_str = cfg.get("swing", "").lower()
-                        c_str = cfg.get("condition", "").lower()
-
-                        base_obj = None
-                        if "sweeper" in t_str:
-                            base_obj = history["sweeper"]
-                        elif "option" in t_str:
-                            base_obj = history["option"]
-                        elif any(x in t_str for x in ["swing_candle", "swept_candle"]):
-                            base_obj = history["swing"]
-                        elif "swing_" in t_str:
-                            bk = t_str.replace("_opposite", "").replace("_identical", "")
-                            base_obj = history.get(bk, {})
-                        else:
-                            base_obj = history.get("swept", {})
-                        
-                        is_fvg_base = is_fvg_family_candle(base_obj, "fvg")
-                        is_fvg_swing_base = is_fvg_swing_candle(base_obj)
-                        
-                        target_type = None
-                        if is_fvg_base:
-                            if "opposite" in t_str:
-                                # Get opposite FVG type
-                                fvg_type = None
-                                if is_fvg_match(base_obj, "fvg_c1"):
-                                    fvg_type = "fvg_c1"
-                                elif is_fvg_match(base_obj, "fvg_c3"):
-                                    fvg_type = "fvg_c3"
-                                elif is_fvg_match(base_obj, "fvg"):
-                                    fvg_type = "fvg"
-                                
-                                if fvg_type:
-                                    fvg_base_val = get_fvg_base_type(base_obj, fvg_type)
-                                    if fvg_base_val and "resistance" in fvg_base_val:
-                                        target_type = f"{fvg_type}_support" if fvg_type != "fvg" else "fvg_support"
-                                    elif fvg_base_val and "support" in fvg_base_val:
-                                        target_type = f"{fvg_type}_resistance" if fvg_type != "fvg" else "fvg_resistance"
-                                    else:
-                                        target_type = t_str
-                                else:
-                                    target_type = t_str
-                            else:
-                                target_type = t_str
-                        elif is_fvg_swing_base:
-                            b_type = base_obj.get("swing_type")
-                            target_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
-                        else:
-                            b_type = base_obj.get("swing_type")
-                            target_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
-
-                        parts = c_str.split('_')
-                        constraints = []
-                        
-                        idx = 0
-                        while idx < len(parts):
-                            mode = parts[idx]
-                            if mode not in ["beyond", "behind", "beyond_fvg", "behind_fvg", 
-                                         "beyond_fvg_c1", "behind_fvg_c1", "beyond_fvg_c3", "behind_fvg_c3"]:
-                                idx += 1
-                                continue
-                                
-                            ref_obj = None
-                            if idx + 1 < len(parts):
-                                next_part = parts[idx+1]
-                                if next_part == "option":
-                                    ref_obj = history.get("option")
-                                    idx += 2
-                                elif next_part == "sweeper":
-                                    ref_obj = history.get("sweeper")
-                                    idx += 2
-                                elif next_part == "swing" or next_part == "swept":
-                                    if idx + 2 < len(parts) and parts[idx+2] == "candle":
-                                        ref_obj = history.get("swing")
-                                        idx += 3
-                                    elif idx + 2 < len(parts):
-                                        target_key = f"swing_{parts[idx+2]}"
-                                        ref_obj = history.get(target_key)
-                                        idx += 3
-                                    else:
-                                        idx += 1
-                            
-                            if ref_obj:
-                                constraints.append((mode, ref_obj))
-                            else:
-                                idx += 1
-
-                        for k in range(start_from, len(second_new_candles)):
-                            kc = second_new_candles[k]
-                            
-                            # Check for FVG family member if target is FVG type
-                            is_match = False
-                            if "fvg_swing" in target_type.lower():
-                                is_match = is_fvg_swing_candle(kc)
-                            elif is_fvg_base or "fvg" in target_type.lower():
-                                # Check for specific FVG type or family member
-                                if "fvg_c1" in target_type.lower():
-                                    # Check direct match or family member
-                                    is_match = is_fvg_match(kc, "fvg_c1", base_obj)
-                                elif "fvg_c3" in target_type.lower():
-                                    is_match = is_fvg_match(kc, "fvg_c3", base_obj)
-                                elif "fvg" in target_type.lower():
-                                    is_match = is_fvg_match(kc, "fvg", base_obj)
-                            else:
-                                is_match = is_swing_match(kc, target_type)
-                            
-                            if not is_match:
-                                continue
-                            
-                            match_all_conditions = True
-                            for mode, ref in constraints:
-                                if mode in ["beyond", "behind"]:
-                                    if "fvg_swing" in target_type.lower():
-                                        # Handle fvg_swing with regular swing conditions
-                                        if mode == "beyond":
-                                            if not check_beyond_condition(kc, ref, target_type):
-                                                match_all_conditions = False
-                                                break
-                                        elif mode == "behind":
-                                            if not check_behind_condition(kc, ref, target_type):
-                                                match_all_conditions = False
-                                                break
-                                    elif is_fvg_base or "fvg" in target_type.lower():
-                                        # Get FVG base type for the current candle
-                                        fvg_type = None
-                                        if is_fvg_match(kc, "fvg_c1"):
-                                            fvg_type = "fvg_c1"
-                                        elif is_fvg_match(kc, "fvg_c3"):
-                                            fvg_type = "fvg_c3"
-                                        elif is_fvg_match(kc, "fvg"):
-                                            fvg_type = "fvg"
-                                        
-                                        fvg_base = get_fvg_base_type(kc, fvg_type) if fvg_type else None
-                                        
-                                        if not fvg_base:
-                                            match_all_conditions = False
-                                            break
-                                            
-                                        if mode == "beyond":
-                                            if not check_beyond_condition_fvg(kc, ref, target_type, fvg_base):
-                                                match_all_conditions = False
-                                                break
-                                        elif mode == "behind":
-                                            if not check_behind_condition_fvg(kc, ref, target_type, fvg_base):
-                                                match_all_conditions = False
-                                                break
-                                    else:
-                                        if mode == "beyond":
-                                            if not check_beyond_condition(kc, ref, target_type):
-                                                match_all_conditions = False
-                                                break
-                                        elif mode == "behind":
-                                            if not check_behind_condition(kc, ref, target_type):
-                                                match_all_conditions = False
-                                                break
-                                elif mode in ["beyond_fvg", "behind_fvg", "beyond_fvg_c1", "behind_fvg_c1", 
-                                           "beyond_fvg_c3", "behind_fvg_c3"]:
-                                    fvg_type = "fvg"
-                                    if "c1" in mode:
-                                        fvg_type = "fvg_c1"
-                                    elif "c3" in mode:
-                                        fvg_type = "fvg_c3"
-                                    
-                                    if "beyond" in mode:
-                                        if not check_beyond_fvg_condition(kc, ref, fvg_type):
-                                            match_all_conditions = False
-                                            break
-                                    elif "behind" in mode:
-                                        if not check_behind_fvg_condition(kc, ref, fvg_type):
-                                            match_all_conditions = False
-                                            break
-                            
-                            if match_all_conditions:
-                                # Check intruder violation for "behind" conditions
-                                # Determine which reference candle to check against based on constraints
-                                for constraint_mode, constraint_ref in constraints:
-                                    if "behind" in constraint_mode:
-                                        # Check intruder violation between constraint_ref and found candle
-                                        intruder_violation = check_intruder_violation_between_candles(
-                                            constraint_ref, kc, constraint_mode, second_new_candles, outlaw_behavior
-                                        )
-                                        if intruder_violation:
-                                            return None, None
-                                
-                                return kc, k
-                            elif outlaw_behavior == "terminate":
-                                return None, None
-                                
-                        return None, None
-
-                    for s_key in sorted_cond_keys:
-                        s_cfg = before_entry[s_key]
-                        if_outlaw_value = s_cfg.get("if_outlaw", "check_further")
-                        if_intruder_value = s_cfg.get("if_intruder", "skip")
-                        
-                        #log(f"Processing candle {c_num}: Searching {s_key} ({s_cfg.get('condition')}) from candle {temp_search_start}...")
-                        
-                        if s_key in comm_pair and comm_mode == "rules_or_opposite":
-                            other_key = comm_pair[1] if s_key == comm_pair[0] else comm_pair[0]
-                            other_cfg = before_entry.get(other_key)
-                            other_outlaw = other_cfg.get("if_outlaw", "check_further") if other_cfg else "check_further"
-                            other_intruder = other_cfg.get("if_intruder", "skip") if other_cfg else "skip"
-                            
-                            found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history, if_outlaw_value, prev_swing_candle)
-                            if not found_c and other_cfg:
-                                found_c, found_idx = validate_single(other_cfg, temp_search_start, condition_history, other_outlaw, prev_swing_candle)
-                            
-                            if found_c:
-                                # Check intruder violation for "behind" conditions
-                                if if_intruder_value == "terminate" or other_intruder == "terminate":
-                                    # Parse condition to find which reference is being used
-                                    condition_str = s_cfg.get("condition", "").lower()
-                                    if "behind" in condition_str:
-                                        # Find which reference is being checked against
-                                        parts = condition_str.split('_')
-                                        for part_idx, part in enumerate(parts):
-                                            if part == "behind":
-                                                if part_idx + 1 < len(parts):
-                                                    ref_name = parts[part_idx + 1]
-                                                    ref_candle = None
-                                                    
-                                                    if ref_name == "option":
-                                                        ref_candle = condition_history.get("option")
-                                                    elif ref_name == "sweeper":
-                                                        ref_candle = condition_history.get("sweeper")
-                                                    elif ref_name == "swing" or ref_name == "swept":
-                                                        if part_idx + 2 < len(parts) and parts[part_idx + 2] == "candle":
-                                                            ref_candle = condition_history.get("swing")
-                                                    elif ref_name.startswith("swing_"):
-                                                        ref_candle = condition_history.get(ref_name)
-                                                    
-                                                    if ref_candle:
-                                                        intruder_violation = check_intruder_violation_between_candles(
-                                                            ref_candle, found_c, condition_str, second_new_candles, "terminate"
-                                                        )
-                                                        if intruder_violation:
-                                                            all_met = False
-                                                            break
-                                
-                                if all_met:
-                                    condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
-                                    prev_swing_candle = found_c
-                                    last_swing_candle = found_c
-                                    #log(f"Processing candle {c_num}: ✓ Found {s_key} at candle {found_c.get('candle_number')}")
-                                else:
-                                    #log(f"Processing candle {c_num}: ✗ Intruder violation for {s_key}")
-                                    all_met = False
-                                    break
-                            else:
-                                #log(f"Processing candle {c_num}: ✗ No {s_key} found ({s_cfg.get('condition')})")
-                                all_met = False
-                                break
-                        else:
-                            found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history, if_outlaw_value, prev_swing_candle)
-                            
-                            if found_c:
-                                # Check intruder violation for "behind" conditions
-                                if if_intruder_value == "terminate":
-                                    # Parse condition to find which reference is being used
-                                    condition_str = s_cfg.get("condition", "").lower()
-                                    if "behind" in condition_str:
-                                        # Find which reference is being checked against
-                                        parts = condition_str.split('_')
-                                        for part_idx, part in enumerate(parts):
-                                            if part == "behind":
-                                                if part_idx + 1 < len(parts):
-                                                    ref_name = parts[part_idx + 1]
-                                                    ref_candle = None
-                                                    
-                                                    if ref_name == "option":
-                                                        ref_candle = condition_history.get("option")
-                                                    elif ref_name == "sweeper":
-                                                        ref_candle = condition_history.get("sweeper")
-                                                    elif ref_name == "swing" or ref_name == "swept":
-                                                        if part_idx + 2 < len(parts) and parts[part_idx + 2] == "candle":
-                                                            ref_candle = condition_history.get("swing")
-                                                    elif ref_name.startswith("swing_"):
-                                                        ref_candle = condition_history.get(ref_name)
-                                                    
-                                                    if ref_candle:
-                                                        intruder_violation = check_intruder_violation_between_candles(
-                                                            ref_candle, found_c, condition_str, second_new_candles, "terminate"
-                                                        )
-                                                        if intruder_violation:
-                                                            all_met = False
-                                                            break
-                                
-                                if all_met:
-                                    condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
-                                    prev_swing_candle = found_c
-                                    last_swing_candle = found_c
-                                    #log(f"Processing candle {c_num}: ✓ Found {s_key} at candle {found_c.get('candle_number')}")
-                                else:
-                                    #log(f"Processing candle {c_num}: ✗ Intruder violation for {s_key}")
-                                    all_met = False
-                                    break
-                            else:
-                                #log(f"Processing candle {c_num}: ✗ No {s_key} found ({s_cfg.get('condition')})")
-                                all_met = False
-                                break
-
-                    if not all_met:
-                        #log(f"Processing candle {c_num}: ✗ FAILED at swing_conditions")
-                        continue
-
-                    # Handle subject POI with family linking
-                    if "swing_candle" in poi_target_role or "swept_candle" in poi_target_role:
-                        poi_candle = candle
-                    elif "option" in poi_target_role:
-                        poi_candle = option_candle
-                    elif "sweeper" in poi_target_role:
-                        poi_candle = ref_sweeper
-                    elif "swing_" in poi_target_role:
-                        lookup_key = poi_target_role.replace("_candle", "")
-                        poi_candle = condition_history.get(lookup_key)
-                    elif "fvg_c1" in poi_target_role or "fvg_c3" in poi_target_role or "fvg" in poi_target_role:
-                        # This is a FVG family POI - we need to find it using family linking
-                        target_fvg_type = normalize_fvg_family(poi_target_role)
-                        
-                        # Try to find based on option or other references
-                        reference_for_family = None
-                        if option_candle and is_fvg_family_candle(option_candle, "fvg"):
-                            reference_for_family = option_candle
-                        elif any(k.startswith("swing_") for k in condition_history):
-                            # Look for any FVG in condition history
-                            for key, cand in condition_history.items():
-                                if key.startswith("swing_") and is_fvg_family_candle(cand, "fvg"):
-                                    reference_for_family = cand
-                                    break
-                        
-                        if reference_for_family:
-                            # Try to find family member
-                            poi_candle = find_fvg_family_member(second_new_candles, reference_for_family, target_fvg_type)
-                            if not poi_candle:
-                                #log(f"Processing candle {c_num}: ✗ Could not find FVG family member {target_fvg_type}")
-                                continue
-                        else:
-                            # Fallback to regular search
-                            poi_candle = None
-                            for k in range(temp_last_idx + 1, len(second_new_candles)):
-                                if is_fvg_match(second_new_candles[k], target_fvg_type):
-                                    poi_candle = second_new_candles[k]
-                                    break
-                            
-                            if not poi_candle:
-                                #log(f"Processing candle {c_num}: ✗ Could not find {poi_target_role}")
-                                continue
-                    else:
-                        poi_candle = candle
-
-                    if if_intruder_value == "terminate" and poi_candle and last_swing_candle and option_candle:
-                        has_intruder = check_intruder_violation(
-                            option_candle, 
-                            last_swing_candle, 
-                            poi_candle, 
-                            second_new_candles, 
-                            if_intruder_value
-                        )
-                        if has_intruder:
-                            #log(f"Processing candle {c_num}: ✗ Intruder violation found")
-                            continue
-
-                    mitigation_found, desc, final_mit_rec = False, "pending entry level", None
-                    if poi_candle:
-                        is_fvg_poi = is_fvg_family_candle(poi_candle, "fvg")
-                        is_fvg_swing_poi = is_fvg_swing_candle(poi_candle)
-                        
-                        if is_fvg_poi:
-                            # Check FVG mitigation using FVG-specific liquidation fields
-                            mitigation_found = check_fvg_mitigation(poi_candle, second_new_candles)
-                            if mitigation_found:
-                                liq_candle = get_fvg_liquidation_candle(poi_candle, second_new_candles)
-                                if liq_candle:
-                                    liq_candle["mitigation_candle"] = True
-                                    poi_candle["mitigated"] = True
-                                    poi_candle["mitigated_by_candle_number"] = liq_candle.get("candle_number")
-                                    final_mit_rec = liq_candle.copy()
-                                    final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                    desc = "mitigated entry"
-                            else:
-                                # Check for pending entry level
-                                if check_fvg_pending_entry(poi_candle):
-                                    poi_candle["pending_entry_level"] = True
-                                    desc = "pending entry level"
-                        elif is_fvg_swing_poi:
-                            p_type = normalize_swing(poi_candle.get("swing_type", ""))
-                            for m_idx in range(temp_last_idx + 1, len(second_new_candles)):
-                                mc, is_mit = second_new_candles[m_idx], False
-                                if "high" in p_type:
-                                    if mc.get("high", 0) >= poi_candle.get("high", 0): is_mit = True
-                                elif "low" in p_type:
-                                    if mc.get("low", 999999) <= poi_candle.get("low", 999999): is_mit = True
-                                
-                                if is_mit:
-                                    mc["mitigation_candle"] = True
-                                    poi_candle["mitigated"] = True
-                                    poi_candle["mitigated_by_candle_number"] = mc.get("candle_number")
-                                    final_mit_rec = mc.copy()
-                                    final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                    mitigation_found, desc = True, "mitigated entry"
-                                    break
-                        else:
-                            p_type = normalize_swing(poi_candle.get("swing_type", ""))
-                            for m_idx in range(temp_last_idx + 1, len(second_new_candles)):
-                                mc, is_mit = second_new_candles[m_idx], False
-                                if "high" in p_type:
-                                    if mc.get("high", 0) >= poi_candle.get("high", 0): is_mit = True
-                                elif "low" in p_type:
-                                    if mc.get("low", 999999) <= poi_candle.get("low", 999999): is_mit = True
-                                
-                                if is_mit:
-                                    mc["mitigation_candle"] = True
-                                    poi_candle["mitigated"] = True
-                                    poi_candle["mitigated_by_candle_number"] = mc.get("candle_number")
-                                    final_mit_rec = mc.copy()
-                                    final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                    mitigation_found, desc = True, "mitigated entry"
-                                    break
-                        
-                        if not mitigation_found and not poi_candle.get("pending_entry_level"): 
-                            poi_candle["pending_entry_level"] = True
-                            desc = "pending entry level"
-                            #log(f"Processing candle {c_num}: ✓ Pattern found - PENDING ENTRY")
-                        else:
-                            #log(f"Processing candle {c_num}: ✓ Pattern found - {desc.upper()}")
-                            log
-
-                        source_timeframe = extract_timeframe_from_key(candidate['key_id'])
-                        found_in_timeframe = tf
-                        
-                        trade_info = {
-                            "symbol": sym,
-                            "description": desc,
-                            "pattern": entry_key,
-                            "signal_from": f"{entry_key}_SECOND_SOURCE_{candidate['key_id']}",
-                            "second_source_key": candidate['key_id'],
-                            "issource": True,
-                            "source_definition": "second_source_source",
-                            "found_in_timeframe": found_in_timeframe,
-                            "timeframe": source_timeframe or tf
-                        }
-                        
-                        for role in ["entry", "exit", "target"]:
-                            r_cfg = record_prices_cfg.get(role, {})
-                            source_role_raw = r_cfg.get("record", "").replace("_candle", "")
-                            if source_role_raw in ["swing", "swing_candle"]: source_role_raw = "swept"
-                            price = get_price_from_cfg(condition_history.get(source_role_raw), r_cfg)
-                            trade_info[role] = price
-                        
-                        ot_cfg = record_prices_cfg.get("order_type_if_entry_swing_is", {})
-                        
-                        # Determine order type based on POI candle type
-                        if is_fvg_poi:
-                            # FVG family candle
-                            fvg_type = None
-                            if is_fvg_match(poi_candle, "fvg_c1"):
-                                fvg_type = "fvg_c1"
-                            elif is_fvg_match(poi_candle, "fvg_c3"):
-                                fvg_type = "fvg_c3"
-                            elif is_fvg_match(poi_candle, "fvg"):
-                                fvg_type = "fvg"
-                            
-                            if fvg_type:
-                                fvg_base = get_fvg_base_type(poi_candle, fvg_type)
-                                if fvg_base:
-                                    if "resistance" in fvg_base:
-                                        trade_info["order_type"] = ot_cfg.get("resistance_fvg")
-                                    elif "support" in fvg_base:
-                                        trade_info["order_type"] = ot_cfg.get("support_fvg")
-                        elif is_fvg_swing_poi:
-                            # FVG swing candle (regular swing)
-                            if "high" in normalize_swing(poi_candle.get("swing_type", "")):
-                                trade_info["order_type"] = ot_cfg.get("swing_higher_high_or_lower_high")
-                            else:
-                                trade_info["order_type"] = ot_cfg.get("swing_lower_low_or_higher_low")
-                        
-                        if mitigation_found:
-                            second_executed_orders.append(trade_info)
-                        else:
-                            second_pending_orders.append(trade_info)
-
-                        pattern_item = {
-                            "pattern_type": f"{entry_key}_SECOND_SOURCE",
-                            "swept_candle_number": candle.get("candle_number"),
-                            "sweeper_candle_number": ref_sweeper.get("candle_number"),
-                            "poi_target_role": poi_target_role,
-                            "start_search_with_tool": start_search_with_tool,
-                            "subject_drawing": subject_cfg.get("drawing", {}),
-                            "option_drawing": entry_spec.get("option_tool", {}),
-                            "swings_drawing": {k: v.get("drawing", {}) for k, v in before_entry.items() if k.startswith("swing_")},
-                            "second_source_key": candidate['key_id'],
-                            "option_condition": option_condition,
-                            "family_linked": True if "fvg" in poi_target_role and reference_for_family else False
-                        }
-
-                        p_keys = []
-                        roles_to_check = [("swept", candle), ("sweeper", ref_sweeper), ("option", option_candle)]
-                        for skey in sorted(condition_history.keys()):
-                            if skey not in ["swept", "sweeper", "option", "subject", "swing", "swing_candle"]: 
-                                roles_to_check.append((skey, condition_history[skey]))
-
-                        for role_name, rc in roles_to_check:
-                            if not rc: continue
-                            c_copy = rc.copy()
-                            c_copy[role_name] = True
-                            if role_name == "option" or role_name.startswith("swing_"):
-                                is_fvg_candle = is_fvg_family_candle(rc, "fvg")
-                                is_fvg_swing_candle_check = is_fvg_swing_candle(rc)
-                                if is_fvg_candle:
-                                    liq_sw = find_liquidation_for_fvg(rc, second_new_candles)
-                                elif is_fvg_swing_candle_check:
-                                    liq_sw = find_liquidation_for_candle(rc, second_new_candles)
-                                else:
-                                    liq_sw = find_liquidation_for_candle(rc, second_new_candles)
-                                
-                                if liq_sw:
-                                    c_copy["is_liquidated"] = True
-                                    c_copy["liquidated_by_candle_number"] = liq_sw.get("candle_number")
-                                    sw_rec = liq_sw.copy()
-                                    sw_rec["is_liquidity"] = True
-                                    sw_rec["liquidated_candle_number"] = rc.get("candle_number")
-                                    sw_rec[f"{role_name}_sweeper"] = True
-                                    p_keys.extend([c_copy, sw_rec]); continue
-                            p_keys.append(c_copy)
-
-                        if final_mit_rec: p_keys.append(final_mit_rec)
-                        pattern_item["pattern_keys"] = p_keys
-                        second_source_items.append(pattern_item)
-                
-                if second_source_items:
-                    filtered_items = filter_data_selection(
-                        second_source_items, 
-                        start_search_with, 
-                        data_selection_value, 
-                        second_candles
-                    )
-                    
-                    result = {
-                        "key_id": candidate['key_id'],
-                        "candle_count": len(second_candles),
-                        "patterns_found": len(second_source_items),
-                        "filtered_patterns": len(filtered_items),
-                        "items": filtered_items,
-                        "pending_orders": second_pending_orders,
-                        "executed_orders": second_executed_orders,
-                        "candles": second_candles,
-                        "chart_files": [f for f in os.listdir(dev_output_dir) 
-                                      if f.lower().endswith('.png') and candidate['key_id'].lower() in f.lower()]
-                    }
-                    
-                    all_second_source_results.append(result)
-            
-            except Exception as e:
-                log
-        
-        return all_second_source_results if all_second_source_results else None
-
-    # ─── Main logic ───────────────────────────────────────────────────────
-    log(f"--- STARTING ENTRY POI CONDITION ANALYSIS: {broker_name} ---")
-
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg: return f"Error: Broker {broker_name} not in dictionary."
-
-    base_folder = cfg.get("BASE_FOLDER")
-    am_data = get_account_management(broker_name)
-    if not am_data: return "Error: accountmanagement.json missing."
-
-    define_candles = am_data.get("chart", {}).get("define_candles", {})
-    entry_poi_root = define_candles.get("entries_poi_condition", {})
-
-    total_entries_found = 0
-    total_second_source_entries = 0
-
-    for apprehend_key, entry_cfg in entry_poi_root.items():
-        if not apprehend_key.startswith("apprehend_"): continue
-        source_def_name = apprehend_key.replace("apprehend_", "")
-        source_def = define_candles.get(source_def_name, {})
-        source_png_filename = source_def.get("filename", "").replace(".json", ".png")
+        if not new_folder_name:
+            return 0
 
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
+            if not os.path.isdir(sym_p): 
+                continue
 
             for tf in os.listdir(sym_p):
                 tf_p = os.path.join(sym_p, tf)
-                if not os.path.isdir(tf_p): continue
+                if not os.path.isdir(tf_p): 
+                    continue
                 
-                dev_output_dir = os.path.join(os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)), sym, tf)
-                config_path = os.path.join(dev_output_dir, "config.json")
-                if not os.path.exists(config_path): continue
+                source_dev_dir = os.path.join(dev_base_path, sym, tf)
+                source_config_path = os.path.join(source_dev_dir, "config.json")
+
+                if not os.path.exists(source_config_path):
+                    continue
+
+                # Target path structure: developers/broker/new_filename/symbol/
+                target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
+                os.makedirs(target_sym_dir, exist_ok=True)
 
                 try:
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
+                    with open(source_config_path, 'r', encoding='utf-8') as f:
+                        src_data = json.load(f)
 
-                    source_key = next((k for k in config_data if source_def_name.lower() in k.lower()), None)
-                    if not source_key: continue
+                    target_config_path = os.path.join(target_sym_dir, "config.json")
+                    if os.path.exists(target_config_path):
+                        with open(target_config_path, 'r', encoding='utf-8') as f:
+                            target_data = json.load(f)
+                    else:
+                        target_data = {}
 
-                    raw_source_candles = config_data.get(source_key)
-                    if not isinstance(raw_source_candles, list): continue
-
-                    merged_candles_map = {}
-                    for c in raw_source_candles:
-                        c_num = c.get("candle_number")
-                        if c_num is None: continue
-                        if c_num not in merged_candles_map:
-                            merged_candles_map[c_num] = c.copy()
-                        else:
-                            for key, value in c.items():
-                                if key not in merged_candles_map[c_num] or merged_candles_map[c_num][key] in [None, ""]:
-                                    merged_candles_map[c_num][key] = value
-                                if key == "swing_type" and value:
-                                    merged_candles_map[c_num][key] = value
-                                    merged_candles_map[c_num]["is_swing"] = True
-
-                    source_candles = [merged_candles_map[num] for num in sorted(merged_candles_map.keys())]
-                    new_candles = [candle.copy() for candle in source_candles]
+                    modified = False
                     
-                    # Process each entry independently
-                    for entry_key, entry_spec in entry_cfg.items():
-                        if not entry_key.startswith("entry_"): continue
-                        new_filename = entry_spec.get("new_filename", "").strip()
-                        if not new_filename: continue
+                    # Create timeframe structure in target config
+                    if tf not in target_data:
+                        target_data[tf] = {}
+                    
+                    for file_key, candles in src_data.items():
+                        clean_key = file_key.lower()
                         
-                        # ─── CHECK SECOND SOURCE PROCESSING FLAG ─────────────────────
-                        process_second_source = entry_spec.get("process_second_source_files", "").strip().lower()
-                        should_process_second_source = (process_second_source == "yes")
-                        
-                        log(f"\n[PROCESSING] Entry: {entry_key} on {sym}/{tf}")
-                        log(f"  Config summary:")
-                        log(f"    start_search_with: '{entry_spec.get('start_search_with', 'swept_candle')}'")
-                        log(f"    option: '{entry_spec.get('option', '')}'")
-                        log(f"    option_condition: '{entry_spec.get('option_condition', 'default')}'")
-                        log(f"    find_entry_after: '{entry_spec.get('find_entry_after', '')}'")
-                        log(f"    second_source_processing: {'ENABLED' if should_process_second_source else 'DISABLED'}")
-                        
-                        # Get save configuration
-                        save_cfg = entry_spec.get("save_to", {}).get("new_filename_folder", {})
-                        chart_cfg = save_cfg.get("save_charts", {})
-                        data_cfg = save_cfg.get("save_data", {})
-                        
-                        chart_folder = chart_cfg.get("folder", "chart")
-                        pending_folder = data_cfg.get("pending_folder", "limit_orders")
-                        mitigated_folder = data_cfg.get("mitigated_folder", "executed_orders")
-                        
-                        # ─── PROCESS main SOURCE (ALWAYS) ─────────────────────
-                        main_items = []
-                        main_pending_orders = []
-                        main_executed_orders = []
-                        
-                        start_search_with = entry_spec.get("start_search_with", "swept_candle").lower()
-                        start_search_with_tool = entry_spec.get("start_search_with_tool", {})
-                        before_entry = entry_spec.get("before_entry", {})
-                        data_selection_value = before_entry.get("data_selection", "all")
-                        comm_swings_field = before_entry.get("communicate_only2_swings", "")
-                        comm_mode = before_entry.get("swings_communication_condition", "follow_rules")
-                        comm_pair = []
-                        if comm_swings_field:
-                            parts = comm_swings_field.split("_and_")
-                            if len(parts) == 2: comm_pair = [parts[0].strip(), parts[1].strip()]
+                        # 1. Exclusion logic
+                        if "candle_list" in clean_key or "candlelist" in clean_key:
+                            continue
 
-                        subject_cfg = entry_spec.get("subject", {})
-                        if_intruder_value = subject_cfg.get("if_intruder", "skip")
-                        record_prices_cfg = entry_spec.get("record_prices", {})
-                        poi_target_role = subject_cfg.get("poi", "swept_candle")
-                        find_after_key = entry_spec.get("find_entry_after", "").lower()
-                        
-                        option_raw = entry_spec.get("option", "")
-                        option_condition = entry_spec.get("option_condition", "default").lower()
-                        
-                        valid_option_conditions = ["default", "after_start"]
-                        if option_condition not in valid_option_conditions:
-                            option_condition = "default"
-                        
-                        stage_failures = {
-                            "start_search_with": 0,
-                            "option": 0,
-                            "find_entry_after": 0,
-                            "swing_conditions": 0,
-                            "intruder": 0
-                        }
-                        total_candles_checked = 0
-                        
-                        for i, candle in enumerate(new_candles):
-                            total_candles_checked += 1
-                            c_num = candle.get("candle_number")
-                            
-                            is_swept = candle.get("swept_by_liquidity")
-                            is_swing = is_valid_swing_type(candle.get("swing_type"))
-                            is_fvg_c1 = is_valid_fvg_c1(candle.get("fvg_c1"))
-                            is_fvg_c2 = is_valid_fvg_c2(candle.get("is_fvg"))
-                            is_fvg_c3 = is_valid_fvg_c3(candle.get("fvg_c3"))
-                            
-                            # Check start_search_with criteria - handle fvg_swing
-                            if "fvg_swing" in start_search_with:
-                                if not is_swing: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
-                            elif "swing" in start_search_with and "fvg_swing" not in start_search_with:
-                                if not is_swing: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
-                            elif "fvg_c1" in start_search_with:
-                                if not is_fvg_c1: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
-                            elif "fvg" in start_search_with and "fvg_swing" not in start_search_with:
-                                if not is_fvg_c2: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
-                            elif "fvg_c3" in start_search_with:
-                                if not is_fvg_c3: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
-                            else:
-                                if not is_swept: 
-                                    stage_failures["start_search_with"] += 1
-                                    continue
+                        # 2. Strict identification
+                        is_primary = (clean_key == source_def_name.lower() or clean_key == raw_filename_base)
+                        is_receiver = (not is_primary and raw_filename_base in clean_key)
 
-                            ######log(f"Processing candle {c_num}: {start_search_with.upper()} found")
-                            
-                            anchor_swing_type = candle.get("swing_type")
-                            
-                            orig_sweeper_num = candle.get("swept_by_candle_number")
-                            orig_sweeper_candle = next((c for c in new_candles if c.get("candle_number") == orig_sweeper_num), None)
-                            if not orig_sweeper_candle:
-                                orig_sweeper_candle, orig_sweeper_num = candle, c_num
-                            orig_sweeper_idx = new_candles.index(orig_sweeper_candle)
-                            
-                            acting_sweeper_candle, acting_sweeper_idx, has_acting = None, None, False
-                            if orig_sweeper_candle.get("is_swing"):
-                                acting_sweeper_candle, acting_sweeper_idx, has_acting = orig_sweeper_candle, orig_sweeper_idx, True
-                            else:
-                                allowed = get_allowed_acting_sweeper_types(anchor_swing_type)
-                                for k in range(orig_sweeper_idx + 1, len(new_candles)):
-                                    cand = new_candles[k]
-                                    if cand.get("is_swing") and any(normalize_swing(cand.get("swing_type")) == normalize_swing(t) for t in allowed):
-                                        acting_sweeper_candle, acting_sweeper_idx, has_acting = cand, k, True
-                                        break
+                        # 3. Filtering - check process_receiver flag
+                        if is_receiver and process_receiver != "yes":
+                            continue
+                        if not is_primary and not is_receiver:
+                            continue
 
-                            # Determine required option type - handle fvg_swing
-                            required_opt = None
-                            if "fvg_c1" in option_raw.lower() or "fvg" in option_raw.lower() or "fvg_c3" in option_raw.lower() or "fvg_swing" in option_raw.lower():
-                                required_opt = option_raw
-                            else:
-                                required_opt = get_opposite_swing_type(anchor_swing_type) if "opposite" in option_raw.lower() else anchor_swing_type
-                            
-                            option_candle, option_idx = None, None
-                            
-                            #log(f"Processing candle {c_num}: Looking for option ({required_opt})...")
-                            
-                            if option_condition == "default":
-                                bound_idx = acting_sweeper_idx if has_acting else orig_sweeper_idx
-                                s_min, s_max = min(i, bound_idx), max(i, bound_idx)
-                                for k in range(s_min + 1, s_max):
-                                    if "fvg" in option_raw.lower():
-                                        # Check direct match or family member
-                                        if is_fvg_match(new_candles[k], required_opt, option_candle):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                                        elif "fvg_swing" in option_raw.lower() and is_fvg_swing_candle(new_candles[k]):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                                    else:
-                                        if is_swing_match(new_candles[k], required_opt):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                            
-                            elif option_condition == "after_start":
-                                start_idx = i + 1
-                                
-                                for k in range(start_idx, len(new_candles)):
-                                    if "fvg" in option_raw.lower():
-                                        # Check direct match or family member
-                                        if is_fvg_match(new_candles[k], required_opt, option_candle):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                                        elif "fvg_swing" in option_raw.lower() and is_fvg_swing_candle(new_candles[k]):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                                    else:
-                                        if is_swing_match(new_candles[k], required_opt):
-                                            option_candle, option_idx = new_candles[k], k
-                                            break
-                            
-                            if not option_candle: 
-                                #log(f"Processing candle {c_num}: ✗ No option found ({required_opt})")
-                                stage_failures["option"] += 1
-                                continue
-                            
-                            #log(f"Processing candle {c_num}: ✓ Found option at candle {option_candle.get('candle_number')}")
-
-                            search_start = None
-                            if "original_sweeper" in find_after_key:
-                                search_start = orig_sweeper_idx + 1
-                            elif "acting_sweeper" in find_after_key:
-                                if has_acting: search_start = acting_sweeper_idx + 1
-                            elif any(x in find_after_key for x in ["swept_candle", "swing_candle"]):
-                                search_start = i + 1
-                            elif "option" in find_after_key:
-                                search_start = option_idx + 1
-                            elif "fvg_c1" in find_after_key:
-                                if option_candle and is_fvg_match(option_candle, "fvg_c1"):
-                                    search_start = option_idx + 1
-                            elif "fvg_c3" in find_after_key:
-                                if option_candle and is_fvg_match(option_candle, "fvg_c3"):
-                                    search_start = option_idx + 1
-                            elif "fvg" in find_after_key:
-                                if option_candle and is_fvg_match(option_candle, "fvg"):
-                                    search_start = option_idx + 1
-                            elif "fvg_swing" in find_after_key:
-                                if option_candle and is_fvg_swing_candle(option_candle):
-                                    search_start = option_idx + 1
-
-                            if search_start is None: 
-                                #log(f"Processing candle {c_num}: ✗ Invalid find_entry_after: {find_after_key}")
-                                stage_failures["find_entry_after"] += 1
-                                continue
-                            
-                            #log(f"Processing candle {c_num}: find_entry_after = '{find_after_key}'")
-
-                            all_met = True
-                            ref_sweeper = acting_sweeper_candle if has_acting else orig_sweeper_candle
-                            condition_history = {
-                                "option": option_candle, 
-                                "sweeper": ref_sweeper, 
-                                "swept": candle, 
-                                "swing": candle,
-                                "swing_candle": candle,
-                                "subject": None
-                            }
-                            
-                            sorted_cond_keys = [k for k in sorted(before_entry.keys()) if k.startswith("swing_")]
-                            temp_search_start, temp_last_idx = search_start, search_start - 1
-                            last_swing_candle = None
-                            prev_swing_candle = None
-                            
-                            def validate_single(cfg, start_from, history, outlaw_behavior="check_further", prev_swing=None):
-                                t_str = cfg.get("swing", "").lower()
-                                c_str = cfg.get("condition", "").lower()
-
-                                base_obj = None
-                                if "sweeper" in t_str:
-                                    base_obj = history["sweeper"]
-                                elif "option" in t_str:
-                                    base_obj = history["option"]
-                                elif any(x in t_str for x in ["swing_candle", "swept_candle"]):
-                                    base_obj = history["swing"]
-                                elif "swing_" in t_str:
-                                    bk = t_str.replace("_opposite", "").replace("_identical", "")
-                                    base_obj = history.get(bk, {})
-                                else:
-                                    base_obj = history.get("swept", {})
-                                
-                                is_fvg_base = is_fvg_family_candle(base_obj, "fvg")
-                                is_fvg_swing_base = is_fvg_swing_candle(base_obj)
-                                
-                                target_type = None
-                                if is_fvg_base:
-                                    if "opposite" in t_str:
-                                        # Get opposite FVG type
-                                        fvg_type = None
-                                        if is_fvg_match(base_obj, "fvg_c1"):
-                                            fvg_type = "fvg_c1"
-                                        elif is_fvg_match(base_obj, "fvg_c3"):
-                                            fvg_type = "fvg_c3"
-                                        elif is_fvg_match(base_obj, "fvg"):
-                                            fvg_type = "fvg"
-                                        
-                                        if fvg_type:
-                                            fvg_base_val = get_fvg_base_type(base_obj, fvg_type)
-                                            if fvg_base_val and "resistance" in fvg_base_val:
-                                                target_type = f"{fvg_type}_support" if fvg_type != "fvg" else "fvg_support"
-                                            elif fvg_base_val and "support" in fvg_base_val:
-                                                target_type = f"{fvg_type}_resistance" if fvg_type != "fvg" else "fvg_resistance"
-                                            else:
-                                                target_type = t_str
-                                        else:
-                                            target_type = t_str
-                                    else:
-                                        target_type = t_str
-                                elif is_fvg_swing_base:
-                                    b_type = base_obj.get("swing_type")
-                                    target_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
-                                else:
-                                    b_type = base_obj.get("swing_type")
-                                    target_type = get_opposite_swing_type(b_type) if "opposite" in t_str else b_type
-
-                                parts = c_str.split('_')
-                                constraints = []
-                                
-                                idx = 0
-                                while idx < len(parts):
-                                    mode = parts[idx]
-                                    if mode not in ["beyond", "behind", "beyond_fvg", "behind_fvg", 
-                                                 "beyond_fvg_c1", "behind_fvg_c1", "beyond_fvg_c3", "behind_fvg_c3"]:
-                                        idx += 1
-                                        continue
-                                        
-                                    ref_obj = None
-                                    if idx + 1 < len(parts):
-                                        next_part = parts[idx+1]
-                                        if next_part == "option":
-                                            ref_obj = history.get("option")
-                                            idx += 2
-                                        elif next_part == "sweeper":
-                                            ref_obj = history.get("sweeper")
-                                            idx += 2
-                                        elif next_part == "swing" or next_part == "swept":
-                                            if idx + 2 < len(parts) and parts[idx+2] == "candle":
-                                                ref_obj = history.get("swing")
-                                                idx += 3
-                                            elif idx + 2 < len(parts):
-                                                target_key = f"swing_{parts[idx+2]}"
-                                                ref_obj = history.get(target_key)
-                                                idx += 3
-                                            else:
-                                                idx += 1
-                                    
-                                    if ref_obj:
-                                        constraints.append((mode, ref_obj))
-                                    else:
-                                        idx += 1
-
-                                for k in range(start_from, len(new_candles)):
-                                    kc = new_candles[k]
-                                    
-                                    # Check for FVG family member if target is FVG type
-                                    is_match = False
-                                    if "fvg_swing" in target_type.lower():
-                                        is_match = is_fvg_swing_candle(kc)
-                                    elif is_fvg_base or "fvg" in target_type.lower():
-                                        # Check for specific FVG type or family member
-                                        if "fvg_c1" in target_type.lower():
-                                            # Check direct match or family member
-                                            is_match = is_fvg_match(kc, "fvg_c1", base_obj)
-                                        elif "fvg_c3" in target_type.lower():
-                                            is_match = is_fvg_match(kc, "fvg_c3", base_obj)
-                                        elif "fvg" in target_type.lower():
-                                            is_match = is_fvg_match(kc, "fvg", base_obj)
-                                    else:
-                                        is_match = is_swing_match(kc, target_type)
-                                    
-                                    if not is_match:
-                                        continue
-                                    
-                                    match_all_conditions = True
-                                    for mode, ref in constraints:
-                                        if mode in ["beyond", "behind"]:
-                                            if "fvg_swing" in target_type.lower():
-                                                # Handle fvg_swing with regular swing conditions
-                                                if mode == "beyond":
-                                                    if not check_beyond_condition(kc, ref, target_type):
-                                                        match_all_conditions = False
-                                                        break
-                                                elif mode == "behind":
-                                                    if not check_behind_condition(kc, ref, target_type):
-                                                        match_all_conditions = False
-                                                        break
-                                            elif is_fvg_base or "fvg" in target_type.lower():
-                                                # Get FVG base type for the current candle
-                                                fvg_type = None
-                                                if is_fvg_match(kc, "fvg_c1"):
-                                                    fvg_type = "fvg_c1"
-                                                elif is_fvg_match(kc, "fvg_c3"):
-                                                    fvg_type = "fvg_c3"
-                                                elif is_fvg_match(kc, "fvg"):
-                                                    fvg_type = "fvg"
-                                                
-                                                fvg_base = get_fvg_base_type(kc, fvg_type) if fvg_type else None
-                                                
-                                                if not fvg_base:
-                                                    match_all_conditions = False
-                                                    break
-                                                    
-                                                if mode == "beyond":
-                                                    if not check_beyond_condition_fvg(kc, ref, target_type, fvg_base):
-                                                        match_all_conditions = False
-                                                        break
-                                                elif mode == "behind":
-                                                    if not check_behind_condition_fvg(kc, ref, target_type, fvg_base):
-                                                        match_all_conditions = False
-                                                        break
-                                            else:
-                                                if mode == "beyond":
-                                                    if not check_beyond_condition(kc, ref, target_type):
-                                                        match_all_conditions = False
-                                                        break
-                                                elif mode == "behind":
-                                                    if not check_behind_condition(kc, ref, target_type):
-                                                        match_all_conditions = False
-                                                        break
-                                        elif mode in ["beyond_fvg", "behind_fvg", "beyond_fvg_c1", "behind_fvg_c1", 
-                                                   "beyond_fvg_c3", "behind_fvg_c3"]:
-                                            fvg_type = "fvg"
-                                            if "c1" in mode:
-                                                fvg_type = "fvg_c1"
-                                            elif "c3" in mode:
-                                                fvg_type = "fvg_c3"
-                                            
-                                            if "beyond" in mode:
-                                                if not check_beyond_fvg_condition(kc, ref, fvg_type):
-                                                    match_all_conditions = False
-                                                    break
-                                            elif "behind" in mode:
-                                                if not check_behind_fvg_condition(kc, ref, fvg_type):
-                                                    match_all_conditions = False
-                                                    break
-                                    
-                                    if match_all_conditions:
-                                        # Check intruder violation for "behind" conditions
-                                        for constraint_mode, constraint_ref in constraints:
-                                            if "behind" in constraint_mode:
-                                                # Check intruder violation between constraint_ref and found candle
-                                                intruder_violation = check_intruder_violation_between_candles(
-                                                    constraint_ref, kc, constraint_mode, new_candles, outlaw_behavior
-                                                )
-                                                if intruder_violation:
-                                                    return None, None
-                                        
-                                        return kc, k
-                                    elif outlaw_behavior == "terminate":
-                                        return None, None
-                                        
-                                return None, None
-
-                            for s_key in sorted_cond_keys:
-                                s_cfg = before_entry[s_key]
-                                if_outlaw_value = s_cfg.get("if_outlaw", "check_further")
-                                if_intruder_value_swing = s_cfg.get("if_intruder", "skip")
-                                
-                                #log(f"Processing candle {c_num}: Searching {s_key} ({s_cfg.get('condition')}) from candle {temp_search_start}...")
-                                
-                                if s_key in comm_pair and comm_mode == "rules_or_opposite":
-                                    other_key = comm_pair[1] if s_key == comm_pair[0] else comm_pair[0]
-                                    other_cfg = before_entry.get(other_key)
-                                    other_outlaw = other_cfg.get("if_outlaw", "check_further") if other_cfg else "check_further"
-                                    other_intruder = other_cfg.get("if_intruder", "skip") if other_cfg else "skip"
-                                    
-                                    found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history, if_outlaw_value, prev_swing_candle)
-                                    if not found_c and other_cfg:
-                                        found_c, found_idx = validate_single(other_cfg, temp_search_start, condition_history, other_outlaw, prev_swing_candle)
-                                    
-                                    if found_c:
-                                        # Check intruder violation for "behind" conditions
-                                        if if_intruder_value_swing == "terminate" or other_intruder == "terminate":
-                                            # Parse condition to find which reference is being used
-                                            condition_str = s_cfg.get("condition", "").lower()
-                                            if "behind" in condition_str:
-                                                # Find which reference is being checked against
-                                                parts = condition_str.split('_')
-                                                for part_idx, part in enumerate(parts):
-                                                    if part == "behind":
-                                                        if part_idx + 1 < len(parts):
-                                                            ref_name = parts[part_idx + 1]
-                                                            ref_candle = None
-                                                            
-                                                            if ref_name == "option":
-                                                                ref_candle = condition_history.get("option")
-                                                            elif ref_name == "sweeper":
-                                                                ref_candle = condition_history.get("sweeper")
-                                                            elif ref_name == "swing" or ref_name == "swept":
-                                                                if part_idx + 2 < len(parts) and parts[part_idx + 2] == "candle":
-                                                                    ref_candle = condition_history.get("swing")
-                                                            elif ref_name.startswith("swing_"):
-                                                                ref_candle = condition_history.get(ref_name)
-                                                            
-                                                            if ref_candle:
-                                                                intruder_violation = check_intruder_violation_between_candles(
-                                                                    ref_candle, found_c, condition_str, new_candles, "terminate"
-                                                                )
-                                                                if intruder_violation:
-                                                                    all_met = False
-                                                                    break
-                                        
-                                        if all_met:
-                                            condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
-                                            prev_swing_candle = found_c
-                                            last_swing_candle = found_c
-                                            #log(f"Processing candle {c_num}: ✓ Found {s_key} at candle {found_c.get('candle_number')}")
-                                        else:
-                                            #log(f"Processing candle {c_num}: ✗ Intruder violation for {s_key}")
-                                            stage_failures["intruder"] += 1
-                                            all_met = False
-                                            break
-                                    else:
-                                        #log(f"Processing candle {c_num}: ✗ No {s_key} found ({s_cfg.get('condition')})")
-                                        stage_failures["swing_conditions"] += 1
-                                        all_met = False
-                                        break
-                                else:
-                                    found_c, found_idx = validate_single(s_cfg, temp_search_start, condition_history, if_outlaw_value, prev_swing_candle)
-                                    
-                                    if found_c:
-                                        # Check intruder violation for "behind" conditions
-                                        if if_intruder_value_swing == "terminate":
-                                            # Parse condition to find which reference is being used
-                                            condition_str = s_cfg.get("condition", "").lower()
-                                            if "behind" in condition_str:
-                                                # Find which reference is being checked against
-                                                parts = condition_str.split('_')
-                                                for part_idx, part in enumerate(parts):
-                                                    if part == "behind":
-                                                        if part_idx + 1 < len(parts):
-                                                            ref_name = parts[part_idx + 1]
-                                                            ref_candle = None
-                                                            
-                                                            if ref_name == "option":
-                                                                ref_candle = condition_history.get("option")
-                                                            elif ref_name == "sweeper":
-                                                                ref_candle = condition_history.get("sweeper")
-                                                            elif ref_name == "swing" or ref_name == "swept":
-                                                                if part_idx + 2 < len(parts) and parts[part_idx + 2] == "candle":
-                                                                    ref_candle = condition_history.get("swing")
-                                                            elif ref_name.startswith("swing_"):
-                                                                ref_candle = condition_history.get(ref_name)
-                                                            
-                                                            if ref_candle:
-                                                                intruder_violation = check_intruder_violation_between_candles(
-                                                                    ref_candle, found_c, condition_str, new_candles, "terminate"
-                                                                )
-                                                                if intruder_violation:
-                                                                    all_met = False
-                                                                    break
-                                        
-                                        if all_met:
-                                            condition_history[s_key], temp_search_start, temp_last_idx = found_c, found_idx + 1, found_idx
-                                            prev_swing_candle = found_c
-                                            last_swing_candle = found_c
-                                            #log(f"Processing candle {c_num}: ✓ Found {s_key} at candle {found_c.get('candle_number')}")
-                                        else:
-                                            #log(f"Processing candle {c_num}: ✗ Intruder violation for {s_key}")
-                                            stage_failures["intruder"] += 1
-                                            all_met = False
-                                            break
-                                    else:
-                                        #log(f"Processing candle {c_num}: ✗ No {s_key} found ({s_cfg.get('condition')})")
-                                        stage_failures["swing_conditions"] += 1
-                                        all_met = False
-                                        break
-
-                            if not all_met:
-                                #log(f"Processing candle {c_num}: ✗ FAILED at swing_conditions")
-                                continue
-
-                            # Handle subject POI with family linking
-                            if "swing_candle" in poi_target_role or "swept_candle" in poi_target_role:
-                                poi_candle = candle
-                            elif "option" in poi_target_role:
-                                poi_candle = option_candle
-                            elif "sweeper" in poi_target_role:
-                                poi_candle = ref_sweeper
-                            elif "swing_" in poi_target_role:
-                                lookup_key = poi_target_role.replace("_candle", "")
-                                poi_candle = condition_history.get(lookup_key)
-                            elif "fvg_c1" in poi_target_role or "fvg_c3" in poi_target_role or "fvg" in poi_target_role:
-                                # This is a FVG family POI - we need to find it using family linking
-                                target_fvg_type = normalize_fvg_family(poi_target_role)
-                                
-                                # Try to find based on option or other references
-                                reference_for_family = None
-                                if option_candle and is_fvg_family_candle(option_candle, "fvg"):
-                                    reference_for_family = option_candle
-                                elif any(k.startswith("swing_") for k in condition_history):
-                                    # Look for any FVG in condition history
-                                    for key, cand in condition_history.items():
-                                        if key.startswith("swing_") and is_fvg_family_candle(cand, "fvg"):
-                                            reference_for_family = cand
-                                            break
-                                
-                                if reference_for_family:
-                                    # Try to find family member
-                                    poi_candle = find_fvg_family_member(new_candles, reference_for_family, target_fvg_type)
-                                    if not poi_candle:
-                                        #log(f"Processing candle {c_num}: ✗ Could not find FVG family member {target_fvg_type}")
-                                        stage_failures["swing_conditions"] += 1
-                                        continue
-                                else:
-                                    # Fallback to regular search
-                                    poi_candle = None
-                                    for k in range(temp_last_idx + 1, len(new_candles)):
-                                        if is_fvg_match(new_candles[k], target_fvg_type):
-                                            poi_candle = new_candles[k]
-                                            break
-                                    
-                                    if not poi_candle:
-                                        #log(f"Processing candle {c_num}: ✗ Could not find {poi_target_role}")
-                                        stage_failures["swing_conditions"] += 1
-                                        continue
-                            else:
-                                poi_candle = candle
-
-                            if if_intruder_value == "terminate" and poi_candle and last_swing_candle and option_candle:
-                                has_intruder = check_intruder_violation(
-                                    option_candle, 
-                                    last_swing_candle, 
-                                    poi_candle, 
-                                    new_candles, 
-                                    if_intruder_value
-                                )
-                                if has_intruder:
-                                    #log(f"Processing candle {c_num}: ✗ Intruder violation found")
-                                    stage_failures["intruder"] += 1
-                                    continue
-
-                            mitigation_found, desc, final_mit_rec = False, "pending entry level", None
-                            if poi_candle:
-                                is_fvg_poi = is_fvg_family_candle(poi_candle, "fvg")
-                                is_fvg_swing_poi = is_fvg_swing_candle(poi_candle)
-                                
-                                if is_fvg_poi:
-                                    # Check FVG mitigation using FVG-specific liquidation fields
-                                    mitigation_found = check_fvg_mitigation(poi_candle, new_candles)
-                                    if mitigation_found:
-                                        liq_candle = get_fvg_liquidation_candle(poi_candle, new_candles)
-                                        if liq_candle:
-                                            liq_candle["mitigation_candle"] = True
-                                            poi_candle["mitigated"] = True
-                                            poi_candle["mitigated_by_candle_number"] = liq_candle.get("candle_number")
-                                            final_mit_rec = liq_candle.copy()
-                                            final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                            desc = "mitigated entry"
-                                    else:
-                                        # Check for pending entry level
-                                        if check_fvg_pending_entry(poi_candle):
-                                            poi_candle["pending_entry_level"] = True
-                                            desc = "pending entry level"
-                                elif is_fvg_swing_poi:
-                                    p_type = normalize_swing(poi_candle.get("swing_type", ""))
-                                    for m_idx in range(temp_last_idx + 1, len(new_candles)):
-                                        mc, is_mit = new_candles[m_idx], False
-                                        if "high" in p_type:
-                                            if mc.get("high", 0) >= poi_candle.get("high", 0): is_mit = True
-                                        elif "low" in p_type:
-                                            if mc.get("low", 999999) <= poi_candle.get("low", 999999): is_mit = True
-                                        
-                                        if is_mit:
-                                            mc["mitigation_candle"] = True
-                                            poi_candle["mitigated"] = True
-                                            poi_candle["mitigated_by_candle_number"] = mc.get("candle_number")
-                                            final_mit_rec = mc.copy()
-                                            final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                            mitigation_found, desc = True, "mitigated entry"
-                                            break
-                                else:
-                                    p_type = normalize_swing(poi_candle.get("swing_type", ""))
-                                    for m_idx in range(temp_last_idx + 1, len(new_candles)):
-                                        mc, is_mit = new_candles[m_idx], False
-                                        if "high" in p_type:
-                                            if mc.get("high", 0) >= poi_candle.get("high", 0): is_mit = True
-                                        elif "low" in p_type:
-                                            if mc.get("low", 999999) <= poi_candle.get("low", 999999): is_mit = True
-                                        
-                                        if is_mit:
-                                            mc["mitigation_candle"] = True
-                                            poi_candle["mitigated"] = True
-                                            poi_candle["mitigated_by_candle_number"] = mc.get("candle_number")
-                                            final_mit_rec = mc.copy()
-                                            final_mit_rec["mitigated_candle_number"] = poi_candle.get("candle_number")
-                                            mitigation_found, desc = True, "mitigated entry"
-                                            break
-                                
-                                if not mitigation_found and not poi_candle.get("pending_entry_level"): 
-                                    poi_candle["pending_entry_level"] = True
-                                    desc = "pending entry level"
-                                    #log(f"Processing candle {c_num}: ✓ Pattern found - PENDING ENTRY")
-                                else:
-                                    #log(f"Processing candle {c_num}: ✓ Pattern found - {desc.upper()}")
-                                    log
-
-                            trade_info = {
-                                "symbol": sym,
-                                "timeframe": tf,
-                                "description": desc,
-                                "pattern": entry_key,
-                                "signal_from": new_filename,
-                                "is_main": True,
-                                "source_definition": "main_source",
-                                "entry": None,
-                                "exit": None,
-                                "target": None,
-                                "order_type": None,
-                                "family_linked": True if "fvg" in poi_target_role and "reference_for_family" in locals() and reference_for_family else False
-                            }
-                            
-                            for role in ["entry", "exit", "target"]:
-                                r_cfg = record_prices_cfg.get(role, {})
-                                source_role_raw = r_cfg.get("record", "").replace("_candle", "")
-                                if source_role_raw in ["swing", "swing_candle"]: source_role_raw = "swept"
-                                price = get_price_from_cfg(condition_history.get(source_role_raw), r_cfg)
-                                trade_info[role] = price
-                            
-                            ot_cfg = record_prices_cfg.get("order_type_if_entry_swing_is", {})
-                            
-                            # Determine order type based on POI candle type
-                            if is_fvg_poi:
-                                # FVG family candle
-                                fvg_type = None
-                                if is_fvg_match(poi_candle, "fvg_c1"):
-                                    fvg_type = "fvg_c1"
-                                elif is_fvg_match(poi_candle, "fvg_c3"):
-                                    fvg_type = "fvg_c3"
-                                elif is_fvg_match(poi_candle, "fvg"):
-                                    fvg_type = "fvg"
-                                
-                                if fvg_type:
-                                    fvg_base = get_fvg_base_type(poi_candle, fvg_type)
-                                    if fvg_base:
-                                        if "resistance" in fvg_base:
-                                            trade_info["order_type"] = ot_cfg.get("resistance_fvg")
-                                        elif "support" in fvg_base:
-                                            trade_info["order_type"] = ot_cfg.get("support_fvg")
-                            elif is_fvg_swing_poi:
-                                # FVG swing candle (regular swing)
-                                if "high" in normalize_swing(poi_candle.get("swing_type", "")):
-                                    trade_info["order_type"] = ot_cfg.get("swing_higher_high_or_lower_high")
-                                else:
-                                    trade_info["order_type"] = ot_cfg.get("swing_lower_low_or_higher_low")
-                            
-                            if mitigation_found:
-                                main_executed_orders.append(trade_info)
-                            else:
-                                main_pending_orders.append(trade_info)
-
-                            total_entries_found += 1
-                            pattern_item = {
-                                "pattern_type": entry_key,
-                                "swept_candle_number": candle.get("candle_number"),
-                                "sweeper_candle_number": ref_sweeper.get("candle_number"),
-                                "poi_target_role": poi_target_role,
-                                "start_search_with_tool": start_search_with_tool,
-                                "subject_drawing": subject_cfg.get("drawing", {}),
-                                "option_drawing": entry_spec.get("option_tool", {}),
-                                "swings_drawing": {k: v.get("drawing", {}) for k, v in before_entry.items() if k.startswith("swing_")},
-                                "is_main": True,
-                                "option_condition": option_condition,
-                                "family_linked": True if "fvg" in poi_target_role and "reference_for_family" in locals() and reference_for_family else False
-                            }
-
-                            p_keys = []
-                            roles_to_check = [("swept", candle), ("sweeper", ref_sweeper), ("option", option_candle)]
-                            for skey in sorted(condition_history.keys()):
-                                if skey not in ["swept", "sweeper", "option", "subject", "swing", "swing_candle"]: 
-                                    roles_to_check.append((skey, condition_history[skey]))
-
-                            for role_name, rc in roles_to_check:
-                                if not rc: continue
-                                c_copy = rc.copy()
-                                c_copy[role_name] = True
-                                if role_name == "option" or role_name.startswith("swing_"):
-                                    is_fvg_candle = is_fvg_family_candle(rc, "fvg")
-                                    is_fvg_swing_candle_check = is_fvg_swing_candle(rc)
-                                    if is_fvg_candle:
-                                        liq_sw = find_liquidation_for_fvg(rc, new_candles)
-                                    elif is_fvg_swing_candle_check:
-                                        liq_sw = find_liquidation_for_candle(rc, new_candles)
-                                    else:
-                                        liq_sw = find_liquidation_for_candle(rc, new_candles)
-                                    
-                                    if liq_sw:
-                                        c_copy["is_liquidated"] = True
-                                        c_copy["liquidated_by_candle_number"] = liq_sw.get("candle_number")
-                                        sw_rec = liq_sw.copy()
-                                        sw_rec["is_liquidity"] = True
-                                        sw_rec["liquidated_candle_number"] = rc.get("candle_number")
-                                        sw_rec[f"{role_name}_sweeper"] = True
-                                        p_keys.extend([c_copy, sw_rec]); continue
-                                p_keys.append(c_copy)
-
-                            if final_mit_rec: p_keys.append(final_mit_rec)
-                            pattern_item["pattern_keys"] = p_keys
-                            main_items.append(pattern_item)
-                        
-                        # Apply data selection filtering for main
-                        filtered_main_items = filter_data_selection(
-                            main_items, start_search_with, data_selection_value, source_candles
-                        )
-                        
-                        log(f"  Stage analysis for {sym}/{tf}:")
-                        log(f"    Total candles checked: {total_candles_checked}")
-                        log(f"    Stage failures breakdown:")
-                        log(f"      start_search_with: {stage_failures['start_search_with']} candles failed")
-                        log(f"      option: {stage_failures['option']} candles failed")
-                        log(f"      find_entry_after: {stage_failures['find_entry_after']} candles failed")
-                        log(f"      swing_conditions: {stage_failures['swing_conditions']} candles failed")
-                        log(f"      intruder: {stage_failures['intruder']} candles failed")
-                        log(f"    Patterns found: {len(main_items)} (before data selection)")
-                        log(f"    Patterns after data_selection='{data_selection_value}': {len(filtered_main_items)}")
-                        
-                        if len(filtered_main_items) > 0:
-                            log(f"    ✓ Found {len(filtered_main_items)} valid patterns")
-                        else:
-                            log(f"    ✗ No patterns found after all filters")
-                        
-                        # ─── PROCESS SECOND SOURCE (CONDITIONALLY) ─────────────────────
-                        second_source_results = None
-                        if should_process_second_source:
-                            second_source_results = process_second_source_independently(
-                                entry_spec, config_data, entry_key, sym, tf, dev_output_dir, source_def_name
+                        # Process identify definitions if configured
+                        if identify_config:
+                            # Create processed data with marked definitions
+                            processed_candles = identify_definitions(
+                                {file_key: candles}, 
+                                identify_config, 
+                                source_def_name, 
+                                raw_filename_base
                             )
-                        
-                        # ─── SAVE ALL RESULTS TO CONFIG.JSON ─────────────────────
-                        entry_output_dir = os.path.join(os.path.dirname(base_folder), "developers", broker_name, new_filename)
-                        os.makedirs(entry_output_dir, exist_ok=True)
-                        
-                        config_structure = {
-                            "metadata": {
-                                "entry_name": entry_key,
-                                "broker": broker_name,
-                                "symbol": sym,
-                                "base_timeframe": tf,
-                                "source_definition": source_def_name,
-                                "processed_at": datetime.now(lagos_tz).isoformat(),
-                                "save_config": {
-                                    "chart_folder": chart_folder,
-                                    "pending_folder": pending_folder,
-                                    "mitigated_folder": mitigated_folder
-                                },
-                                "second_source_processing": "enabled" if should_process_second_source else "disabled",
-                                "process_second_source_files": process_second_source,
-                                "option_condition": option_condition,
-                                "stage_analysis": {
-                                    "total_candles_checked": total_candles_checked,
-                                    "stage_failures": stage_failures,
-                                    "patterns_before_selection": len(main_items),
-                                    "patterns_after_selection": len(filtered_main_items)
-                                }
-                            },
-                            "main_source": {},
-                            "second_source_sources": {},
-                            "source_candles": [c.copy() for c in source_candles]
-                        }
-                        
-                        if filtered_main_items:
-                            config_structure["main_source"] = {
-                                "patterns": filtered_main_items,
-                                "pending_orders": main_pending_orders,
-                                "executed_orders": main_executed_orders,
-                                "patterns_count": len(filtered_main_items),
-                                "pending_count": len(main_pending_orders),
-                                "executed_count": len(main_executed_orders)
-                            }
-                        
-                        if second_source_results:
-                            for ss_result in second_source_results:
-                                if ss_result["filtered_patterns"] > 0:
-                                    total_second_source_entries += ss_result["filtered_patterns"]
-                                    
-                                    second_source_key = ss_result["key_id"]
-                                    safe_key = second_source_key.replace("/", "_").replace("\\", "_")
-                                    
-                                    config_structure["second_source_sources"][safe_key] = {
-                                        "original_key": second_source_key,
-                                        "patterns": ss_result["items"],
-                                        "pending_orders": ss_result["pending_orders"],
-                                        "executed_orders": ss_result["executed_orders"],
-                                        "patterns_count": ss_result["filtered_patterns"],
-                                        "pending_count": len(ss_result["pending_orders"]),
-                                        "executed_count": len(ss_result["executed_orders"]),
-                                        "candle_count": ss_result["candle_count"],
-                                        "chart_files": ss_result["chart_files"]
-                                    }
-                        
-                        config_path = os.path.join(entry_output_dir, "config.json")
-                        with open(config_path, 'w', encoding='utf-8') as f:
-                            json.dump(config_structure, f, indent=4, default=str)
-                        
-                        log(f"  ✓ Saved all data to config.json")
-                        
-                        # ─── SAVE COLLECTIVE PRICE RECORDS ─────────────────────
-                        pending_dir = os.path.join(entry_output_dir, pending_folder)
-                        mitigated_dir = os.path.join(entry_output_dir, mitigated_folder)
-                        os.makedirs(pending_dir, exist_ok=True)
-                        os.makedirs(mitigated_dir, exist_ok=True)
-                        
-                        if main_pending_orders:
-                            main_pending_file = os.path.join(pending_dir, f"main_{pending_folder}.json")
-                            with open(main_pending_file, 'w', encoding='utf-8') as f:
-                                json.dump(main_pending_orders, f, indent=4, default=str)
-                        
-                        if main_executed_orders:
-                            main_executed_file = os.path.join(mitigated_dir, f"main_{mitigated_folder}.json")
-                            with open(main_executed_file, 'w', encoding='utf-8') as f:
-                                json.dump(main_executed_orders, f, indent=4, default=str)
-                        
-                        if second_source_results:
-                            second_source_pending_orders_all = []
-                            second_source_executed_orders_all = []
-                            
-                            for ss_result in second_source_results:
-                                if ss_result["pending_orders"]:
-                                    second_source_pending_orders_all.extend(ss_result["pending_orders"])
-                                if ss_result["executed_orders"]:
-                                    second_source_executed_orders_all.extend(ss_result["executed_orders"])
-                            
-                            if second_source_pending_orders_all:
-                                second_source_pending_file = os.path.join(pending_dir, f"second_source_{pending_folder}.json")
-                                with open(second_source_pending_file, 'w', encoding='utf-8') as f:
-                                    json.dump(second_source_pending_orders_all, f, indent=4, default=str)
-                            
-                            if second_source_executed_orders_all:
-                                second_source_executed_file = os.path.join(mitigated_dir, f"second_source_{mitigated_folder}.json")
-                                with open(second_source_executed_file, 'w', encoding='utf-8') as f:
-                                    json.dump(second_source_executed_orders_all, f, indent=4, default=str)
-                        
-                        # ─── SAVE CHARTS ──────
-                        chart_dir = os.path.join(entry_output_dir, chart_folder, sym)
-                        os.makedirs(chart_dir, exist_ok=True)
-                        
-                        if filtered_main_items:
-                            src_png_path = os.path.join(dev_output_dir, source_png_filename)
-                            if not os.path.exists(src_png_path): 
-                                src_png_path = os.path.join(dev_output_dir, f"{source_key}.png")
-                            
-                            if os.path.exists(src_png_path):
-                                img = cv2.imread(src_png_path)
-                                if img is not None:
-                                    overlay, h, w = img.copy(), img.shape[0], img.shape[1]
-                                    for item in filtered_main_items:
-                                        pk_list = item.get("pattern_keys", [])
-                                        mit_c = next((pk for pk in pk_list if pk.get("mitigation_candle")), None)
-                                        
-                                        start_search_tool_cfg = item.get("start_search_with_tool", {})
-                                        if start_search_tool_cfg:
-                                            swept_candle_num = item.get("swept_candle_number")
-                                            swept_candle = next((pk for pk in pk_list if pk.get("candle_number") == swept_candle_num and pk.get("swept")), None)
-                                            if swept_candle:
-                                                tool = start_search_tool_cfg.get("tool")
-                                                ct = swept_candle.get("candle_top")
-                                                cb = swept_candle.get("candle_bottom")
-                                                cl = swept_candle.get("candle_left")
-                                                if all(v is not None for v in [ct, cb, cl]):
-                                                    is_fvg_swept = is_fvg_family_candle(swept_candle, "fvg")
-                                                    is_fvg_swing_swept = is_fvg_swing_candle(swept_candle)
-                                                    if is_fvg_swept:
-                                                        liq_sw = find_liquidation_for_fvg(swept_candle, new_candles)
-                                                    elif is_fvg_swing_swept:
-                                                        liq_sw = find_liquidation_for_candle(swept_candle, new_candles)
-                                                    else:
-                                                        liq_sw = find_liquidation_for_candle(swept_candle, new_candles)
-                                                    
-                                                    rb = int(w)
-                                                    
-                                                    if start_search_tool_cfg.get("stop_at_its") == "liquidator" and liq_sw:
-                                                        liq_candle_left = liq_sw.get("candle_left")
-                                                        if liq_candle_left is not None:
-                                                            rb = int(liq_candle_left)
-                                                    
-                                                    # Determine which price to use based on candle type
-                                                    st = normalize_swing(swept_candle.get("swing_type", ""))
-                                                    is_fvg_candle = is_fvg_family_candle(swept_candle, "fvg")
-                                                    
-                                                    if is_fvg_candle:
-                                                        # FVG family candle - use resistance_fvg or support_fvg
-                                                        fvg_type = None
-                                                        if is_fvg_match(swept_candle, "fvg_c1"):
-                                                            fvg_type = "fvg_c1"
-                                                        elif is_fvg_match(swept_candle, "fvg_c3"):
-                                                            fvg_type = "fvg_c3"
-                                                        elif is_fvg_match(swept_candle, "fvg"):
-                                                            fvg_type = "fvg"
-                                                        
-                                                        fvg_base = get_fvg_base_type(swept_candle, fvg_type) if fvg_type else None
-                                                        
-                                                        if fvg_base:
-                                                            if "resistance" in fvg_base:
-                                                                field = start_search_tool_cfg.get("resistance_fvg", "high_price")
-                                                                ly = cb if field == "low_price" else ct
-                                                            elif "support" in fvg_base:
-                                                                field = start_search_tool_cfg.get("support_fvg", "low_price")
-                                                                ly = ct if field == "high_price" else cb
-                                                    elif is_fvg_swing_swept:
-                                                        # FVG swing candle (regular swing)
-                                                        if "high" in st:
-                                                            field = start_search_tool_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                            ly = cb if field == "low_price" else ct
-                                                        elif "low" in st:
-                                                            field = start_search_tool_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                            ly = ct if field == "high_price" else cb
-                                                    else:
-                                                        # Regular swing candle
-                                                        if "high" in st:
-                                                            field = start_search_tool_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                            ly = cb if field == "low_price" else ct
-                                                        elif "low" in st:
-                                                            field = start_search_tool_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                            ly = ct if field == "high_price" else cb
-                                                    
-                                                    if tool == "box": 
-                                                        cv2.rectangle(overlay, (int(cl), int(ct)), (rb, int(cb)), (255, 0, 0), -1)
-                                                    elif tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                        if ly is not None: 
-                                                            draw_line_logic(overlay, cl, rb, ly, tool, color=(255, 0, 0))
-                                        
-                                        for role_prefix in ["option", "swing_"]:
-                                            role_keys = [pk for pk in pk_list if any(k.startswith(role_prefix) and pk.get(k) is True for k in pk.keys())]
-                                            for r_candle in role_keys:
-                                                act_r = next((k for k in r_candle.keys() if (k.startswith(role_prefix) and r_candle[k] is True)), None)
-                                                d_cfg = item.get("option_drawing", {}) if act_r == "option" else item.get("swings_drawing", {}).get(act_r, {})
-                                                tool, ct, cb, cl = d_cfg.get("tool"), r_candle.get("candle_top"), r_candle.get("candle_bottom"), r_candle.get("candle_left")
-                                                if any(v is None for v in [ct, cb, cl]): continue
-                                                rb = int(w)
-                                                
-                                                # Check for FVG liquidation for drawing stop
-                                                is_fvg_candle_role = is_fvg_family_candle(r_candle, "fvg")
-                                                if d_cfg.get("stop_at_its") == "liquidator":
-                                                    if is_fvg_candle_role:
-                                                        liq_sw = find_liquidation_for_fvg(r_candle, new_candles)
-                                                    else:
-                                                        liq_sw = find_liquidation_for_candle(r_candle, new_candles)
-                                                    
-                                                    if liq_sw:
-                                                        liq_candle_left = liq_sw.get("candle_left")
-                                                        if liq_candle_left is not None:
-                                                            rb = int(liq_candle_left)
-                                                
-                                                # Determine which price to use based on candle type
-                                                st = normalize_swing(r_candle.get("swing_type", ""))
-                                                is_fvg_candle_role = is_fvg_family_candle(r_candle, "fvg")
-                                                is_fvg_swing_candle_role = is_fvg_swing_candle(r_candle)
-                                                
-                                                if is_fvg_candle_role:
-                                                    # FVG family candle - use resistance_fvg or support_fvg
-                                                    fvg_type = None
-                                                    if is_fvg_match(r_candle, "fvg_c1"):
-                                                        fvg_type = "fvg_c1"
-                                                    elif is_fvg_match(r_candle, "fvg_c3"):
-                                                        fvg_type = "fvg_c3"
-                                                    elif is_fvg_match(r_candle, "fvg"):
-                                                        fvg_type = "fvg"
-                                                    
-                                                    fvg_base = get_fvg_base_type(r_candle, fvg_type) if fvg_type else None
-                                                    
-                                                    if fvg_base:
-                                                        if "resistance" in fvg_base:
-                                                            field = d_cfg.get("resistance_fvg", "high_price")
-                                                            ly = cb if field == "low_price" else ct
-                                                        elif "support" in fvg_base:
-                                                            field = d_cfg.get("support_fvg", "low_price")
-                                                            ly = ct if field == "high_price" else cb
-                                                elif is_fvg_swing_candle_role:
-                                                    # FVG swing candle (regular swing)
-                                                    if "high" in st:
-                                                        field = d_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                        ly = cb if field == "low_price" else ct
-                                                    elif "low" in st:
-                                                        field = d_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                        ly = ct if field == "high_price" else cb
-                                                else:
-                                                    # Regular swing candle
-                                                    if "high" in st:
-                                                        field = d_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                        ly = cb if field == "low_price" else ct
-                                                    elif "low" in st:
-                                                        field = d_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                        ly = ct if field == "high_price" else cb
-                                                
-                                                if tool == "box": 
-                                                    cv2.rectangle(overlay, (int(cl), int(ct)), (rb, int(cb)), (0, 0, 0), -1)
-                                                elif tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                    if ly is not None: 
-                                                        draw_line_logic(overlay, cl, rb, ly, tool)
-
-                                        poi_target_role_clean = item.get("poi_target_role", "swept")
-                                        if any(x in poi_target_role_clean for x in ["swing_candle", "swept_candle"]): search_flag = "swept"
-                                        elif "swing_" in poi_target_role_clean: search_flag = poi_target_role_clean.replace("_candle", "")
-                                        else: search_flag = poi_target_role_clean
-                                        
-                                        poi_draw = next((pk for pk in pk_list if pk.get(search_flag)), None)
-                                        if poi_draw:
-                                            sd_cfg = item.get("subject_drawing", {})
-                                            s_tool, sct, scb, scl = sd_cfg.get("tool", "box"), poi_draw.get("candle_top"), poi_draw.get("candle_bottom"), poi_draw.get("candle_left")
-                                            s_right = int(mit_c.get("candle_left")) if mit_c and mit_c.get("candle_left") else int(w)
-                                            if all(v is not None for v in [sct, scb, scl]):
-                                                s_st = normalize_swing(poi_draw.get("swing_type", ""))
-                                                is_fvg_poi_draw = is_fvg_family_candle(poi_draw, "fvg")
-                                                is_fvg_swing_poi_draw = is_fvg_swing_candle(poi_draw)
-                                                
-                                                if is_fvg_poi_draw:
-                                                    # FVG family candle - use resistance_fvg or support_fvg
-                                                    fvg_type = None
-                                                    if is_fvg_match(poi_draw, "fvg_c1"):
-                                                        fvg_type = "fvg_c1"
-                                                    elif is_fvg_match(poi_draw, "fvg_c3"):
-                                                        fvg_type = "fvg_c3"
-                                                    elif is_fvg_match(poi_draw, "fvg"):
-                                                        fvg_type = "fvg"
-                                                    
-                                                    fvg_base = get_fvg_base_type(poi_draw, fvg_type) if fvg_type else None
-                                                    
-                                                    if fvg_base:
-                                                        if "resistance" in fvg_base:
-                                                            field = sd_cfg.get("resistance_fvg", "high_price")
-                                                            s_ly = scb if field == "low_price" else sct
-                                                        elif "support" in fvg_base:
-                                                            field = sd_cfg.get("support_fvg", "low_price")
-                                                            s_ly = sct if field == "high_price" else scb
-                                                elif is_fvg_swing_poi_draw:
-                                                    # FVG swing candle (regular swing)
-                                                    if "high" in s_st:
-                                                        field = sd_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                        s_ly = scb if field == "low_price" else sct
-                                                    elif "low" in s_st:
-                                                        field = sd_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                        s_ly = sct if field == "high_price" else scb
-                                                else:
-                                                    # Regular swing candle
-                                                    if "high" in s_st:
-                                                        field = sd_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                        s_ly = scb if field == "low_price" else sct
-                                                    elif "low" in s_st:
-                                                        field = sd_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                        s_ly = sct if field == "high_price" else scb
-                                                
-                                                if s_tool == "box":
-                                                    cv2.rectangle(overlay, (int(scl), int(sct)), (s_right, int(scb)), (0, 0, 0), -1)
-                                                elif s_tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                    if s_ly is not None: 
-                                                        draw_line_logic(overlay, scl, s_right, s_ly, s_tool)
-
-                                    img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
-                                    chart_path = os.path.join(chart_dir, f"{tf}__main.png")
-                                    cv2.imwrite(chart_path, img)
-                                    log(f"  ✓ Saved main chart to {chart_path}")
-                        
-                        if second_source_results:
-                            for ss_result in second_source_results:
-                                if ss_result["filtered_patterns"] > 0 and ss_result["chart_files"]:
-                                    chart_file = ss_result["chart_files"][0]
-                                    chart_path = os.path.join(dev_output_dir, chart_file)
-                                    
-                                    if os.path.exists(chart_path):
-                                        second_source_key = ss_result["key_id"]
-                                        safe_key = second_source_key.replace("/", "_").replace("\\", "_")
-                                        
-                                        new_chart_name = f"{tf}_{safe_key}.png"
-                                        new_chart_path = os.path.join(chart_dir, new_chart_name)
-                                        shutil.copy2(chart_path, new_chart_path)
-                                        
-                                        img = cv2.imread(chart_path)
-                                        if img is not None:
-                                            overlay, h, w = img.copy(), img.shape[0], img.shape[1]
-                                            for item in ss_result["items"]:
-                                                pk_list = item.get("pattern_keys", [])
-                                                mit_c = next((pk for pk in pk_list if pk.get("mitigation_candle")), None)
-                                                
-                                                start_search_tool_cfg = item.get("start_search_with_tool", {})
-                                                if start_search_tool_cfg:
-                                                    swept_candle_num = item.get("swept_candle_number")
-                                                    swept_candle = next((pk for pk in pk_list if pk.get("candle_number") == swept_candle_num and pk.get("swept")), None)
-                                                    if swept_candle:
-                                                        tool = start_search_tool_cfg.get("tool")
-                                                        ct = swept_candle.get("candle_top")
-                                                        cb = swept_candle.get("candle_bottom")
-                                                        cl = swept_candle.get("candle_left")
-                                                        if all(v is not None for v in [ct, cb, cl]):
-                                                            is_fvg_swept = is_fvg_family_candle(swept_candle, "fvg")
-                                                            is_fvg_swing_swept = is_fvg_swing_candle(swept_candle)
-                                                            if is_fvg_swept:
-                                                                liq_sw = find_liquidation_for_fvg(swept_candle, ss_result["candles"])
-                                                            elif is_fvg_swing_swept:
-                                                                liq_sw = find_liquidation_for_candle(swept_candle, ss_result["candles"])
-                                                            else:
-                                                                liq_sw = find_liquidation_for_candle(swept_candle, ss_result["candles"])
-                                                            
-                                                            rb = int(w)
-                                                            
-                                                            if start_search_tool_cfg.get("stop_at_its") == "liquidator" and liq_sw:
-                                                                liq_candle_left = liq_sw.get("candle_left")
-                                                                if liq_candle_left is not None:
-                                                                    rb = int(liq_candle_left)
-                                                            
-                                                            # Determine which price to use based on candle type
-                                                            st = normalize_swing(swept_candle.get("swing_type", ""))
-                                                            is_fvg_candle = is_fvg_family_candle(swept_candle, "fvg")
-                                                            
-                                                            if is_fvg_candle:
-                                                                # FVG family candle - use resistance_fvg or support_fvg
-                                                                fvg_type = None
-                                                                if is_fvg_match(swept_candle, "fvg_c1"):
-                                                                    fvg_type = "fvg_c1"
-                                                                elif is_fvg_match(swept_candle, "fvg_c3"):
-                                                                    fvg_type = "fvg_c3"
-                                                                elif is_fvg_match(swept_candle, "fvg"):
-                                                                    fvg_type = "fvg"
-                                                                
-                                                                fvg_base = get_fvg_base_type(swept_candle, fvg_type) if fvg_type else None
-                                                                
-                                                                if fvg_base:
-                                                                    if "resistance" in fvg_base:
-                                                                        field = start_search_tool_cfg.get("resistance_fvg", "high_price")
-                                                                        ly = cb if field == "low_price" else ct
-                                                                    elif "support" in fvg_base:
-                                                                        field = start_search_tool_cfg.get("support_fvg", "low_price")
-                                                                        ly = ct if field == "high_price" else cb
-                                                            elif is_fvg_swing_swept:
-                                                                # FVG swing candle (regular swing)
-                                                                if "high" in st:
-                                                                    field = start_search_tool_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                    ly = cb if field == "low_price" else ct
-                                                                elif "low" in st:
-                                                                    field = start_search_tool_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                    ly = ct if field == "high_price" else cb
-                                                            else:
-                                                                # Regular swing candle
-                                                                if "high" in st:
-                                                                    field = start_search_tool_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                    ly = cb if field == "low_price" else ct
-                                                                elif "low" in st:
-                                                                    field = start_search_tool_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                    ly = ct if field == "high_price" else cb
-                                                            
-                                                            if tool == "box": 
-                                                                cv2.rectangle(overlay, (int(cl), int(ct)), (rb, int(cb)), (255, 0, 0), -1)
-                                                            elif tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                                if ly is not None: 
-                                                                    draw_line_logic(overlay, cl, rb, ly, tool, color=(255, 0, 0))
-                                                
-                                                for role_prefix in ["option", "swing_"]:
-                                                    role_keys = [pk for pk in pk_list if any(k.startswith(role_prefix) and pk.get(k) is True for k in pk.keys())]
-                                                    for r_candle in role_keys:
-                                                        act_r = next((k for k in r_candle.keys() if (k.startswith(role_prefix) and r_candle[k] is True)), None)
-                                                        d_cfg = item.get("option_drawing", {}) if act_r == "option" else item.get("swings_drawing", {}).get(act_r, {})
-                                                        tool, ct, cb, cl = d_cfg.get("tool"), r_candle.get("candle_top"), r_candle.get("candle_bottom"), r_candle.get("candle_left")
-                                                        if any(v is not None for v in [ct, cb, cl]): continue
-                                                        rb = int(w)
-                                                        
-                                                        # Check for FVG liquidation for drawing stop
-                                                        is_fvg_candle_role = is_fvg_family_candle(r_candle, "fvg")
-                                                        if d_cfg.get("stop_at_its") == "liquidator":
-                                                            if is_fvg_candle_role:
-                                                                liq_sw = find_liquidation_for_fvg(r_candle, ss_result["candles"])
-                                                            else:
-                                                                liq_sw = find_liquidation_for_candle(r_candle, ss_result["candles"])
-                                                            
-                                                            if liq_sw:
-                                                                liq_candle_left = liq_sw.get("candle_left")
-                                                                if liq_candle_left is not None:
-                                                                    rb = int(liq_candle_left)
-                                                        
-                                                        # Determine which price to use based on candle type
-                                                        st = normalize_swing(r_candle.get("swing_type", ""))
-                                                        is_fvg_candle_role = is_fvg_family_candle(r_candle, "fvg")
-                                                        is_fvg_swing_candle_role = is_fvg_swing_candle(r_candle)
-                                                        
-                                                        if is_fvg_candle_role:
-                                                            # FVG family candle - use resistance_fvg or support_fvg
-                                                            fvg_type = None
-                                                            if is_fvg_match(r_candle, "fvg_c1"):
-                                                                fvg_type = "fvg_c1"
-                                                            elif is_fvg_match(r_candle, "fvg_c3"):
-                                                                fvg_type = "fvg_c3"
-                                                            elif is_fvg_match(r_candle, "fvg"):
-                                                                fvg_type = "fvg"
-                                                            
-                                                            fvg_base = get_fvg_base_type(r_candle, fvg_type) if fvg_type else None
-                                                            
-                                                            if fvg_base:
-                                                                if "resistance" in fvg_base:
-                                                                    field = d_cfg.get("resistance_fvg", "high_price")
-                                                                    ly = cb if field == "low_price" else ct
-                                                                elif "support" in fvg_base:
-                                                                    field = d_cfg.get("support_fvg", "low_price")
-                                                                    ly = ct if field == "high_price" else cb
-                                                        elif is_fvg_swing_candle_role:
-                                                            # FVG swing candle (regular swing)
-                                                            if "high" in st:
-                                                                field = d_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                ly = cb if field == "low_price" else ct
-                                                            elif "low" in st:
-                                                                field = d_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                ly = ct if field == "high_price" else cb
-                                                        else:
-                                                            # Regular swing candle
-                                                            if "high" in st:
-                                                                field = d_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                ly = cb if field == "low_price" else ct
-                                                            elif "low" in st:
-                                                                field = d_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                ly = ct if field == "high_price" else cb
-                                                        
-                                                        if tool == "box": 
-                                                            cv2.rectangle(overlay, (int(cl), int(ct)), (rb, int(cb)), (0, 0, 255), -1)
-                                                        elif tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                            if ly is not None: 
-                                                                draw_line_logic(overlay, cl, rb, ly, tool, color=(0, 0, 255))
-
-                                                poi_target_role_clean = item.get("poi_target_role", "swept")
-                                                if any(x in poi_target_role_clean for x in ["swing_candle", "swept_candle"]): search_flag = "swept"
-                                                elif "swing_" in poi_target_role_clean: search_flag = poi_target_role_clean.replace("_candle", "")
-                                                else: search_flag = poi_target_role_clean
-                                                
-                                                poi_draw = next((pk for pk in pk_list if pk.get(search_flag)), None)
-                                                if poi_draw:
-                                                    sd_cfg = item.get("subject_drawing", {})
-                                                    s_tool, sct, scb, scl = sd_cfg.get("tool", "box"), poi_draw.get("candle_top"), poi_draw.get("candle_bottom"), poi_draw.get("candle_left")
-                                                    s_right = int(mit_c.get("candle_left")) if mit_c and mit_c.get("candle_left") else int(w)
-                                                    if all(v is not None for v in [sct, scb, scl]):
-                                                        s_st = normalize_swing(poi_draw.get("swing_type", ""))
-                                                        is_fvg_poi_draw = is_fvg_family_candle(poi_draw, "fvg")
-                                                        is_fvg_swing_poi_draw = is_fvg_swing_candle(poi_draw)
-                                                        
-                                                        if is_fvg_poi_draw:
-                                                            # FVG family candle - use resistance_fvg or support_fvg
-                                                            fvg_type = None
-                                                            if is_fvg_match(poi_draw, "fvg_c1"):
-                                                                fvg_type = "fvg_c1"
-                                                            elif is_fvg_match(poi_draw, "fvg_c3"):
-                                                                fvg_type = "fvg_c3"
-                                                            elif is_fvg_match(poi_draw, "fvg"):
-                                                                fvg_type = "fvg"
-                                                            
-                                                            fvg_base = get_fvg_base_type(poi_draw, fvg_type) if fvg_type else None
-                                                            
-                                                            if fvg_base:
-                                                                if "resistance" in fvg_base:
-                                                                    field = sd_cfg.get("resistance_fvg", "high_price")
-                                                                    s_ly = scb if field == "low_price" else sct
-                                                                elif "support" in fvg_base:
-                                                                    field = sd_cfg.get("support_fvg", "low_price")
-                                                                    s_ly = sct if field == "high_price" else scb
-                                                        elif is_fvg_swing_poi_draw:
-                                                            # FVG swing candle (regular swing)
-                                                            if "high" in s_st:
-                                                                field = sd_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                s_ly = scb if field == "low_price" else sct
-                                                            elif "low" in s_st:
-                                                                field = sd_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                s_ly = sct if field == "high_price" else scb
-                                                        else:
-                                                            # Regular swing candle
-                                                            if "high" in s_st:
-                                                                field = sd_cfg.get("swing_higher_high_or_lower_high", "high_price")
-                                                                s_ly = scb if field == "low_price" else sct
-                                                            elif "low" in s_st:
-                                                                field = sd_cfg.get("swing_lower_low_or_higher_low", "low_price")
-                                                                s_ly = sct if field == "high_price" else scb
-                                                        
-                                                        if s_tool == "box":
-                                                            cv2.rectangle(overlay, (int(scl), int(sct)), (s_right, int(scb)), (0, 255, 0), -1)
-                                                        elif s_tool in ["horizontal_line", "dashed_horizontal_line"]:
-                                                            if s_ly is not None: 
-                                                                draw_line_logic(overlay, scl, s_right, s_ly, s_tool, color=(0, 255, 0))
-
-                                            img = cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
-                                            chart_path = os.path.join(chart_dir, f"{tf}_{safe_key}.png")
-                                            cv2.imwrite(chart_path, img)
+                            # 2. NEW CALL: Apply the Behind/Beyond logic to those connections
+                            if file_key in processed_candles:
+                                updated_candles, extracted_patterns = apply_definition_conditions(
+                                    processed_candles[file_key], 
+                                    identify_config,
+                                    new_folder_name,
+                                    file_key
+                                )
                                 
-                                elif ss_result["filtered_patterns"] == 0:
-                                    log
-                        
-                        log(f"✓ Entry {entry_key} completed: {len(filtered_main_items)} main patterns")
-                        if should_process_second_source and second_source_results:
-                            second_source_count = len(second_source_results)
-                            log(f"  second_source sources: {second_source_count} sources processed")
-                        elif should_process_second_source:
-                            log(f"  second_source sources: 0 sources processed (no patterns found)")
-                        
-                except Exception as e:
-                    log(f"[{sym}|{tf}|{entry_key}] ERROR: {str(e)}", "ERROR")
+                                # Store the processed candles as usual
+                                new_key = f"{new_folder_name}_{file_key}"
+                                target_data[tf][new_key] = updated_candles
+                                
+                                # STORE PATTERNS SEPARATELY (Under TF, not nested in candles)
+                                if extracted_patterns:
+                                    pattern_key = f"{new_key}_patterns"
+                                    target_data[tf][pattern_key] = extracted_patterns
+                                
+                                modified = True
 
-    log(f"--- FINISHED ENTRY POI ANALYSIS ---")
-    log(f"Total main patterns: {total_entries_found}")
-    log(f"Total second_source source patterns: {total_second_source_entries}")
+                            # 3. Run existing intruder checks
+                            processed_candles = intruder_and_outlaw_check(processed_candles)
+
+                            poi_config = entry_settings.get("point_of_interest")
+                            if poi_config and file_key in processed_candles:
+                                # Note: target_data[tf] contains the patterns we just saved
+                                identify_poi(target_data[tf], new_key, candles, poi_config)
+
+                                identify_poi_mitigation(target_data[tf], new_key, poi_config)
+
+                            # Add original data
+                            target_data[tf][file_key] = candles
+                            modified = True
+                            
+                            # Add processed data with definitions AND outlaws marked
+                            new_key = f"{new_folder_name}_{file_key}"
+                            
+                            # Add original data
+                            target_data[tf][file_key] = candles
+                            modified = True
+                            
+                            # Add processed data with definitions marked
+                            new_key = f"{new_folder_name}_{file_key}"
+                            if file_key in processed_candles:
+                                target_data[tf][new_key] = processed_candles[file_key]
+                                modified = True
+                                
+                                # Log found definitions for debugging
+                                marked_count = 0
+                                for candle in processed_candles[file_key]:
+                                    if isinstance(candle, dict):
+                                        for key in candle:
+                                            if key.startswith("define_") and isinstance(candle[key], bool) and candle[key]:
+                                                marked_count += 1
+                                
+                        else:
+                            # Original behavior without definitions processing
+                            target_data[tf][file_key] = candles
+                            modified = True
+
+                        # Copy image file
+                        src_png = os.path.join(source_dev_dir, f"{file_key}.png")
+                        if not os.path.exists(src_png):
+                            src_png = os.path.join(source_dev_dir, f"{raw_filename_base}.png")
+
+                        if os.path.exists(src_png):
+                            img = cv2.imread(src_png)
+                            if img is not None:
+                                # Define the filename once
+                                new_png_name = f"{tf}_{file_key}.png"
+                                
+                                # Use the same new_key logic used when saving patterns above
+                                current_draw_key = f"{new_folder_name}_{file_key}"
+                                
+                                if poi_config:
+                                    # We pass target_data[tf] because it contains current_draw_key_patterns
+                                    img = draw_poi_tools(img, target_data[tf], current_draw_key, poi_config)
+
+                                # Save the modified image to the target directory
+                                cv2.imwrite(os.path.join(target_sym_dir, new_png_name), img)
+
+                    if modified:
+                        with open(target_config_path, 'w', encoding='utf-8') as f:
+                            json.dump(target_data, f, indent=4)
+                        sync_count += 1
+
+                except Exception as e:
+                    log(f"Error: {e}")
+        
+        return sync_count
+
+    def identify_definitions(candle_data, identify_config, source_def_name, raw_filename_base):
+        if not identify_config:
+            return candle_data
+            
+        processed_data = candle_data.copy()
+        
+        # Ordinal mapping for naming convention
+        ordinals = ["zero", "first", "second", "third", "fourth", "fifth", "sixth", 
+                    "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth", "nineteenth", "twenteenth"]
+
+        # Sort definitions to ensure sequential processing (define_1, define_2...)
+        definitions = sorted([(k, v) for k, v in identify_config.items() 
+                            if k.startswith("define_")], 
+                            key=lambda x: int(x[0].split('_')[1]))
+        
+        if not definitions:
+            return processed_data
+
+        def get_target_swing(current_type, logic_type):
+            logic_type = logic_type.lower()
+            if "opposite" in logic_type:
+                return "lower_low" if current_type == "higher_high" else "higher_high"
+            if "identical" in logic_type:
+                return current_type
+            return None
+
+        for file_key, candles in processed_data.items():
+            if not isinstance(candles, list): continue
+            
+            # --- GLOBAL LOOP: Every swing candle gets a turn to be the 'Anchor' (define_1) ---
+            for i, anchor_candle in enumerate(candles):
+                if not (isinstance(anchor_candle, dict) and "swing_type" in anchor_candle):
+                    continue
+                    
+                s_type = anchor_candle.get("swing_type", "").lower()
+                if s_type not in ["higher_high", "lower_low"]:
+                    continue
+
+                # Step 1: Initialize the chain with define_1
+                def1_name = definitions[0][0]
+                anchor_candle[def1_name] = True
+                anchor_candle[f"{def1_name}_swing_type"] = s_type
+                anchor_idx = anchor_candle.get("candle_number", i)
+                
+                # chain_history tracks the 'firstfound' of each step to determine the NEXT step's start point
+                # Format: { def_name: (index_in_list, candle_object) }
+                chain_history = {def1_name: (i, anchor_candle)}
+
+                # Step 2: Process subsequent definitions (The Chain)
+                for def_idx in range(1, len(definitions)):
+                    curr_def_name, curr_def_config = definitions[def_idx]
+                    prev_def_name, _ = definitions[def_idx - 1]
+                    
+                    # Logic dictates we start searching AFTER the 'firstfound' of the previous definition
+                    if prev_def_name not in chain_history:
+                        break
+                    
+                    prev_idx_in_list, prev_candle_obj = chain_history[prev_def_name]
+                    search_start_idx = prev_idx_in_list + 1
+                    
+                    prev_swing_type = prev_candle_obj.get(f"{prev_def_name}_swing_type", "")
+                    target_swing = get_target_swing(prev_swing_type, curr_def_config.get("type", ""))
+                    
+                    if not target_swing:
+                        continue
+
+                    found_count_for_this_step = 0
+                    
+                    # Search forward for ALL matches
+                    for j in range(search_start_idx, len(candles)):
+                        target_candle = candles[j]
+                        if not (isinstance(target_candle, dict) and target_candle.get("swing_type")):
+                            continue
+                        
+                        if target_candle["swing_type"].lower() == target_swing:
+                            found_count_for_this_step += 1
+                            curr_candle_num = target_candle.get("candle_number", j)
+                            ref_candle_num = prev_candle_obj.get("candle_number", prev_idx_in_list)
+                            
+                            # Mark Base Flags
+                            target_candle[curr_def_name] = True
+                            target_candle[f"{curr_def_name}_swing_type"] = target_swing
+                            
+                            # Determine Ordinal (firstfound, secondfound, etc.)
+                            if found_count_for_this_step < len(ordinals):
+                                ord_str = f"{ordinals[found_count_for_this_step]}found"
+                            else:
+                                ord_str = f"{found_count_for_this_step}thfound"
+                            
+                            # Construct Dynamic Key
+                            # e.g., define_2_firstfound_4_in_connection_with_define_1_1
+                            conn_key = f"{curr_def_name}_{ord_str}_{curr_candle_num}_in_connection_with_{prev_def_name}_{ref_candle_num}"
+                            
+                            logic_label = "opposite" if "opposite" in curr_def_config.get("type", "").lower() else "identical"
+                            target_candle[conn_key] = logic_label
+                            
+                            # If this is the FIRST one found for this step, 
+                            # it becomes the anchor for the NEXT definition (define_N+1)
+                            if found_count_for_this_step == 1:
+                                chain_history[curr_def_name] = (j, target_candle)
+
+                    # If no matches were found for this step, the chain for this anchor is broken
+                    if found_count_for_this_step == 0:
+                        break
+
+        return processed_data
     
-    return f"Success: Found {total_entries_found} main patterns and {total_second_source_entries} second_source patterns with family linking FVG support and swing-level intruder checking." 
+    def apply_definition_conditions(candles, identify_config, new_filename_value, file_key):
+        if not identify_config or not isinstance(candles, list):
+            return candles, {}
+
+        # --- SECTION 1: DYNAMIC VALIDATION (The "Logic Check") ---
+        # (Using the trace-back logic from the previous step to find the correct define_n)
+        for target_candle in candles:
+            if not isinstance(target_candle, dict): continue
+            conn_keys = [k for k in target_candle.keys() if "_in_connection_with_" in k]
+            
+            for conn_key in conn_keys:
+                parts = conn_key.split('_')
+                curr_def_base = f"{parts[0]}_{parts[1]}" 
+                
+                condition_cfg = identify_config.get(curr_def_base, {}).get("condition", "").lower()
+                if not condition_cfg: 
+                    # If no condition (like define_1), it's automatically "met"
+                    target_candle[f"{conn_key}_met"] = True
+                    continue
+
+                mode = "behind" if "behind" in condition_cfg else "beyond"
+                target_match = re.search(r'define_(\d+)', condition_cfg)
+                if not target_match: continue
+                target_def_index = int(target_match.group(1))
+
+                # Trace back to find the specific define_n ref candle
+                ref_candle = None
+                search_key = conn_key
+                while True:
+                    t_parts = search_key.split('_')
+                    p_def_lvl = int(t_parts[8])
+                    p_num = int(t_parts[9])
+                    
+                    if p_def_lvl == target_def_index:
+                        ref_candle = next((c for c in candles if c.get("candle_number") == p_num), None)
+                        break
+                    
+                    parent_candle = next((c for c in candles if c.get("candle_number") == p_num), None)
+                    if not parent_candle: break
+                    search_key = next((k for k in parent_candle.keys() if k.startswith(f"define_{p_def_lvl}_") and "_in_connection_" in k), None)
+                    if not search_key: break
+
+                if ref_candle:
+                    # Apply the price logic comparison
+                    curr_h, curr_l = target_candle.get("high"), target_candle.get("low")
+                    ref_h, ref_l = ref_candle.get("high"), ref_candle.get("low")
+                    c_type, r_type = target_candle.get("swing_type", "").lower(), ref_candle.get("swing_type", "").lower()
+                    
+                    logic_met = False
+                    if mode == "behind":
+                        if c_type == "higher_high" and r_type == "higher_high": logic_met = curr_h < ref_h
+                        elif c_type == "lower_low" and r_type == "lower_low": logic_met = curr_l > ref_l
+                        elif c_type == "higher_high" and r_type == "lower_low": logic_met = curr_l > ref_h
+                        elif c_type == "lower_low" and r_type == "higher_high": logic_met = curr_h < ref_l
+                    elif mode == "beyond":
+                        if c_type == "higher_high" and r_type == "higher_high": logic_met = curr_h > ref_h
+                        elif c_type == "lower_low" and r_type == "lower_low": logic_met = curr_l < ref_l
+                        elif c_type == "higher_high" and r_type == "lower_low": logic_met = curr_h > ref_h
+                        elif c_type == "lower_low" and r_type == "higher_high": logic_met = curr_l < ref_l
+
+                    if logic_met:
+                        target_candle[f"{conn_key}_met"] = True
+
+        # --- SECTION 2: EXTRACTION (The "Grouping") ---
+        def_nums = [int(k.split('_')[1]) for k in identify_config.keys() if k.startswith("define_")]
+        max_def = max(def_nums) if def_nums else 0
+        patterns_dict = {}
+        pattern_idx = 1
+
+        for candle in candles:
+            if not isinstance(candle, dict): continue
+            
+            # Start from the 'final' definition in the sequence (e.g., define_5)
+            last_def_keys = [k for k in candle.keys() if k.startswith(f"define_{max_def}_") and k.endswith("_met")]
+            
+            for m_key in last_def_keys:
+                current_family = [candle]
+                is_valid_family = True
+                current_trace_key = m_key
+                
+                # Walk backward from max_def to 1
+                for d in range(max_def, 1, -1):
+                    # 1. Parse who the current candle thinks is the parent
+                    p_parts = current_trace_key.split('_')
+                    parent_num = int(p_parts[9])
+                    parent_def_lvl = int(p_parts[8])
+                    
+                    # 2. Find that parent candle
+                    parent_candle = next((c for c in candles if c.get("candle_number") == parent_num), None)
+                    
+                    if not parent_candle:
+                        is_valid_family = False
+                        break
+                    
+                    # 3. Check if the parent candle itself met its own condition
+                    # (Note: define_1 doesn't have a condition, so it's always valid)
+                    if parent_def_lvl > 1:
+                        parent_met_key = next((k for k in parent_candle.keys() if k.startswith(f"define_{parent_def_lvl}_") and k.endswith("_met")), None)
+                        if not parent_met_key:
+                            is_valid_family = False
+                            break
+                        current_trace_key = parent_met_key
+                    
+                    current_family.insert(0, parent_candle)
+
+                if is_valid_family:
+                    # Deduplicate candles in family (in case of recursive connections)
+                    unique_family = []
+                    seen_nums = set()
+                    for c in current_family:
+                        if c['candle_number'] not in seen_nums:
+                            unique_family.append(c)
+                            seen_nums.add(c['candle_number'])
+                    
+                    patterns_dict[f"pattern_{pattern_idx}"] = unique_family
+                    pattern_idx += 1
+
+        patterns_dict = sanitize_pattern_definitions(patterns_dict)
+        return candles, patterns_dict
+
+    def sanitize_pattern_definitions(patterns_dict):
+        """
+        Sanitizes each pattern in the dictionary.
+        Ensures that the N-th candle in a pattern family only contains 'define_N' metadata.
+        """
+        if not patterns_dict:
+            return {}
+
+        sanitized_patterns = {}
+
+        for p_name, family in patterns_dict.items():
+            new_family = []
+            
+            # The family is ordered [define_1, define_2, ..., define_max]
+            for idx, candle in enumerate(family):
+                if not isinstance(candle, dict):
+                    new_family.append(candle)
+                    continue
+                
+                # Create a shallow copy to avoid modifying the original list in-place
+                clean_candle = candle.copy()
+                current_rank = idx + 1  # 1-based indexing for define_n
+                
+                # Identify keys to keep:
+                # 1. Standard OHLCV and technical data
+                # 2. 'define_N' keys specific to this candle's position in the pattern
+                keys_to_delete = []
+                
+                for key in clean_candle.keys():
+                    # If the key is a 'define_X' key
+                    if key.startswith("define_"):
+                        # Extract the number from 'define_N...'
+                        try:
+                            parts = key.split('_')
+                            def_num = int(parts[1])
+                            
+                            # Logic: If this is the 2nd candle in the list, 
+                            # it should ONLY have define_2 related keys.
+                            if def_num != current_rank:
+                                keys_to_delete.append(key)
+                        except (ValueError, IndexError):
+                            continue
+                
+                # Remove the non-relevant define keys
+                for k in keys_to_delete:
+                    del clean_candle[k]
+                    
+                new_family.append(clean_candle)
+                
+            sanitized_patterns[p_name] = new_family
+            
+        return sanitized_patterns
+
+    def intruder_and_outlaw_check(processed_data):
+        for file_key, candles in processed_data.items():
+            if not isinstance(candles, list):
+                continue
+
+            for i, candle in enumerate(candles):
+                if not isinstance(candle, dict):
+                    continue
+
+                sender_num = candle.get("candle_number", i)
+                sender_swing = candle.get("swing_type", "").lower()
+
+                # 1. Identify connection keys from identify_definitions
+                # Format: define_2_firstfound_129_in_connection_with_define_1_68
+                connection_keys = [k for k in candle.keys() if "_in_connection_with_" in k]
+                
+                for conn_key in connection_keys:
+                    try:
+                        # Parse the logic label (identical/opposite) stored as the value in identify_definitions
+                        logic_label = candle[conn_key] 
+                        
+                        # Split key to find the messenger number (last part of the string)
+                        parts = conn_key.split('_')
+                        messenger_num = int(parts[-1])
+                        
+                        # 2. INTRUDER CHECK (Liquidity Sweep)
+                        messenger_candle = next((c for c in candles if isinstance(c, dict) and c.get("candle_number") == messenger_num), None)
+                        
+                        if messenger_candle and messenger_candle.get("swept_by_liquidity") is True:
+                            intruder_num = messenger_candle.get("swept_by_candle_number")
+                            if intruder_num is not None and messenger_num < intruder_num < sender_num:
+                                # Construct dynamic key for Intruder
+                                intruder_key = f"{conn_key}_{logic_label}_condition_beyond_firstchecked_intruder_number_{intruder_num}"
+                                candle[intruder_key] = True
+
+                        # 3. OUTLAW CHECK (Opposite Swing in Range)
+                        outlaw_found = None
+                        for mid_candle in candles:
+                            if not isinstance(mid_candle, dict): continue
+                            mid_num = mid_candle.get("candle_number")
+                            
+                            # Only check candles between the 'firstchecked' (messenger) and current 'sender'
+                            if mid_num is not None and messenger_num < mid_num < sender_num:
+                                mid_swing = mid_candle.get("swing_type", "").lower()
+                                
+                                is_outlaw = False
+                                if sender_swing == "lower_low" and mid_swing == "higher_high":
+                                    is_outlaw = True
+                                elif sender_swing == "higher_high" and mid_swing == "lower_low":
+                                    is_outlaw = True
+                                
+                                if is_outlaw:
+                                    # Capture the first occurrence
+                                    if outlaw_found is None or mid_num < outlaw_found:
+                                        outlaw_found = mid_num
+
+                        if outlaw_found is not None:
+                            # Construct dynamic key for Outlaw
+                            # Example: define_2_firstfound_129_in_connection_with_define_1_68_opposite_condition_beyond_firstchecked_identity_outlaw_number_130
+                            outlaw_key = f"{conn_key}_{logic_label}_condition_beyond_firstchecked_identity_outlaw_number_{outlaw_found}"
+                            candle[outlaw_key] = True
+
+                    except (ValueError, IndexError):
+                        continue
+
+        return processed_data
+
+    def identify_poi(target_data_tf, new_key, original_candles, poi_config):
+        """
+        Identifies Point of Interest (Breaker/Hitler) and enriches the records
+        with visual coordinate data in a single pass.
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        from_sub = poi_config.get("from_subject")  
+        after_sub = poi_config.get("after_subject") 
+
+        for p_name, family in patterns.items():
+            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            after_candle = next((c for c in family if c.get(after_sub) is True), None)
+            
+            if not from_candle or not after_candle:
+                continue
+                    
+            after_num = after_candle.get("candle_number")
+            swing_type = from_candle.get("swing_type", "").lower()
+            
+            # 1. Determine target price based on Config Mapping
+            if "higher_high" in swing_type or "lower_high" in swing_type:
+                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low_price")
+            else:
+                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high_price")
+
+            clean_key = price_key.replace("_price", "") 
+            target_price = from_candle.get(clean_key)
+            
+            if target_price is None:
+                continue
+
+            # 2. The "Breaker" Logic (The 'Sweep' Logic)
+            if clean_key == "high":
+                break_condition = "low_le"
+                open_condition_valid = lambda o: o > target_price
+                direction_label = "below" 
+            else:
+                break_condition = "high_ge"
+                open_condition_valid = lambda o: o < target_price
+                direction_label = "above" 
+
+            # 3. Search for the Breaker
+            hitler_record = None
+            is_valid_break = False
+            
+            for oc in original_candles:
+                if not isinstance(oc, dict) or oc.get("candle_number") <= after_num:
+                    continue
+                    
+                c_open, c_high, c_low = oc.get("open"), oc.get("high"), oc.get("low")
+                
+                if not open_condition_valid(c_open):
+                    hitler_record = oc.copy()
+                    is_valid_break = False
+                    break 
+
+                reached = False
+                if break_condition == "low_le" and c_low <= target_price:
+                    reached = True
+                elif break_condition == "high_ge" and c_high >= target_price:
+                    reached = True
+
+                if reached:
+                    hitler_record = oc.copy()
+                    is_valid_break = True
+                    break
+
+            if hitler_record:
+                h_num = hitler_record.get("candle_number")
+                prefix = "" if is_valid_break else "invalid_"
+                label = f"after_subject_{after_sub}_{prefix}hitler_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
+                
+                from_candle[label] = True
+                hitler_record["is_hitler_breaker"] = is_valid_break
+                family.append(hitler_record)
+
+        # ─────────────────────────────────────────────────────────────
+        # NEW SECTION: ENRICH HITLER COORDINATES
+        # ─────────────────────────────────────────────────────────────
+        # Create lookup map for O(1) coordinate retrieval
+        candle_map = {
+            c.get("candle_number"): c 
+            for c in original_candles 
+            if isinstance(c, dict) and "candle_number" in c
+        }
+
+        coordinate_keys = [
+            "candle_x", "candle_y", "candle_width", "candle_height",
+            "candle_left", "candle_right", "candle_top", "candle_bottom"
+        ]
+
+        for p_name, family in patterns.items():
+            for candle_record in family:
+                if candle_record.get("is_hitler_breaker") is True:
+                    h_num = candle_record.get("candle_number")
+                    full_record = candle_map.get(h_num)
+                    
+                    if full_record:
+                        for k in coordinate_keys:
+                            if k in full_record:
+                                candle_record[k] = full_record[k]
+
+    def identify_poi_mitigation(target_data_tf, new_key, poi_config):
+        """
+        Checks if the 'restrict_mitigation_of' candle itself violates the POI level.
+        If it does, the pattern is removed from target_data_tf.
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        from_sub = poi_config.get("from_subject")
+        restrict_sub = poi_config.get("restrict_mitigation_of")
+        
+        if not restrict_sub:
+            return
+
+        # We will keep track of keys to delete to avoid 'dictionary changed size during iteration'
+        patterns_to_remove = []
+
+        for p_name, family in patterns.items():
+            # 1. Identify the origin candle and the restricted candle
+            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            restrict_candle = next((c for c in family if c.get(restrict_sub) is True), None)
+            
+            if not from_candle or not restrict_candle:
+                continue
+
+            # 2. Determine target price (Mirroring identify_poi logic)
+            swing_type = from_candle.get("swing_type", "").lower()
+            if "higher_high" in swing_type or "lower_high" in swing_type:
+                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low_price")
+            else:
+                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high_price")
+
+            clean_key = price_key.replace("_price", "") 
+            target_price = from_candle.get(clean_key)
+            
+            if target_price is None:
+                continue
+
+            # 3. Mirror the "Breaker" Logic to see if restrict_candle violates the level
+            is_mitigated = False
+            c_high = restrict_candle.get("high")
+            c_low = restrict_candle.get("low")
+
+            if clean_key == "high":
+                # Level is a High. Violation happens if candle goes BELOW it (low <= target)
+                if c_low is not None and c_low <= target_price:
+                    is_mitigated = True
+            else:
+                # Level is a Low. Violation happens if candle goes ABOVE it (high >= target)
+                if c_high is not None and c_high >= target_price:
+                    is_mitigated = True
+
+            # 4. If mitigated, mark for removal
+            if is_mitigated:
+                patterns_to_remove.append(p_name)
+
+        # Remove the flagged patterns
+        for p_name in patterns_to_remove:
+            del patterns[p_name]
+
+    def draw_poi_tools(img, target_data_tf, new_key, poi_config):
+        """
+        Draws visual markers on the image. 
+        Boxes feature a single-edge border on the 'sensitive' price level.
+        Updates 'from_candle' with flags regarding its extension or break status.
+        """
+        if not poi_config or img is None:
+            return img
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
+        from_sub = poi_config.get("from_subject")
+        
+        # Config mapping for sensitive edge
+        hh_lh_edge = poi_config.get("subject_is_higherhigh_or_lowerhigh") # e.g., "low_price"
+        ll_hl_edge = poi_config.get("subject_is_lowerlow_or_higherlow")   # e.g., "high_price"
+        
+        img_height, img_width = img.shape[:2]
+
+        for p_name, family in patterns.items():
+            # 1. Identify the origin (from_candle)
+            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            if not from_candle:
+                continue
+
+            # Locate the breaker candle using the boolean flags
+            breaker_candle = next((c for c in family if c.get("is_hitler_breaker") or c.get("is_invalid_hitler")), None)
+            
+            # 2. Determine X boundaries and Update Flags
+            start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
+            
+            if breaker_candle:
+                end_x = int(breaker_candle.get("draw_left", breaker_candle.get("candle_left", img_width)))
+                color = (0, 0, 255)  # Red for broken
+                
+                # FIX: Get the candle_number from the breaker record to avoid "unknown"
+                hitler_num = breaker_candle.get("candle_number", "unknown")
+                
+                # Update the status flags on the origin candle
+                from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
+                from_candle["drawn_and_extended_to_the_right_due_to_no_breaker"] = False
+            else:
+                end_x = img_width
+                color = (0, 255, 0)  # Green for active
+                
+                # Set the "no breaker" flag
+                from_candle["drawn_and_extended_to_the_right_due_to_no_breaker"] = True
+
+            # 3. Handle Drawing Tools
+            
+            # --- TOOL: BOX ---
+            if "box" in drawing_tool:
+                y_high = int(from_candle.get("draw_top", 0))
+                y_low = int(from_candle.get("draw_bottom", 0))
+                
+                # Draw Transparent Fill
+                black_color = (0, 0, 0) 
+                overlay = img.copy()
+                cv2.rectangle(overlay, (start_x, y_high), (end_x, y_low), black_color, -1)
+                cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
+
+                # Determine Sensitive Border logic
+                swing_type = from_candle.get("swing_type", "").lower()
+                border_y = None
+
+                if "higher_high" in swing_type or "lower_high" in swing_type:
+                    border_y = y_low if hh_lh_edge == "low_price" else y_high
+                elif "lower_low" in swing_type or "higher_low" in swing_type:
+                    border_y = y_high if ll_hl_edge == "high_price" else y_low
+
+                # Draw the single sensitive border line
+                if border_y is not None:
+                    cv2.line(img, (start_x, border_y), (end_x, border_y), black_color, 1)
+
+            # --- TOOL: DASHED HORIZONTAL LINE ---
+            elif "dashed_horizontal_line" in drawing_tool:
+                swing_type = from_candle.get("swing_type", "").lower()
+                if "high" in swing_type:
+                    target_y = int(from_candle.get("draw_top", 0))
+                else:
+                    target_y = int(from_candle.get("draw_bottom", 0))
+
+                dash_length, gap_length = 10, 5
+                curr_x = start_x
+                while curr_x < end_x:
+                    next_x = min(curr_x + dash_length, end_x)
+                    cv2.line(img, (curr_x, target_y), (next_x, target_y), color, 2)
+                    curr_x += dash_length + gap_length
+
+            # --- TOOL: STANDARD HORIZONTAL LINE ---
+            elif "horizontal_line" in drawing_tool:
+                swing_type = from_candle.get("swing_type", "").lower()
+                target_y = int(from_candle.get("draw_top", 0)) if "high" in swing_type else int(from_candle.get("draw_bottom", 0))
+                cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
+
+        return img
+
+    
+    def main_logic():
+        """Main logic for processing entry points of interest."""
+        log(f"Starting: {broker_name}")
+
+        dev_dict = load_developers_dictionary() 
+        cfg = dev_dict.get(broker_name)
+        if not cfg:
+            log(f"Broker {broker_name} not found")
+            return f"Error: Broker {broker_name} not in dictionary."
+        
+        base_folder = cfg.get("BASE_FOLDER")
+        dev_base_path = os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name))
+        
+        am_data = get_account_management(broker_name)
+        if not am_data:
+            log("accountmanagement.json missing")
+            return "Error: accountmanagement.json missing."
+
+        define_candles = am_data.get("chart", {}).get("define_candles", {})
+        entries_root = define_candles.get("entries_poi_condition", {})
+        
+        total_syncs = 0
+        entry_count = 0
+
+        for apprehend_key, source_configs in entries_root.items():
+            if not apprehend_key.startswith("apprehend_"):
+                continue
+                
+            source_def_name = apprehend_key.replace("apprehend_", "")
+            source_def = define_candles.get(source_def_name, {})
+            if not source_def:
+                continue
+
+            raw_filename_base = source_def.get("filename", "").replace(".json", "").lower()
+
+            for entry_key, entry_settings in source_configs.items():
+                if not entry_key.startswith("entry_"):
+                    continue
+
+                new_folder_name = entry_settings.get('new_filename')
+                if new_folder_name:
+                    log(f"Processing: {new_folder_name}")
+                    
+                    # Check if identify_definitions exist
+                    identify_config = entry_settings.get("identify_definitions")
+                    if identify_config:
+                        log(f"  With identify_definitions: {list(identify_config.keys())}")
+                    
+                    entry_count += 1
+                    
+                    # Call the inner function for file synchronization
+                    syncs = process_entry_newfilename(
+                        entry_settings, 
+                        source_def_name, 
+                        raw_filename_base, 
+                        base_folder, 
+                        dev_base_path
+                    )
+                    
+                    total_syncs += syncs
+        
+        if entry_count > 0:
+            return f"Completed: {entry_count} entry points processed. Total syncs: {total_syncs}"
+        else:
+            return f"No entry points found for processing."
+        
+    # ---- Execute Main Logic ---- 3
+    return main_logic()
 
 def clear_symbol_folders(broker_name):
     """
@@ -5259,7 +3223,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & lower lows
-        hh_ll_results = pool.map(entry_point_of_interest_condition, broker_names)
+        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
         for r in hh_ll_results: print(r)
 
 def main():
@@ -5307,8 +3271,6 @@ def main():
         hh_ll_results = pool.map(liquidity_candles, broker_names)
         for r in hh_ll_results: print(r)
 
-        hh_ll_results = pool.map(entry_point_of_interest_condition, broker_names)
-        for r in hh_ll_results: print(r)
 
 
         
