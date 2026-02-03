@@ -23,16 +23,44 @@
                                 "type": "swing_candle"
                             },
                             "define_2": {
+                                "type": "define_1_type_identical",
+                                "condition": "behind_define_1"
+                            },
+                            "define_3": {
+                                "type": "define_2_type_identical",
+                                "condition": "behind_define_2"
+                            }
+                        },
+                        "point_of_interest": {
+                            "drawing_tool":"box",
+                            "from_subject":"define_1",
+                            "after_subject":"define_3",
+                            "subject_is_higherhigh_or_lowerhigh":"low_price",
+                            "subject_is_lowerlow_or_higherlow":"high_price",
+                            "restrict_definitions_mitigation":"define_2, define_3",
+                            "restrict_swing_mitigation_between_definitions":"define_1_define_2, define_1_define_3, define_2_define_3",
+                            "multiple_selection":"define_3_non_extreme"
+                        }
+                    },
+                    "entry_2": {
+                        "new_filename": "structural_liquidity",
+                        "number_candles": "define_candle",
+                        "process_receiver_files": "yes",
+                        "identify_definitions": {
+                            "define_1": {
+                                "type": "swing_candle"
+                            },
+                            "define_2": {
                                 "type": "define_1_type_opposite",
                                 "condition": "behind_define_1"
                             },
                             "define_3": {
                                 "type": "define_2_type_opposite",
-                                "condition": "behind_define_1"
+                                "condition": "beyond_define_1"
                             },
                             "define_4": {
                                 "type": "define_3_type_opposite",
-                                "condition": "behind_define_1"
+                                "condition": "beyond_define_2"
                             },
                             "define_5": {
                                 "type": "define_4_type_opposite",
@@ -45,7 +73,31 @@
                             "after_subject":"define_5",
                             "subject_is_higherhigh_or_lowerhigh":"low_price",
                             "subject_is_lowerlow_or_higherlow":"high_price",
-                            "restrict_mitigation_of":"define_5"
+                            "restrict_definitions_mitigation":"define_5",
+                            "restrict_swing_mitigation_between_definitions":"define_4_define_5",
+                            "multiple_selection":"define_5_extreme"
+                        },
+                        "record_prices": {
+                            "risk_reward": 3,
+                            "order_type":{
+                                "subject_is_higherhigh_or_lowerhigh":"sell_limit",
+                                "subject_is_lowerlow_or_higherlow":"buy_limit"
+                            },
+                            "entry":{
+                                "subject":"define_1",
+                                "subject_is_higherhigh_or_lowerhigh":"low_price",
+                                "subject_is_lowerlow_or_higherlow":"high_price"
+                            },
+                            "exit":{
+                                "subject":"define_3",
+                                "subject_is_higherhigh_or_lowerhigh":"high_price",
+                                "subject_is_lowerlow_or_higherlow":"low_price"
+                            },
+                            "target":{
+                                "subject":"",
+                                "subject_is_higherhigh_or_lowerhigh":"low_price",
+                                "subject_is_lowerlow_or_higherlow":"high_price"
+                            }
                         }
                     }
                 }
@@ -222,7 +274,7 @@
                 }
             },
             "timeframes_communication": {
-                "apprehend_higherhighsandlowerlows": {
+                "apprehend_": {
                     "number_candles":"define_candle",
                     "timeframe_sender":"4h, 1h",
                     "timeframe_receiver":"15m, 5m",

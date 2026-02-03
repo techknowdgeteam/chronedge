@@ -2312,7 +2312,8 @@ def liquidity_candles(broker_name):
     return f"Completed: {total_liq_found} sweeps."
 
 def entry_point_of_interest(broker_name):
-    lagos_tz = pytz.timezone('Africa/Lagos')
+    lagos_tz = pytz.timezone('Africa/Lagos') 
+    
     
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%H:%M:%S')
@@ -2421,6 +2422,10 @@ def entry_point_of_interest(broker_name):
 
                                 identify_poi_mitigation(target_data[tf], new_key, poi_config)
 
+                                identify_swing_mitigation_between_definitions(target_data[tf], new_key, candles, poi_config)
+
+                                identify_selected(target_data[tf], new_key, poi_config)
+
                             # Add original data
                             target_data[tf][file_key] = candles
                             modified = True
@@ -2468,6 +2473,9 @@ def entry_point_of_interest(broker_name):
                                 if poi_config:
                                     # We pass target_data[tf] because it contains current_draw_key_patterns
                                     img = draw_poi_tools(img, target_data[tf], current_draw_key, poi_config)
+                                    record_config = entry_settings.get("record_prices")
+                                    if record_config:
+                                        identify_prices(target_data[tf], current_draw_key, record_config, dev_base_path)
 
                                 # Save the modified image to the target directory
                                 cv2.imwrite(os.path.join(target_sym_dir, new_png_name), img)
@@ -2831,8 +2839,8 @@ def entry_point_of_interest(broker_name):
 
     def identify_poi(target_data_tf, new_key, original_candles, poi_config):
         """
-        Identifies Point of Interest (Breaker/Hitler) and enriches the records
-        with visual coordinate data in a single pass.
+        Identifies Point of Interest (Breaker) based strictly on price violation.
+        Updated to specifically target lower_low and higher_high violations.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
@@ -2842,6 +2850,12 @@ def entry_point_of_interest(broker_name):
         
         from_sub = poi_config.get("from_subject")  
         after_sub = poi_config.get("after_subject") 
+
+        candle_map = {
+            c.get("candle_number"): c 
+            for c in original_candles 
+            if isinstance(c, dict) and "candle_number" in c
+        }
 
         for p_name, family in patterns.items():
             from_candle = next((c for c in family if c.get(from_sub) is True), None)
@@ -2853,11 +2867,11 @@ def entry_point_of_interest(broker_name):
             after_num = after_candle.get("candle_number")
             swing_type = from_candle.get("swing_type", "").lower()
             
-            # 1. Determine target price based on Config Mapping
-            if "higher_high" in swing_type or "lower_high" in swing_type:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low_price")
+            # Determine target price level based on swing type
+            if "high" in swing_type:
+                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high_price")
+                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -2865,111 +2879,84 @@ def entry_point_of_interest(broker_name):
             if target_price is None:
                 continue
 
-            # 2. The "Breaker" Logic (The 'Sweep' Logic)
-            if clean_key == "high":
-                break_condition = "low_le"
-                open_condition_valid = lambda o: o > target_price
-                direction_label = "below" 
-            else:
-                break_condition = "high_ge"
-                open_condition_valid = lambda o: o < target_price
-                direction_label = "above" 
-
-            # 3. Search for the Breaker
             hitler_record = None
-            is_valid_break = False
-            
+
+            # Search for the violator candle after 'after_subject'
             for oc in original_candles:
                 if not isinstance(oc, dict) or oc.get("candle_number") <= after_num:
                     continue
                     
-                c_open, c_high, c_low = oc.get("open"), oc.get("high"), oc.get("low")
+                # Logic requested for lower_low and higher_high violations
+                if swing_type == "lower_low":
+                    violator_low = oc.get("low")
+                    if violator_low is not None and violator_low < target_price:
+                        hitler_record = oc.copy()
+                        break
                 
-                if not open_condition_valid(c_open):
-                    hitler_record = oc.copy()
-                    is_valid_break = False
-                    break 
-
-                reached = False
-                if break_condition == "low_le" and c_low <= target_price:
-                    reached = True
-                elif break_condition == "high_ge" and c_high >= target_price:
-                    reached = True
-
-                if reached:
-                    hitler_record = oc.copy()
-                    is_valid_break = True
-                    break
+                elif swing_type == "higher_high":
+                    violator_high = oc.get("high")
+                    if violator_high is not None and violator_high > target_price:
+                        hitler_record = oc.copy()
+                        break
+                
+                else:
+                    # Fallback or "no violator" logic
+                    continue
 
             if hitler_record:
                 h_num = hitler_record.get("candle_number")
-                prefix = "" if is_valid_break else "invalid_"
-                label = f"after_subject_{after_sub}_{prefix}hitler_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
+                direction_label = "below" if swing_type == "lower_low" else "above"
+                
+                label = f"after_subject_{after_sub}_violator_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
                 
                 from_candle[label] = True
-                hitler_record["is_hitler_breaker"] = is_valid_break
+                hitler_record["is_hitler_breaker"] = True
+                
+                # Enrich coordinates for visualization
+                coordinate_keys = [
+                    "candle_x", "candle_y", "candle_width", "candle_height",
+                    "candle_left", "candle_right", "candle_top", "candle_bottom"
+                ]
+                full_record = candle_map.get(h_num)
+                if full_record:
+                    for k in coordinate_keys:
+                        hitler_record[k] = full_record.get(k)
+                
                 family.append(hitler_record)
 
-        # ─────────────────────────────────────────────────────────────
-        # NEW SECTION: ENRICH HITLER COORDINATES
-        # ─────────────────────────────────────────────────────────────
-        # Create lookup map for O(1) coordinate retrieval
-        candle_map = {
-            c.get("candle_number"): c 
-            for c in original_candles 
-            if isinstance(c, dict) and "candle_number" in c
-        }
-
-        coordinate_keys = [
-            "candle_x", "candle_y", "candle_width", "candle_height",
-            "candle_left", "candle_right", "candle_top", "candle_bottom"
-        ]
-
-        for p_name, family in patterns.items():
-            for candle_record in family:
-                if candle_record.get("is_hitler_breaker") is True:
-                    h_num = candle_record.get("candle_number")
-                    full_record = candle_map.get(h_num)
-                    
-                    if full_record:
-                        for k in coordinate_keys:
-                            if k in full_record:
-                                candle_record[k] = full_record[k]
+        return target_data_tf
 
     def identify_poi_mitigation(target_data_tf, new_key, poi_config):
         """
-        Checks if the 'restrict_mitigation_of' candle itself violates the POI level.
-        If it does, the pattern is removed from target_data_tf.
+        Removes patterns where specific candles (restrict_definitions_mitigation) 
+        violate the target price based on swing type.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
 
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
-        
         from_sub = poi_config.get("from_subject")
-        restrict_sub = poi_config.get("restrict_mitigation_of")
+        restrict_raw = poi_config.get("restrict_definitions_mitigation")
         
-        if not restrict_sub:
+        if not restrict_raw:
             return
 
-        # We will keep track of keys to delete to avoid 'dictionary changed size during iteration'
+        restrict_subs = [s.strip() for s in restrict_raw.split(",")]
         patterns_to_remove = []
 
         for p_name, family in patterns.items():
-            # 1. Identify the origin candle and the restricted candle
             from_candle = next((c for c in family if c.get(from_sub) is True), None)
-            restrict_candle = next((c for c in family if c.get(restrict_sub) is True), None)
-            
-            if not from_candle or not restrict_candle:
+            if not from_candle:
                 continue
 
-            # 2. Determine target price (Mirroring identify_poi logic)
-            swing_type = from_candle.get("swing_type", "").lower()
-            if "higher_high" in swing_type or "lower_high" in swing_type:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low_price")
+            target_swingtype = from_candle.get("swing_type", "").lower()
+            
+            # Determine the target price from configuration
+            if "high" in target_swingtype:
+                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high_price")
+                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -2977,27 +2964,228 @@ def entry_point_of_interest(broker_name):
             if target_price is None:
                 continue
 
-            # 3. Mirror the "Breaker" Logic to see if restrict_candle violates the level
             is_mitigated = False
-            c_high = restrict_candle.get("high")
-            c_low = restrict_candle.get("low")
+            
+            # Check if any restricted candle violates the price level
+            for sub_key in restrict_subs:
+                restrict_candle = next((c for c in family if c.get(sub_key) is True), None)
+                
+                if restrict_candle:
+                    # Apply the specific logic requested
+                    if target_swingtype == "lower_low":
+                        violator_low = restrict_candle.get("low")
+                        # If violator_low is < target_price, it's a mitigation
+                        if violator_low is not None and violator_low < target_price:
+                            is_mitigated = True
+                            break
+                    
+                    elif target_swingtype == "higher_high":
+                        violator_high = restrict_candle.get("high")
+                        # If violator_high is > target_price, it's a mitigation
+                        if violator_high is not None and violator_high > target_price:
+                            is_mitigated = True
+                            break
+                    
+                    else:
+                        # ("no violator")
+                        continue
 
-            if clean_key == "high":
-                # Level is a High. Violation happens if candle goes BELOW it (low <= target)
-                if c_low is not None and c_low <= target_price:
-                    is_mitigated = True
-            else:
-                # Level is a Low. Violation happens if candle goes ABOVE it (high >= target)
-                if c_high is not None and c_high >= target_price:
-                    is_mitigated = True
-
-            # 4. If mitigated, mark for removal
             if is_mitigated:
                 patterns_to_remove.append(p_name)
 
-        # Remove the flagged patterns
+        # Clean up patterns that hit the mitigation criteria
         for p_name in patterns_to_remove:
             del patterns[p_name]
+
+        return target_data_tf
+    
+    def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
+        """
+        Checks for swing violations between multiple pairs of definitions (sender and receiver).
+        The config expects a comma-separated string: "define_1_define_3, define_4_define_10"
+        If any candle between a pair matches the receiver's swing_type and violates the price, 
+        the pattern is removed.
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        from_sub = poi_config.get("from_subject")
+        
+        # Get the raw string, e.g., "define_1_define_3, define_2_define_4"
+        restrict_raw = poi_config.get("restrict_swing_mitigation_between_definitions")
+        if not restrict_raw:
+            return
+
+        # Split by comma to handle multiple pairs
+        restrict_pairs = [p.strip() for p in restrict_raw.split(",") if p.strip()]
+        patterns_to_remove = []
+
+        for p_name, family in patterns.items():
+            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            if not from_candle:
+                continue
+
+            # Determine target price level once per pattern based on from_subject
+            target_swingtype = from_candle.get("swing_type", "").lower()
+            if "high" in target_swingtype:
+                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+            else:
+                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+
+            clean_key = price_key.replace("_price", "")
+            target_price = from_candle.get(clean_key)
+            
+            if target_price is None:
+                continue
+
+            is_mitigated = False
+
+            # Evaluate each pair defined in the config
+            for pair_str in restrict_pairs:
+                parts = pair_str.split("_")
+                # Expecting format: define, N, define, M -> 4 parts
+                if len(parts) < 4:
+                    continue
+                
+                sender_key = f"{parts[0]}_{parts[1]}"
+                receiver_key = f"{parts[2]}_{parts[3]}"
+
+                sender_candle = next((c for c in family if c.get(sender_key) is True), None)
+                receiver_candle = next((c for c in family if c.get(receiver_key) is True), None)
+
+                if not sender_candle or not receiver_candle:
+                    continue
+
+                s_num = sender_candle.get("candle_number")
+                r_num = receiver_candle.get("candle_number")
+                receiver_swing_type = receiver_candle.get("swing_type", "").lower()
+                
+                # Define search range (exclusive)
+                start_range = min(s_num, r_num) + 1
+                end_range = max(s_num, r_num) - 1
+
+                # Scan range for violations
+                for oc in original_candles:
+                    if not isinstance(oc, dict):
+                        continue
+                    
+                    c_num = oc.get("candle_number")
+                    if start_range <= c_num <= end_range:
+                        current_swing = oc.get("swing_type", "").lower()
+                        
+                        # Match the swing type of the receiver
+                        if current_swing == receiver_swing_type:
+                            if receiver_swing_type == "lower_low":
+                                v_low = oc.get("low")
+                                if v_low is not None and v_low < target_price:
+                                    is_mitigated = True
+                                    break
+                            elif receiver_swing_type == "higher_high":
+                                v_high = oc.get("high")
+                                if v_high is not None and v_high > target_price:
+                                    is_mitigated = True
+                                    break
+                
+                if is_mitigated:
+                    break # No need to check other pairs for this pattern if one triggered
+
+            if is_mitigated:
+                patterns_to_remove.append(p_name)
+
+        # Clean up patterns
+        for p_name in patterns_to_remove:
+            del patterns[p_name]
+
+        return target_data_tf
+
+    def identify_selected(target_data_tf, new_key, poi_config):
+        """
+        Filters pattern records based on extreme or non-extreme values of a specific define_n.
+        Config format: "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return target_data_tf
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        if not patterns:
+            return target_data_tf
+
+        selection_raw = poi_config.get("multiple_selection")
+        if not selection_raw:
+            return target_data_tf
+
+        # Parse config: e.g., "define_3_extreme" -> target_key="define_3", mode="extreme"
+        parts = selection_raw.split("_")
+        if len(parts) < 3:
+            return target_data_tf
+
+        target_define_key = f"{parts[0]}_{parts[1]}" # e.g., "define_3"
+        mode = parts[2].lower() # "extreme" or "non"
+        if mode == "non":
+            mode = "non_extreme"
+
+        # 1. Collect all patterns containing the target definition and their prices
+        eligible_patterns = []
+        
+        for p_name, family in patterns.items():
+            # Find the candle in this pattern that has target_define_key: True
+            target_candle = next((c for c in family if c.get(target_define_key) is True), None)
+            
+            if target_candle:
+                swing_type = target_candle.get("swing_type", "").lower()
+                # Determine which price to look at based on swing type
+                if "high" in swing_type:
+                    price = target_candle.get("high")
+                else:
+                    price = target_candle.get("low")
+                
+                if price is not None:
+                    eligible_patterns.append({
+                        "name": p_name,
+                        "price": price,
+                        "swing_type": swing_type
+                    })
+
+        if not eligible_patterns:
+            return target_data_tf
+
+        # 2. Determine the winner based on the criteria
+        # We assume all patterns for a specific define_n share the same swing_type category 
+        # (all highs or all lows) for a meaningful comparison.
+        first_swing = eligible_patterns[0]["swing_type"]
+        is_high_type = "high" in first_swing
+        
+        selected_pattern_name = None
+        
+        if is_high_type:
+            # For Higher Highs: 
+            # Extreme = Highest High | Non-Extreme = Lowest High
+            if mode == "extreme":
+                winner = max(eligible_patterns, key=lambda x: x["price"])
+            else: # non_extreme
+                winner = min(eligible_patterns, key=lambda x: x["price"])
+        else:
+            # For Lower Lows: 
+            # Extreme = Lowest Low | Non-Extreme = Highest Low
+            if mode == "extreme":
+                winner = min(eligible_patterns, key=lambda x: x["price"])
+            else: # non_extreme
+                winner = max(eligible_patterns, key=lambda x: x["price"])
+
+        selected_pattern_name = winner["name"]
+
+        # 3. Remove all patterns that were part of this comparison but didn't win
+        # Note: Patterns NOT containing the define_n are left untouched.
+        patterns_to_remove = [p["name"] for p in eligible_patterns if p["name"] != selected_pattern_name]
+        
+        for p_name in patterns_to_remove:
+            if p_name in patterns:
+                del patterns[p_name]
+
+        return target_data_tf
 
     def draw_poi_tools(img, target_data_tf, new_key, poi_config):
         """
@@ -3041,13 +3229,13 @@ def entry_point_of_interest(broker_name):
                 
                 # Update the status flags on the origin candle
                 from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
-                from_candle["drawn_and_extended_to_the_right_due_to_no_breaker"] = False
+                from_candle["pending_entry_level"] = False
             else:
                 end_x = img_width
                 color = (0, 255, 0)  # Green for active
                 
                 # Set the "no breaker" flag
-                from_candle["drawn_and_extended_to_the_right_due_to_no_breaker"] = True
+                from_candle["pending_entry_level"] = True
 
             # 3. Handle Drawing Tools
             
@@ -3098,7 +3286,95 @@ def entry_point_of_interest(broker_name):
 
         return img
 
-    
+    import os
+    import json
+
+    def identify_prices(target_data_tf, new_key, record_config, dev_base_path):
+        """
+        Extracts entry, exit, and target prices from patterns marked as pending.
+        Saves the results to pending_orders/limit_orders.json.
+        """
+        if not record_config:
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        pending_list = []
+        
+        # Path setup: pending_orders/limit_orders.json
+        orders_dir = os.path.join(dev_base_path, "pending_orders")
+        os.makedirs(orders_dir, exist_ok=True)
+        orders_file = os.path.join(orders_dir, "limit_orders.json")
+
+        for p_name, family in patterns.items():
+            # Only process if at least one candle in the pattern has pending_entry_level: True
+            origin_candle = next((c for c in family if c.get("pending_entry_level") is True), None)
+            
+            if origin_candle:
+                order_data = {
+                    "symbol": origin_candle.get("symbol", "unknown"),
+                    "timeframe": origin_candle.get("timeframe", "unknown"),
+                    "risk_reward": record_config.get("risk_reward", 0),
+                    "order_type": "unknown",
+                    "entry": 0,
+                    "exit": 0,
+                    "target": 0
+                }
+
+                # Process Entry, Exit, Target
+                for role in ["entry", "exit", "target"]:
+                    role_cfg = record_config.get(role, {})
+                    subject_key = role_cfg.get("subject") # e.g., "define_1"
+                    
+                    if not subject_key:
+                        continue
+
+                    # Find the candle in this pattern family that satisfies the define_n requirement
+                    target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                    
+                    if target_candle:
+                        swing_type = target_candle.get("swing_type", "").lower()
+                        price_attr = ""
+
+                        # Logic: determine which price to pick (high/low) based on swing type
+                        if "higher_high" in swing_type or "lower_high" in swing_type:
+                            price_attr = role_cfg.get("subject_is_higherhigh_or_lowerhigh")
+                        elif "lower_low" in swing_type or "higher_low" in swing_type:
+                            price_attr = role_cfg.get("subject_is_lowerlow_or_higherlow")
+
+                        if price_attr:
+                            order_data[role] = target_candle.get(price_attr, 0)
+                
+                # Determine Order Type based on the Entry candle's swing type
+                # (Assuming entry subject defines the trade direction)
+                entry_subject = record_config.get("entry", {}).get("subject")
+                entry_candle = next((c for c in family if c.get(entry_subject) is True), origin_candle)
+                e_swing = entry_candle.get("swing_type", "").lower()
+                
+                type_cfg = record_config.get("order_type", {})
+                if "high" in e_swing:
+                    order_data["order_type"] = type_cfg.get("subject_is_higherhigh_or_lowerhigh", "sell_limit")
+                else:
+                    order_data["order_type"] = type_cfg.get("subject_is_lowerlow_or_higherlow", "buy_limit")
+
+                pending_list.append(order_data)
+
+        # Save to file (Append/Update logic)
+        if pending_list:
+            existing_orders = []
+            if os.path.exists(orders_file):
+                try:
+                    with open(orders_file, 'r', encoding='utf-8') as f:
+                        existing_orders = json.load(f)
+                except: existing_orders = []
+
+            # Simple deduplication or fresh append
+            existing_orders.extend(pending_list)
+            
+            with open(orders_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_orders, f, indent=4)
+
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
@@ -3161,7 +3437,7 @@ def entry_point_of_interest(broker_name):
                     total_syncs += syncs
         
         if entry_count > 0:
-            return f"Completed: {entry_count} entry points processed. Total syncs: {total_syncs}"
+            return f"Completed: {entry_count} entry points processed"
         else:
             return f"No entry points found for processing."
         
@@ -3269,6 +3545,9 @@ def main():
         for r in hh_ll_results: print(r)
 
         hh_ll_results = pool.map(liquidity_candles, broker_names)
+        for r in hh_ll_results: print(r)
+
+        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
         for r in hh_ll_results: print(r)
 
 
