@@ -29,7 +29,7 @@ import multiprocessing
 
 
 def load_developers_dictionary():
-    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\ohlc.json"
     """Load brokers config from JSON file with error handling and fallback."""
     if not os.path.exists(BROKERS_JSON_PATH):
         print(f"CRITICAL: {BROKERS_JSON_PATH} NOT FOUND! Using empty config.", "CRITICAL")
@@ -49,15 +49,15 @@ def load_developers_dictionary():
         return data
 
     except json.JSONDecodeError as e:
-        print(f"Invalid JSON in developersdictionary.json: {e}", "CRITICAL")
+        print(f"Invalid JSON in ohlc.json: {e}", "CRITICAL")
         return {}
     except Exception as e:
-        print(f"Failed to load developersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load ohlc.json: {e}", "CRITICAL")
         return {}
 developersdictionary = load_developers_dictionary()
 
 
-BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\synarex\chart\debugs"
+BASE_ERROR_FOLDER = r"C:\xampp\htdocs\chronedge\synarex\usersdata\debugs"
 TIMEFRAME_MAP = {
     "5m": mt5.TIMEFRAME_M5,
     "15m": mt5.TIMEFRAME_M15,
@@ -563,7 +563,7 @@ def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     output_json_path = os.path.join(symbol_folder, output_json_filename)
     
     # Combined file path
-    combined_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbolstick\symbolstick.json"
+    combined_path = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbolstick\symbolstick.json"
     
     # Default values
     tick_size = None
@@ -713,8 +713,8 @@ def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
     return error_log
 
 def backup_developers_dictionary():
-    main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json")
-    backup_path = Path(r"C:\xampp\htdocs\chronedge\synarex\developersdictionarybackup.json")
+    main_path = Path(r"C:\xampp\htdocs\chronedge\synarex\ohlc.json")
+    backup_path = Path(r"C:\xampp\htdocs\chronedge\synarex\ohlcbackup.json")
     
     main_path.parent.mkdir(parents=True, exist_ok=True)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -765,7 +765,7 @@ def backup_developers_dictionary():
     empty_dict = {}
     write_json(main_path, empty_dict)
     write_json(backup_path, empty_dict)
-    print("Created fresh empty developersdictionary.json and backup") 
+    print("Created fresh empty ohlc.json and backup") 
 
 def clear_chart_folder(base_folder: str):
     """Delete ONLY symbols that have NO valid OB-none-OI record on 15m-4h."""
@@ -827,7 +827,7 @@ def clear_chart_folder(base_folder: str):
     return True, error_log
 
 def clear_unknown_broker():
-    base_path = r"C:\xampp\htdocs\chronedge\synarex\chart"
+    base_path = r"C:\xampp\htdocs\chronedge\synarex\usersdata"
     
     if not os.path.exists(base_path):
         print(f"ERROR: Base directory does not exist:\n    {base_path}")
@@ -952,11 +952,11 @@ def fetch_charts_all_brokers(
     # PATHS
     # ------------------------------------------------------------------
     backup_developers_dictionary()
-    required_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
-    fallback_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
-    allsymbols_path       = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
-    match_path            = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
-    brokers_report_path   = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\brokerslimitorders.json"
+    required_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
+    fallback_allowed_path = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_volumes_points\allowedmarkets\allowedmarkets.json"
+    allsymbols_path       = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_volumes_points\allowedmarkets\allsymbolsvolumesandrisk.json"
+    match_path            = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_volumes_points\allowedmarkets\symbolsmatch.json"
+    brokers_report_path   = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_volumes_points\allowedmarkets\brokerslimitorders.json"
 
     # ------------------------------------------------------------------
     # HELPERS
@@ -1011,7 +1011,7 @@ def fetch_charts_all_brokers(
 
     def mark_chosen_broker(original_broker_key: str, user_brokerid: str, balance: float):
         """Create chosenbroker.json in symbols_calculated_prices\<original_key>\chosenbroker.json"""
-        target_dir = fr"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices\{original_broker_key}"
+        target_dir = fr"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_calculated_prices\{original_broker_key}"
         os.makedirs(target_dir, exist_ok=True)
         chosen_path = os.path.join(target_dir, "chosenbroker.json")
         

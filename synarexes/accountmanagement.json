@@ -29,6 +29,10 @@
                             "define_3": {
                                 "type": "define_2_type_identical",
                                 "condition": "behind_define_2"
+                            },
+                            "define_4": {
+                                "type": "define_3_type_opposite",
+                                "condition": "behind_define_1"
                             }
                         },
                         "point_of_interest": {
@@ -40,6 +44,28 @@
                             "restrict_definitions_mitigation":"define_2, define_3",
                             "restrict_swing_mitigation_between_definitions":"define_1_define_2, define_1_define_3, define_2_define_3",
                             "multiple_selection":"define_3_non_extreme"
+                        },
+                        "record_prices": {
+                            "risk_reward": 3,
+                            "order_type":{
+                                "subject_is_higherhigh_or_lowerhigh":"sell_limit",
+                                "subject_is_lowerlow_or_higherlow":"buy_limit"
+                            },
+                            "entry":{
+                                "subject":"define_1",
+                                "subject_is_higherhigh_or_lowerhigh":"low_price",
+                                "subject_is_lowerlow_or_higherlow":"high_price"
+                            },
+                            "exit":{
+                                "subject":"",
+                                "subject_is_higherhigh_or_lowerhigh":"high_price",
+                                "subject_is_lowerlow_or_higherlow":"low_price"
+                            },
+                            "target":{
+                                "subject":"define_4",
+                                "subject_is_higherhigh_or_lowerhigh":"high_price",
+                                "subject_is_lowerlow_or_higherlow":"low_price"
+                            }
                         }
                     },
                     "entry_2": {
@@ -95,8 +121,8 @@
                             },
                             "target":{
                                 "subject":"",
-                                "subject_is_higherhigh_or_lowerhigh":"low_price",
-                                "subject_is_lowerlow_or_higherlow":"high_price"
+                                "subject_is_higherhigh_or_lowerhigh":"high_price",
+                                "subject_is_lowerlow_or_higherlow":"low_price"
                             }
                         }
                     }
@@ -126,7 +152,7 @@
                             }
                         }
                 },
-                "apprehend_fvg":{
+                "apprehend__":{
                     "number_candles":"define_candle",
                         "liquidity_apprentice_candle":{
                             "swing_types":{
@@ -149,7 +175,7 @@
                             }
                         }
                 },
-                "apprehend_lowerhighsandhigherlows":{
+                "apprehend_":{
                     "number_candles":"define_candle",
                         "liquidity_apprentice_candle":{
                             "swing_types":{
@@ -249,7 +275,7 @@
                 }
             },
             "directional_bias_candles": {
-                "apprehend_higherhighsandlowerlows": {
+                "apprehend_": {
                     "target":"contourmaker",          
                     "label":{
                         "directional_bias_candles_text": "",
@@ -261,7 +287,7 @@
                         }
                     }
                 },
-                "apprehend_directional_bias_candles": {       
+                "apprehend_(directional_bias_candles)": {       
                     "label":{
                         "directional_bias_candles_text": "",
                         "label_at": {

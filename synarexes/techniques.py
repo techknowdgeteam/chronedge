@@ -20,7 +20,7 @@ from collections import defaultdict
 
 
 def load_developers_dictionary():
-    path = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
+    path = r"C:\xampp\htdocs\chronedge\synarex\users.json"
     if not os.path.exists(path):
         return {}
     try:
@@ -30,7 +30,7 @@ def load_developers_dictionary():
         return {}
 
 def get_account_management(broker_name):
-    path = os.path.join(r"C:\xampp\htdocs\chronedge\synarex\chart\developers", broker_name, "accountmanagement.json")
+    path = os.path.join(r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers", broker_name, "accountmanagement.json")
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -47,37 +47,30 @@ def get_analysis_paths(
     receiver_tf=None,
     target=None
 ):
-    """
-    Generate all relevant file paths for analysis, including the new standardized
-    config.json location in the developers folder.
-
-    Returns a dictionary containing all important paths.
-    """
     # Root of developer outputs
     dev_output_base = os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name))
 
-    # Source files (where raw/previous data lives)
+    # Existing Source files
     source_json = os.path.join(base_folder, sym, tf, "candlesdetails", f"{direction}_{bars}.json")
     source_chart = os.path.join(base_folder, sym, tf, f"chart_{bars}.png")
-    
-    # Full bars reference (often useful)
     full_bars_source = os.path.join(base_folder, sym, tf, "candlesdetails", "newest_oldest.json")
 
-    # Output directory & files (inside developers/broker/sym/tf/)
+    # --- NEW: Ticks Paths ---
+    # Source: base_folder\AUDNZD\AUDNZD_ticks.json
+    source_ticks = os.path.join(base_folder, sym, f"{sym}_ticks.json")
+    # Destination: developers\broker\AUDNZD\AUDNZD_ticks.json
+    dest_ticks_dir = os.path.join(dev_output_base, sym)
+    dest_ticks = os.path.join(dest_ticks_dir, f"{sym}_ticks.json")
+
+    # Output directory (tf specific)
     output_dir = os.path.join(dev_output_base, sym, tf)
-    
-    # Main output files for this particular analysis
     output_json = os.path.join(output_dir, output_filename_base)
     output_chart = os.path.join(output_dir, output_filename_base.replace(".json", ".png"))
-
-    # Standardized config.json — same for all analyses in this symbol/timeframe
     config_json = os.path.join(output_dir, "config.json")
 
-    # Communication paths (when used in receiver/forwarding logic)
     comm_paths = {}
     if receiver_tf and target:
         base_name = output_filename_base.replace(".json", "")
-        # Format example: 15m_highers_contourmaker_5m
         comm_filename_base = f"{receiver_tf}_{base_name}_{target}_{tf}"
         comm_paths = {
             "json": os.path.join(output_dir, f"{comm_filename_base}.json"),
@@ -89,14 +82,44 @@ def get_analysis_paths(
         "dev_output_base": dev_output_base,
         "source_json": source_json,
         "source_chart": source_chart,
+        "source_ticks": source_ticks,      # Added
+        "dest_ticks": dest_ticks,          # Added
         "full_bars_source": full_bars_source,
         "output_dir": output_dir,
         "output_json": output_json,
         "output_chart": output_chart,
-        "config_json": config_json,           # ← NEW: standardized config location
+        "config_json": config_json,
         "comm_paths": comm_paths
-    }
+    }  
+
+def sync_ticks_data(broker_name):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
     
+    dev_dict = load_developers_dictionary()
+    cfg = dev_dict.get(broker_name)
+    if not cfg: return f"[{broker_name}] Ticks Error: Broker not found."
+
+    base_folder = cfg.get("BASE_FOLDER")
+    symbols = [d for d in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, d))]
+    
+    copy_count = 0
+    for sym in symbols:
+        # We use dummy values for tf/bars just to get the pathing logic from the helper
+        paths = get_analysis_paths(base_folder, broker_name, sym, "1m", "new_old", 100, "temp.json")
+        
+        src = paths["source_ticks"]
+        dst = paths["dest_ticks"]
+        
+        if os.path.exists(src):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            copy_count += 1
+            
+    msg = f"[{ts}] [TICKS] {broker_name}: Copied {copy_count} tick files."
+    print(msg)
+    return msg
+
 def label_objects_and_text(
     img,
     cx,
@@ -627,8 +650,7 @@ def higher_highs_lower_lows(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-    
+
     dev_dict = load_developers_dictionary()
     cfg = dev_dict.get(broker_name)
     if not cfg:
@@ -1654,7 +1676,6 @@ def fvg_higherhighsandlowerlows(broker_name):
                         json.dump(config_content, f, indent=4)
                     processed_charts += 1
                     total_swings_added += swing_count
-                    log(f"Processed {sym}/{tf}: Swings, Base Types, & Liquidity mapped.")
 
             except Exception as e:
                 log(f"Error in {sym}/{tf}: {e}", "ERROR")
@@ -2253,8 +2274,6 @@ def liquidity_candles(broker_name):
                                     a_key = "app_hh"
 
                                 if swept:
-                                    log(f"[SPACE SWEEP] {sym} {tf}: {pos} of candle {base_c.get('candle_number')} swept by {sweeper_c.get('candle_number')}")
-                                    
                                     obj, dbl = markers[m_key]
                                     app_obj, app_dbl = markers[a_key]
                                     txt = markers.get(f"{m_key}_txt", "")
@@ -2318,176 +2337,170 @@ def entry_point_of_interest(broker_name):
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%H:%M:%S')
         print(f"[{ts}] {msg}")
+    
+    def create_paused_symbols(dev_base_path, new_folder_name):
+        """
+        Creates a paused_symbols.json file inside a paused_symbols_folder 
+        if it does not already exist.
+        """
+        paused_folder = os.path.join(dev_base_path, new_folder_name, "paused_symbols_folder")
+        paused_file = os.path.join(paused_folder, "paused_symbols.json")
+        
+        # Create the directory if it doesn't exist
+        os.makedirs(paused_folder, exist_ok=True)
+        
+        # Only create the file with an empty list/object if it doesn't exist
+        if not os.path.exists(paused_file):
+            try:
+                with open(paused_file, 'w', encoding='utf-8') as f:
+                    json.dump([], f, indent=4) # Initializing as an empty list
+            except Exception as e:
+                log(f"Could not create paused_symbols.json for {new_folder_name}: {e}")
 
     def process_entry_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path):
-        """Inner function to handle the actual file synchronization for a specific entry."""
         new_folder_name = entry_settings.get("new_filename")
+        if not new_folder_name:
+            return 0
+
+        create_paused_symbols(dev_base_path, new_folder_name)
+        clear_limit_orders(dev_base_path, new_folder_name)
+
+        paused_symbols_file = os.path.join(dev_base_path, new_folder_name, "paused_symbols_folder", "paused_symbols.json")
+        paused_list = []
+        if os.path.exists(paused_symbols_file):
+            try:
+                with open(paused_symbols_file, 'r', encoding='utf-8') as f:
+                    paused_list = json.load(f)
+            except Exception as e:
+                log(f"Error loading paused symbols: {e}")
+
+        paused_names = {item.get("symbol") for item in paused_list if "symbol" in item}
         process_receiver = str(entry_settings.get("process_receiver_files", "no")).lower()
         identify_config = entry_settings.get("identify_definitions", {})
         sync_count = 0
 
-        if not new_folder_name:
-            return 0
-
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): 
+            if not os.path.isdir(sym_p) or sym in paused_names:
                 continue
 
+            target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
+            os.makedirs(target_sym_dir, exist_ok=True)
+            
+            target_config_path = os.path.join(target_sym_dir, "config.json")
+            target_data = {}
+            if os.path.exists(target_config_path):
+                with open(target_config_path, 'r', encoding='utf-8') as f:
+                    target_data = json.load(f)
+
+            modified = False
+            pending_images = {}
+
+            # --- STEP 1: Process all timeframes for this symbol ---
             for tf in os.listdir(sym_p):
                 tf_p = os.path.join(sym_p, tf)
-                if not os.path.isdir(tf_p): 
-                    continue
+                if not os.path.isdir(tf_p): continue
                 
                 source_dev_dir = os.path.join(dev_base_path, sym, tf)
                 source_config_path = os.path.join(source_dev_dir, "config.json")
+                if not os.path.exists(source_config_path): continue
 
-                if not os.path.exists(source_config_path):
-                    continue
+                with open(source_config_path, 'r', encoding='utf-8') as f:
+                    src_data = json.load(f)
 
-                # Target path structure: developers/broker/new_filename/symbol/
-                target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
-                os.makedirs(target_sym_dir, exist_ok=True)
+                if tf not in target_data:
+                    target_data[tf] = {}
 
+                for file_key, candles in src_data.items():
+                    clean_key = file_key.lower()
+                    if "candle_list" in clean_key or "candlelist" in clean_key: continue
+
+                    is_primary = (clean_key == source_def_name.lower() or clean_key == raw_filename_base)
+                    is_receiver = (not is_primary and raw_filename_base in clean_key)
+
+                    if (is_receiver and process_receiver != "yes") or (not is_primary and not is_receiver):
+                        continue
+
+                    new_key = f"{new_folder_name}_{file_key}"
+                    processed_candles = {}
+
+                    if identify_config:
+                        processed_candles = identify_definitions({file_key: candles}, identify_config, source_def_name, raw_filename_base)
+                        if file_key in processed_candles:
+                            updated_candles, extracted_patterns = apply_definition_conditions(processed_candles[file_key], identify_config, new_folder_name, file_key)
+                            target_data[tf][new_key] = updated_candles
+                            if extracted_patterns:
+                                target_data[tf][f"{new_key}_patterns"] = extracted_patterns
+                            modified = True
+
+                        processed_candles = intruder_and_outlaw_check(processed_candles)
+                        poi_config = entry_settings.get("point_of_interest")
+                        if poi_config and file_key in processed_candles:
+                            identify_poi(target_data[tf], new_key, candles, poi_config)
+                            identify_poi_mitigation(target_data[tf], new_key, poi_config)
+                            identify_swing_mitigation_between_definitions(target_data[tf], new_key, candles, poi_config)
+                            identify_selected(target_data[tf], new_key, poi_config)
+
+                    target_data[tf][file_key] = candles
+                    if identify_config and file_key in processed_candles:
+                        target_data[tf][new_key] = processed_candles[file_key]
+                    modified = True
+
+                    # Handle Image Preparation
+                    src_png = os.path.join(source_dev_dir, f"{file_key}.png")
+                    if not os.path.exists(src_png):
+                        src_png = os.path.join(source_dev_dir, f"{raw_filename_base}.png")
+
+                    if os.path.exists(src_png):
+                        img = cv2.imread(src_png)
+                        if img is not None:
+                            if poi_config:
+                                img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
+                                record_config = entry_settings.get("record_prices")
+                                if record_config:
+                                    identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                            
+                            img_filename = f"{tf}_{file_key}.png"
+                            pending_images[img_filename] = (tf, img)
+
+            # --- STEP 2: Process Ticks JSON (Symbol Level) ---
+            # Looking for dev_path\sym\sym_ticks.json
+            source_ticks_path = os.path.join(dev_base_path, sym, f"{sym}_ticks.json")
+            if os.path.exists(source_ticks_path):
+                target_ticks_path = os.path.join(target_sym_dir, f"{sym}_ticks.json")
                 try:
-                    with open(source_config_path, 'r', encoding='utf-8') as f:
-                        src_data = json.load(f)
-
-                    target_config_path = os.path.join(target_sym_dir, "config.json")
-                    if os.path.exists(target_config_path):
-                        with open(target_config_path, 'r', encoding='utf-8') as f:
-                            target_data = json.load(f)
-                    else:
-                        target_data = {}
-
-                    modified = False
+                    with open(source_ticks_path, 'r', encoding='utf-8') as f:
+                        ticks_data = json.load(f)
                     
-                    # Create timeframe structure in target config
-                    if tf not in target_data:
-                        target_data[tf] = {}
-                    
-                    for file_key, candles in src_data.items():
-                        clean_key = file_key.lower()
-                        
-                        # 1. Exclusion logic
-                        if "candle_list" in clean_key or "candlelist" in clean_key:
-                            continue
-
-                        # 2. Strict identification
-                        is_primary = (clean_key == source_def_name.lower() or clean_key == raw_filename_base)
-                        is_receiver = (not is_primary and raw_filename_base in clean_key)
-
-                        # 3. Filtering - check process_receiver flag
-                        if is_receiver and process_receiver != "yes":
-                            continue
-                        if not is_primary and not is_receiver:
-                            continue
-
-                        # Process identify definitions if configured
-                        if identify_config:
-                            # Create processed data with marked definitions
-                            processed_candles = identify_definitions(
-                                {file_key: candles}, 
-                                identify_config, 
-                                source_def_name, 
-                                raw_filename_base
-                            )
-                            # 2. NEW CALL: Apply the Behind/Beyond logic to those connections
-                            if file_key in processed_candles:
-                                updated_candles, extracted_patterns = apply_definition_conditions(
-                                    processed_candles[file_key], 
-                                    identify_config,
-                                    new_folder_name,
-                                    file_key
-                                )
-                                
-                                # Store the processed candles as usual
-                                new_key = f"{new_folder_name}_{file_key}"
-                                target_data[tf][new_key] = updated_candles
-                                
-                                # STORE PATTERNS SEPARATELY (Under TF, not nested in candles)
-                                if extracted_patterns:
-                                    pattern_key = f"{new_key}_patterns"
-                                    target_data[tf][pattern_key] = extracted_patterns
-                                
-                                modified = True
-
-                            # 3. Run existing intruder checks
-                            processed_candles = intruder_and_outlaw_check(processed_candles)
-
-                            poi_config = entry_settings.get("point_of_interest")
-                            if poi_config and file_key in processed_candles:
-                                # Note: target_data[tf] contains the patterns we just saved
-                                identify_poi(target_data[tf], new_key, candles, poi_config)
-
-                                identify_poi_mitigation(target_data[tf], new_key, poi_config)
-
-                                identify_swing_mitigation_between_definitions(target_data[tf], new_key, candles, poi_config)
-
-                                identify_selected(target_data[tf], new_key, poi_config)
-
-                            # Add original data
-                            target_data[tf][file_key] = candles
-                            modified = True
-                            
-                            # Add processed data with definitions AND outlaws marked
-                            new_key = f"{new_folder_name}_{file_key}"
-                            
-                            # Add original data
-                            target_data[tf][file_key] = candles
-                            modified = True
-                            
-                            # Add processed data with definitions marked
-                            new_key = f"{new_folder_name}_{file_key}"
-                            if file_key in processed_candles:
-                                target_data[tf][new_key] = processed_candles[file_key]
-                                modified = True
-                                
-                                # Log found definitions for debugging
-                                marked_count = 0
-                                for candle in processed_candles[file_key]:
-                                    if isinstance(candle, dict):
-                                        for key in candle:
-                                            if key.startswith("define_") and isinstance(candle[key], bool) and candle[key]:
-                                                marked_count += 1
-                                
-                        else:
-                            # Original behavior without definitions processing
-                            target_data[tf][file_key] = candles
-                            modified = True
-
-                        # Copy image file
-                        src_png = os.path.join(source_dev_dir, f"{file_key}.png")
-                        if not os.path.exists(src_png):
-                            src_png = os.path.join(source_dev_dir, f"{raw_filename_base}.png")
-
-                        if os.path.exists(src_png):
-                            img = cv2.imread(src_png)
-                            if img is not None:
-                                # Define the filename once
-                                new_png_name = f"{tf}_{file_key}.png"
-                                
-                                # Use the same new_key logic used when saving patterns above
-                                current_draw_key = f"{new_folder_name}_{file_key}"
-                                
-                                if poi_config:
-                                    # We pass target_data[tf] because it contains current_draw_key_patterns
-                                    img = draw_poi_tools(img, target_data[tf], current_draw_key, poi_config)
-                                    record_config = entry_settings.get("record_prices")
-                                    if record_config:
-                                        identify_prices(target_data[tf], current_draw_key, record_config, dev_base_path)
-
-                                # Save the modified image to the target directory
-                                cv2.imwrite(os.path.join(target_sym_dir, new_png_name), img)
-
-                    if modified:
-                        with open(target_config_path, 'w', encoding='utf-8') as f:
-                            json.dump(target_data, f, indent=4)
-                        sync_count += 1
-
+                    # Write ticks to destination
+                    with open(target_ticks_path, 'w', encoding='utf-8') as f:
+                        json.dump(ticks_data, f, indent=4)
                 except Exception as e:
-                    log(f"Error: {e}")
-        
+                    log(f"Error processing ticks for {sym}: {e}")
+            
+            enrich_limit_orders(dev_base_path, new_folder_name)
+
+            # --- STEP 3: Sanitize after ALL timeframes are collected ---
+            should_delete_folder, tfs_to_keep = sanitize_symbols_or_files(target_sym_dir, target_data)
+
+            if should_delete_folder:
+                if os.path.exists(target_sym_dir):
+                    shutil.rmtree(target_sym_dir)
+                continue 
+
+            # --- STEP 4: Final Write (Only for valid TFs) ---
+            for img_name, (tf, img_data) in pending_images.items():
+                if tf in tfs_to_keep:
+                    cv2.imwrite(os.path.join(target_sym_dir, img_name), img_data)
+                else:
+                    full_path = os.path.join(target_sym_dir, img_name)
+                    if os.path.exists(full_path): os.remove(full_path)
+
+            if modified:
+                with open(target_config_path, 'w', encoding='utf-8') as f:
+                    json.dump(target_data, f, indent=4)
+                sync_count += 1
+
         return sync_count
 
     def identify_definitions(candle_data, identify_config, source_def_name, raw_filename_base):
@@ -3286,13 +3299,10 @@ def entry_point_of_interest(broker_name):
 
         return img
 
-    import os
-    import json
-
-    def identify_prices(target_data_tf, new_key, record_config, dev_base_path):
+    def identify_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
         """
-        Extracts entry, exit, and target prices from patterns marked as pending.
-        Saves the results to pending_orders/limit_orders.json.
+        Saves limit orders into a pending_orders folder INSIDE the specific new_filename folder.
+        Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
         """
         if not record_config:
             return
@@ -3301,14 +3311,19 @@ def entry_point_of_interest(broker_name):
         patterns = target_data_tf.get(pattern_key, {})
         
         pending_list = []
+        price_map = {
+            "low_price": "low",
+            "high_price": "high",
+            "open_price": "open",
+            "close_price": "close"
+        }
         
-        # Path setup: pending_orders/limit_orders.json
-        orders_dir = os.path.join(dev_base_path, "pending_orders")
+        # Updated Path Logic: Inside the new_folder_name directory
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
         os.makedirs(orders_dir, exist_ok=True)
         orders_file = os.path.join(orders_dir, "limit_orders.json")
 
         for p_name, family in patterns.items():
-            # Only process if at least one candle in the pattern has pending_entry_level: True
             origin_candle = next((c for c in family if c.get("pending_entry_level") is True), None)
             
             if origin_candle:
@@ -3322,37 +3337,30 @@ def entry_point_of_interest(broker_name):
                     "target": 0
                 }
 
-                # Process Entry, Exit, Target
                 for role in ["entry", "exit", "target"]:
                     role_cfg = record_config.get(role, {})
-                    subject_key = role_cfg.get("subject") # e.g., "define_1"
+                    subject_key = role_cfg.get("subject")
                     
-                    if not subject_key:
-                        continue
+                    if subject_key:
+                        target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                        if target_candle:
+                            swing_type = target_candle.get("swing_type", "").lower()
+                            price_attr_raw = ""
+                            if "high" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_higherhigh_or_lowerhigh")
+                            elif "low" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_lowerlow_or_higherlow")
 
-                    # Find the candle in this pattern family that satisfies the define_n requirement
-                    target_candle = next((c for c in family if c.get(subject_key) is True), None)
-                    
-                    if target_candle:
-                        swing_type = target_candle.get("swing_type", "").lower()
-                        price_attr = ""
-
-                        # Logic: determine which price to pick (high/low) based on swing type
-                        if "higher_high" in swing_type or "lower_high" in swing_type:
-                            price_attr = role_cfg.get("subject_is_higherhigh_or_lowerhigh")
-                        elif "lower_low" in swing_type or "higher_low" in swing_type:
-                            price_attr = role_cfg.get("subject_is_lowerlow_or_higherlow")
-
-                        if price_attr:
-                            order_data[role] = target_candle.get(price_attr, 0)
+                            actual_key = price_map.get(price_attr_raw, price_attr_raw)
+                            if actual_key:
+                                order_data[role] = target_candle.get(actual_key, 0)
                 
-                # Determine Order Type based on the Entry candle's swing type
-                # (Assuming entry subject defines the trade direction)
                 entry_subject = record_config.get("entry", {}).get("subject")
-                entry_candle = next((c for c in family if c.get(entry_subject) is True), origin_candle)
-                e_swing = entry_candle.get("swing_type", "").lower()
+                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), origin_candle)
                 
+                e_swing = entry_candle.get("swing_type", "").lower()
                 type_cfg = record_config.get("order_type", {})
+                
                 if "high" in e_swing:
                     order_data["order_type"] = type_cfg.get("subject_is_higherhigh_or_lowerhigh", "sell_limit")
                 else:
@@ -3360,20 +3368,111 @@ def entry_point_of_interest(broker_name):
 
                 pending_list.append(order_data)
 
-        # Save to file (Append/Update logic)
         if pending_list:
             existing_orders = []
             if os.path.exists(orders_file):
                 try:
                     with open(orders_file, 'r', encoding='utf-8') as f:
                         existing_orders = json.load(f)
-                except: existing_orders = []
+                except: 
+                    existing_orders = []
 
-            # Simple deduplication or fresh append
             existing_orders.extend(pending_list)
-            
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
+
+    def enrich_limit_orders(dev_base_path, new_folder_name):
+        """
+        Reads the limit_orders.json, looks up the symbol-specific ticks.json,
+        and enriches each order with tick_size and tick_value.
+        """
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+        orders_file = os.path.join(orders_dir, "limit_orders.json")
+
+        if not os.path.exists(orders_file):
+            return
+
+        try:
+            with open(orders_file, 'r', encoding='utf-8') as f:
+                orders = json.load(f)
+            
+            if not orders:
+                return
+
+            # Cache for tick data to avoid re-reading the same file for every timeframe
+            tick_cache = {}
+            modified = False
+
+            for order in orders:
+                symbol = order.get("symbol")
+                if not symbol:
+                    continue
+
+                # If not in cache, try to load the symbol_ticks.json
+                if symbol not in tick_cache:
+                    # Path: dev_base_path/new_folder_name/symbol/symbol_ticks.json
+                    ticks_path = os.path.join(dev_base_path, new_folder_name, symbol, f"{symbol}_ticks.json")
+                    
+                    if os.path.exists(ticks_path):
+                        try:
+                            with open(ticks_path, 'r', encoding='utf-8') as f:
+                                tick_cache[symbol] = json.load(f)
+                        except Exception as e:
+                            log(f"Error loading ticks for enrichment of {symbol}: {e}")
+                            tick_cache[symbol] = None
+                    else:
+                        tick_cache[symbol] = None
+
+                # Enrich the order if tick data exists
+                symbol_data = tick_cache.get(symbol)
+                if symbol_data:
+                    order["tick_size"] = symbol_data.get("tick_size")
+                    order["tick_value"] = symbol_data.get("tick_value")
+                    modified = True
+
+            if modified:
+                with open(orders_file, 'w', encoding='utf-8') as f:
+                    json.dump(orders, f, indent=4)
+
+        except Exception as e:
+            log(f"Failed to enrich limit orders: {e}")
+
+    def clear_limit_orders(dev_base_path, new_folder_name):
+        """
+        Deletes the limit_orders.json file inside the specific new_filename folder 
+        to ensure a fresh start for that entry's synchronization.
+        """
+        orders_file = os.path.join(dev_base_path, new_folder_name, "pending_orders", "limit_orders.json")
+        if os.path.exists(orders_file):
+            try:
+                os.remove(orders_file)
+            except Exception as e:
+                log(f"Could not clear limit orders for {new_folder_name}: {e}")
+
+    def sanitize_symbols_or_files(target_sym_dir, target_data):
+        """
+        Returns (should_delete_whole_folder, list_of_timeframes_to_keep)
+        """
+        tfs_to_keep = []
+        tfs_to_remove = []
+
+        for tf, tf_content in list(target_data.items()):
+            has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
+            
+            if has_patterns:
+                tfs_to_keep.append(tf)
+            else:
+                tfs_to_remove.append(tf)
+
+        # If no timeframes have patterns, the whole symbol is invalid
+        if not tfs_to_keep:
+            return True, []
+
+        # Clean the target_data dictionary so empty TFs aren't saved to JSON
+        for tf in tfs_to_remove:
+            del target_data[tf]
+
+        return False, tfs_to_keep
 
     def main_logic():
         """Main logic for processing entry points of interest."""
@@ -3513,42 +3612,25 @@ def main():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
+        print("\n[STEP 1] Syncing Symbol Ticks Data...")
+        tick_results = pool.map(sync_ticks_data, broker_names)
+        for r in tick_results: print(r)
+
         print("\n[STEP 2] Running Higher Highs & lower lows Analysis...")
         hh_ll_results = pool.map(higher_highs_lower_lows, broker_names)
         for r in hh_ll_results: print(r)
 
-
-        print("\n[STEP 3] Running Lower Highs & Lower Lows Analysis...")
-        lh_ll_results = pool.map(lower_highs_higher_lows, broker_names)
-        for r in lh_ll_results: print(r)
-
-
-        print("\n[STEP 4] Running Fair Value Gap Analysis...")
-        fvg_results = pool.map(fair_value_gaps, broker_names)
-        for r in fvg_results: print(r)
-        print("\n[STEP 4] Running Fair Value Gap Analysis...")
-        fvg_results = pool.map(fvg_higherhighsandlowerlows, broker_names)
-        for r in fvg_results: print(r)
-        
-
-
-        print("\n[STEP 5] Running Directional Bias Analysis...")
-        db_results = pool.map(directional_bias, broker_names)
-        for r in db_results: print(r)
-
-
-        print("\n[STEP 6] Running Timeframes Communication Analysis...")
-        tf_comm_results = pool.map(timeframes_communication, broker_names)
-        for r in tf_comm_results: print(r)
-
-        hh_ll_results = pool.map(receiver_comm_higher_highs_lower_lows, broker_names)
-        for r in hh_ll_results: print(r)
-
+        print("\n[STEP 6] Running liquidity sweeps...")
         hh_ll_results = pool.map(liquidity_candles, broker_names)
         for r in hh_ll_results: print(r)
 
         hh_ll_results = pool.map(entry_point_of_interest, broker_names)
         for r in hh_ll_results: print(r)
+
+        hh_ll_results = pool.map(clear_symbol_folders, broker_names)
+        for r in hh_ll_results: print(r)
+
+
 
 
 
@@ -3558,7 +3640,6 @@ def main():
 
 if __name__ == "__main__":
     single()
-
 
 
 
