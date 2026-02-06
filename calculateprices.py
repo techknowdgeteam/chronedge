@@ -1,2845 +1,3922 @@
+import os
 import json
 from pathlib import Path
-from datetime import datetime
 from collections import defaultdict
-import json
-from pathlib import Path
-from typing import Optional, Dict, Any
-import json
-from pathlib import Path
-from typing import Optional, Dict, Any
-import shutil
-import re
+from datetime import datetime
+import glob
+import MetaTrader5 as mt5
+import copy
+import math
 
 
+DICTATOR_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbolscategory\symbolscategory.json"
+SYMBOLSTICK_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\symbolstick\symbolstick.json"
 
-def symbolsorderfiltering():
-    """
-    Filters ALL order data — NOW WITH CORRECT PATH TO allowedmarkets.json
-    """
+# --- GLOBALS ---
+USERS_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+SYMBOL_CATEGORY_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
+DEV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers"
+
+def scale_orders_proportionally():
+    from datetime import datetime
     from pathlib import Path
     import json
-    import re
+    import os
+    from collections import defaultdict
 
-    # ------------------------------------------------------------------
-    # NORMALIZATION
-    # ------------------------------------------------------------------
-    def normalize_symbol(s: str) -> str:
-        if not s:
-            return ""
-        return re.sub(r'[\/\s\-_]+', '', s.strip()).upper()
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+    
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+    
+    total_promoted = 0
+    
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+        
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+        
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+        
+        print(f"[BROKER] {user_brokerid}")
+        
+        calc_risk_dirs = list(developer_path.rglob("calculatedrisk"))
+        files_generated_this_broker = 0
+        
+        for calc_risk_dir in calc_risk_dirs:
+            temp_dir = calc_risk_dir.parent
+            am_files = list(temp_dir.glob("*_accountmanagement.json"))
+            if not am_files:
+                continue
+            prefixed_am = am_files[0]
+            
+            am_name = prefixed_am.stem
+            base_stem = am_name.replace("_accountmanagement", "").rstrip("_").lower()
+            if not base_stem:
+                continue
+            
+            # Load RISKS from accountmanagement
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+                raw_risks = am_data.get("RISKS", [])
+                risks_list = sorted(set(float(r) for r in raw_risks if isinstance(r, (int, float)) or str(r).replace('.', '', 1).isdigit()))
+                if not risks_list:
+                    continue
+            except:
+                continue
+            
+            # Find all category files in base (lowest) risk folders
+            base_category_files = defaultdict(dict)  # risk_val -> {category: {"folder": ..., "file": ...}}
+            actual_filenames = {}  # category -> filename
 
-    def normalize_market_key(key: str) -> str:
-        return key.strip().lower()
+            for risk_folder in calc_risk_dir.iterdir():
+                if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_") or not risk_folder.name.endswith("_usd"):
+                    continue
+                try:
+                    risk_str = risk_folder.name[5:-4].replace("_", ".")
+                    risk_val = float(risk_str)
+                except:
+                    continue
 
-    # ------------------------------------------------------------------
-    # CORRECT PATH TO allowedmarkets.json
-    # ------------------------------------------------------------------
-    ALLOWED_MARKETS_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\allowedmarkets\allowedmarkets.json")
-    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points")
-    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
+                for file in risk_folder.iterdir():
+                    if not file.name.endswith(".json") or "_accountmanagement" in file.name:
+                        continue
+                    # Extract category from filename: e.g., "eurusd_forex.json" -> "forex"
+                    parts = file.stem.split("_")
+                    if len(parts) < 2:
+                        continue
+                    category = parts[-1].lower()
+                    expected_prefix = f"{base_stem}_"
+                    if not file.stem.lower().startswith(expected_prefix):
+                        continue
 
-    INPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+                    base_category_files[risk_val][category] = {"folder": risk_folder, "file": file}
+                    actual_filenames[category] = file.name
 
-    INPUT_FILES = [
-        "forexvolumesandrisk.json", "syntheticsvolumesandrisk.json", "cryptovolumesandrisk.json",
-        "basketindicesvolumesandrisk.json", "indicesvolumesandrisk.json", "metalsvolumesandrisk.json",
-        "stocksvolumesandrisk.json", "etfsvolumesandrisk.json", "equitiesvolumesandrisk.json",
-        "energiesvolumesandrisk.json", "commoditiesvolumesandrisk.json",
-    ]
+            if not base_category_files:
+                continue
 
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
-    }
+            base_risks = sorted(base_category_files.keys())
 
-    CALC_FILES = {
-        "forex": "forexcalculatedprices.json",
-        "synthetics": "syntheticscalculatedprices.json",
-        "crypto": "cryptocalculatedprices.json",
-        "basketindices": "basketindicescalculatedprices.json",
-        "indices": "indicescalculatedprices.json",
-        "metals": "metalscalculatedprices.json",
-        "stocks": "stockscalculatedprices.json",
-        "etfs": "etfscalculatedprices.json",
-        "equities": "equitiescalculatedprices.json",
-        "energies": "energiescalculatedprices.json",
-        "commodities": "commoditiescalculatedprices.json",
-    }
+            # Load base orders for all categories and risks
+            base_orders_by_risk_category = defaultdict(lambda: defaultdict(list))  # risk -> category -> [orders]
 
-    CATEGORY_FILES = ["hightolow.json", "lowtohigh.json"]
-    FILENAME_TO_MARKET = {v: normalize_market_key(k) for k, v in CALC_FILES.items()}
+            for risk_val, category_info in base_category_files.items():
+                for category, info in category_info.items():
+                    try:
+                        with open(info["file"], 'r', encoding='utf-8') as f:
+                            structure = json.load(f)
+                        orders_section = structure.get("orders", {})
+                        for market_key, market_data in orders_section.items():
+                            if market_key in ["total_orders", "total_markets"]:
+                                continue
+                            for tf, order_list in market_data.items():
+                                if not isinstance(order_list, list):
+                                    continue
+                                for order in order_list:
+                                    order_copy = order.copy()
+                                    order_copy["_original_risk"] = risk_val
+                                    order_copy["_category"] = category
+                                    base_orders_by_risk_category[risk_val][category].append(order_copy)
+                    except:
+                        continue
 
-    total_removed = 0
-    total_files   = 0
+            # Promote to higher risks for each category independently
+            target_risks = [r for r in risks_list if r > min(base_risks)]
 
-    # ------------------------------------------------------------------
-    # 1. LOAD allowedmarkets.json FROM CORRECT PATH
-    # ------------------------------------------------------------------
-    print(f"[DEBUG] Loading allowedmarkets.json from: {ALLOWED_MARKETS_PATH}")
-    if not ALLOWED_MARKETS_PATH.is_file():
-        print(f"[ERROR] FILE NOT FOUND: {ALLOWED_MARKETS_PATH}")
+            for target_risk in target_risks:
+                target_folder_name = f"risk_{str(target_risk).replace('.', '_')}_usd"
+                target_folder = calc_risk_dir / target_folder_name
+                target_folder.mkdir(parents=True, exist_ok=True)
+
+                for category, filename in actual_filenames.items():
+                    out_file = target_folder / filename
+
+                    all_promoted_orders = []
+                    for source_risk in base_risks:
+                        if source_risk >= target_risk:
+                            continue
+                        scale_factor = target_risk / source_risk
+                        for orig in base_orders_by_risk_category[source_risk][category]:
+                            promoted = orig.copy()
+                            promoted["volume"] = round(promoted["volume"] * scale_factor, 2)
+                            promoted["riskusd_amount"] = target_risk
+                            promoted["promoted_from"] = source_risk
+                            promoted["calculated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            clean_order = {k: v for k, v in promoted.items() if not k.startswith("_")}
+                            all_promoted_orders.append(clean_order)
+                            total_promoted += 1
+
+                    if not all_promoted_orders:
+                        continue
+
+                    # Rebuild structure per category
+                    markets_dict = defaultdict(lambda: defaultdict(list))
+                    for order in all_promoted_orders:
+                        markets_dict[order["market_name"]][order["timeframe"]].append(order)
+
+                    orders_structure = {
+                        "orders": {
+                            "total_orders": len(all_promoted_orders),
+                            "total_markets": len(markets_dict)
+                        }
+                    }
+                    orders_dict = orders_structure["orders"]
+
+                    for market_key, tf_dict in markets_dict.items():
+                        sample_order = next(iter(tf_dict.values()))[0]
+                        orders_dict[market_key] = {
+                            "category": category,
+                            "broker": user_brokerid,
+                            "tick_size": sample_order.get("tick_size", 0.00001),
+                            "tick_value": sample_order.get("tick_value", 0.0),
+                            **tf_dict
+                        }
+
+                    try:
+                        with open(out_file, 'w', encoding='utf-8') as f:
+                            json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                        files_generated_this_broker += 1
+                    except:
+                        pass
+        
+        if files_generated_this_broker > 0:
+            print(f" → Generated {files_generated_this_broker} JSON file(s)\n")
+        else:
+            print(" → No output files generated\n")
+    
+    return True
+
+def check_risk_integrity():
+    from pathlib import Path
+    import json
+    import os
+    import shutil
+    from collections import defaultdict
+
+    BASE_DEVELOPERS_DICT = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    DEVELOPERS_FUNCTIONS = os.path.join(os.path.dirname(BASE_DEVELOPERS_DICT), "developers_functions.json")
+
+    if not os.path.exists(BASE_DEVELOPERS_DICT) or not os.path.exists(DEVELOPERS_FUNCTIONS):
+        print("[ERROR] Required configuration files missing.")
         return False
 
     try:
-        with ALLOWED_MARKETS_PATH.open("r", encoding="utf-8") as f:
-            allowed_config = json.load(f)
-        print(f"[DEBUG] LOADED allowedmarkets.json with keys: {list(allowed_config.keys())}")
+        with open(BASE_DEVELOPERS_DICT, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(DEVELOPERS_FUNCTIONS, 'r', encoding='utf-8') as f:
+            data = json.load(f)
     except Exception as e:
-        print(f"[ERROR] JSON LOAD FAILED: {e}")
+        print(f"[ERROR] Failed to load configuration: {e}")
         return False
 
-    # ------------------------------------------------------------------
-    # 2. BUILD market_rules
-    # ------------------------------------------------------------------
-    market_rules = {}
-    for raw_key, cfg in allowed_config.items():
-        market_key = normalize_market_key(raw_key)
-        limited = cfg.get("limited", False)
-        raw_allowed = cfg.get("allowed", [])
-        normalized_allowed = {normalize_symbol(s) for s in raw_allowed if s}
-        market_rules[market_key] = (limited, normalized_allowed)
-        print(f"[RULE] '{raw_key}' → '{market_key}' | limited={limited} | allowed={list(normalized_allowed)[:3]}...")
+    RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
+    RISK_FOLDERS = {r: f"risk_{str(r).replace('.', '_')}_usd" for r in RISK_LEVELS}
 
-    # ------------------------------------------------------------------
-    # LOG RULES
-    # ------------------------------------------------------------------
-    print("\n" + "="*90)
-    print("SYMBOLS ORDER FILTERING (CORRECT PATH)".center(90))
-    print("="*90)
-    for market_key, (limited, allowed) in market_rules.items():
-        status = "DELETE ALL" if limited and not allowed else \
-                 f"KEEP {len(allowed)}" if limited else "KEEP ALL"
-        sample = list(allowed)[:3]
-        if len(allowed) > 3:
-            sample.append("...")
-        print(f"[RULE] {market_key.upper():12} → {status} {sample if limited and allowed else ''}")
-    print()
+    total_removed_invalid_placement = 0
+    total_files_cleaned = 0
+    total_risk_folders_removed = 0
 
-    # ------------------------------------------------------------------
-    # Helper: filter
-    # ------------------------------------------------------------------
-    def filter_market_data(data, market_key):
-        nonlocal total_removed
-        limited, allowed = market_rules.get(market_key, (False, set()))
-        if not limited:
-            return 0
-
-        removed = 0
-        if isinstance(data, dict):
-            for key in list(data.keys()):
-                if not isinstance(data[key], list):
-                    continue
-                orig_len = len(data[key])
-                if not allowed:
-                    data[key][:] = []
-                else:
-                    data[key][:] = [
-                        e for e in data[key]
-                        if normalize_symbol(e.get("market", "")) in allowed
-                    ]
-                removed += orig_len - len(data[key])
-        elif isinstance(data, list):
-            orig_len = len(data)
-            if not allowed:
-                data[:] = []
-            else:
-                data[:] = [
-                    e for e in data
-                    if normalize_symbol(e.get("market", "")) in allowed
-                ]
-            removed += orig_len - len(data)
-        total_removed += removed
-        return removed
-
-    # ------------------------------------------------------------------
-    # 2. FILTER INPUT FILES
-    # ------------------------------------------------------------------
-    for fname in INPUT_FILES:
-        raw_key = fname.split("volumesandrisk")[0].rstrip("_")
-        market_key = normalize_market_key(raw_key)
-        fpath = INPUT_ROOT / fname
-
-        if market_key not in market_rules:
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
             continue
-        if not fpath.is_file():
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
             continue
 
-        try:
-            with fpath.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            removed = filter_market_data(data, market_key)
-            total_files += 1
-            with fpath.open("w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            if removed:
-                print(f"[INPUT] {fname} → REMOVED {removed} entries")
-        except Exception as e:
-            print(f"[ERROR] {fname}: {e}")
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
 
-    # ------------------------------------------------------------------
-    # 3. OUTPUT FILTERING (RE-ENABLED)
-    # ------------------------------------------------------------------
-    if not any(OUTPUT_ROOT.iterdir()):
-        print(f"[INFO] No output folders — skipping")
-    else:
-        for broker_dir in OUTPUT_ROOT.iterdir():
-            if not broker_dir.is_dir():
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        base_volumes = {}  # (stem, market_key) -> (risk, volume)
+        calc_risk_dirs = list(developer_path.rglob("calculatedrisk"))
+        files_cleaned_this_broker = 0
+        risk_folders_removed_this_broker = 0
+        surviving_risk_folders = set()
+
+        # First pass: collect base volumes from non-promoted orders
+        for calc_risk_dir in calc_risk_dirs:
+            temp_dir = calc_risk_dir.parent
+            am_files = list(temp_dir.glob("*_accountmanagement.json"))
+            if not am_files:
                 continue
-            for risk, folder in RISK_FOLDERS.items():
-                risk_dir = broker_dir / folder
-                if not risk_dir.is_dir():
+            base_stem = am_files[0].stem.replace("_accountmanagement", "").rstrip("_")
+
+            for risk in RISK_LEVELS:
+                risk_folder = calc_risk_dir / RISK_FOLDERS.get(risk, "")
+                if not risk_folder.is_dir():
                     continue
 
-                # source_map
-                source_map = {}
-                for calc_fname in CALC_FILES.values():
-                    p = risk_dir / calc_fname
-                    if p.is_file():
+                category_files = [f for f in risk_folder.glob("*.json") if not "_accountmanagement" in f.name]
+                for file_path in category_files:
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            structure = json.load(f)
+                        orders_section = structure.get("orders", {})
+                        for market_key, market_data in orders_section.items():
+                            if market_key in ["total_orders", "total_markets"]:
+                                continue
+                            for tf, order_list in market_data.items():
+                                if not isinstance(order_list, list):
+                                    continue
+                                for order in order_list:
+                                    if "promoted_from" in order:
+                                        continue
+                                    key = (base_stem, market_key)
+                                    current_risk = order.get("riskusd_amount")
+                                    volume = order.get("volume", 0)
+                                    if key not in base_volumes or current_risk < base_volumes[key][0]:
+                                        base_volumes[key] = (current_risk, volume)
+                    except:
+                        pass
+
+        # Second & Third pass: clean files and remove empty folders
+        for calc_risk_dir in calc_risk_dirs:
+            for risk in RISK_LEVELS:
+                risk_folder = calc_risk_dir / RISK_FOLDERS.get(risk, "")
+                if not risk_folder.is_dir():
+                    continue
+
+                category_files = [f for f in risk_folder.glob("*.json") if not "_accountmanagement" in f.name]
+                if not category_files:
+                    continue
+
+                has_valid_content = False
+
+                for file_path in category_files:
+                    stem = file_path.stem.rsplit("_", 1)[0] if "_" in file_path.stem else file_path.stem
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            original_structure = json.load(f)
+                        orders_section = original_structure.get("orders", {})
+                    except:
+                        continue
+
+                    modified = False
+                    valid_orders_by_market_tf = defaultdict(lambda: defaultdict(list))
+
+                    for market_key, market_data in orders_section.items():
+                        if market_key in ["total_orders", "total_markets"]:
+                            continue
+                        for tf, order_list in market_data.items():
+                            if not isinstance(order_list, list):
+                                continue
+                            valid_orders = []
+                            for order in order_list:
+                                entry_risk = order.get("riskusd_amount")
+                                volume = order.get("volume", 0)
+                                promoted_from = order.get("promoted_from")
+                                remove = False
+
+                                if entry_risk != risk:
+                                    remove = True
+                                    total_removed_invalid_placement += 1
+
+                                elif promoted_from is not None:
+                                    try:
+                                        src_risk = float(promoted_from)
+                                    except:
+                                        src_risk = None
+                                    if src_risk is not None and src_risk < risk:
+                                        scale = risk / src_risk
+                                        key = (stem, market_key)
+                                        if key in base_volumes:
+                                            base_risk, base_vol = base_volumes[key]
+                                            if abs(base_risk - src_risk) < 1e-8:
+                                                expected_vol = round(base_vol * scale, 2)
+                                                if abs(volume - expected_vol) > 1e-6:
+                                                    remove = True
+
+                                if remove:
+                                    modified = True
+                                else:
+                                    valid_orders.append(order)
+
+                            if valid_orders:
+                                valid_orders_by_market_tf[market_key][tf] = valid_orders
+
+                    if modified:
+                        new_total_orders = sum(len(lst) for market in valid_orders_by_market_tf.values() for lst in market.values())
+                        new_total_markets = len(valid_orders_by_market_tf)
+                        new_structure = {"orders": {"total_orders": new_total_orders, "total_markets": new_total_markets}}
+
+                        for market_key, tf_dict in valid_orders_by_market_tf.items():
+                            if tf_dict:
+                                sample = next(iter(tf_dict.values()))[0]
+                                new_structure["orders"][market_key] = {
+                                    "category": sample.get("category", "unknown"),
+                                    "broker": user_brokerid,
+                                    "tick_size": sample.get("tick_size", 0.00001),
+                                    "tick_value": sample.get("tick_value", 0.0),
+                                    **tf_dict
+                                }
+
+                        if new_total_markets > 0:
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                json.dump(new_structure, f, indent=2, ensure_ascii=False)
+                            files_cleaned_this_broker += 1
+                            total_files_cleaned += 1
+                            has_valid_content = True
+                        else:
+                            os.remove(file_path)
+                            total_files_cleaned += 1
+                    else:
+                        has_valid_content = True
+
+                if has_valid_content:
+                    surviving_risk_folders.add(str(risk_folder.resolve()))
+
+        # Remove empty risk folders
+        for calc_risk_dir in calc_risk_dirs:
+            for risk in RISK_LEVELS:
+                risk_folder = calc_risk_dir / RISK_FOLDERS.get(risk, "")
+                if not risk_folder.is_dir():
+                    continue
+                if str(risk_folder.resolve()) not in surviving_risk_folders:
+                    if not any(risk_folder.glob("*.json")):
+                        shutil.rmtree(risk_folder)
+                        risk_folders_removed_this_broker += 1
+                        total_risk_folders_removed += 1
+
+        total_actions = files_cleaned_this_broker + risk_folders_removed_this_broker
+        if total_actions > 0:
+            print(f" → Processed: {files_cleaned_this_broker} file(s) cleaned, {risk_folders_removed_this_broker} empty risk level(s) removed\n")
+        else:
+            print(" → No changes needed\n")
+
+    return True
+
+def remove_non_allowed_symbol_orders():
+    from pathlib import Path
+    import json
+    import os
+    from collections import defaultdict
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    total_files_cleaned = 0
+    total_orders_removed = 0
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        files_cleaned_this_broker = 0
+        orders_removed_this_broker = 0
+
+        calc_risk_dirs = list(developer_path.rglob("calculatedrisk"))
+        
+        for calc_risk_dir in calc_risk_dirs:
+            temp_dir = calc_risk_dir.parent
+            asv_files = list(temp_dir.glob("*_allowedsymbolsandvolumes.json"))
+            if not asv_files:
+                continue
+            asv_path = asv_files[0]
+            
+            try:
+                with open(asv_path, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            # NEW LOGIC:
+            # Build allowed symbols per category
+            # - If limited == True  → only symbols in "allowed" list
+            # - If limited == False → allow ALL symbols (no restriction)
+            allowed = defaultdict(set)  # cat -> set of allowed normalized symbols
+            restricted_categories = set()  # categories that are in whitelist mode
+
+            for cat, cfg in asv_data.items():
+                cat_lower = cat.lower()
+                limited = cfg.get("limited", False)
+                allowed_list = cfg.get("allowed", [])
+
+                if limited:
+                    restricted_categories.add(cat_lower)
+                    for item in allowed_list:
+                        sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                        if sym:
+                            allowed[cat_lower].add(sym)
+                # else: limited == False → do nothing, all symbols allowed for this category
+
+            for risk_folder in calc_risk_dir.iterdir():
+                if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_") or not risk_folder.name.endswith("_usd"):
+                    continue
+
+                for file in risk_folder.glob("*.json"):
+                    if "_accountmanagement" in file.name:
+                        continue
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                    except:
+                        continue
+
+                    orders = data.get("orders", {})
+                    modified = False
+                    new_markets = {}
+
+                    for market, mdata in orders.items():
+                        if market in ["total_orders", "total_markets"]:
+                            continue
+                        cat = mdata.get("category", "").lower()
+                        sym_norm = " ".join(market.replace("_", " ").split()).upper()
+
+                        # Only restrict if the category is in limited=True mode
+                        if cat in restricted_categories and sym_norm not in allowed[cat]:
+                            orders_removed_this_broker += sum(len(ol) for ol in mdata.values() if isinstance(ol, list))
+                            modified = True
+                            continue
+
+                        new_markets[market] = mdata
+
+                    if modified:
+                        new_total_orders = sum(len(ol) for m in new_markets.values() for ol in m.values() if isinstance(ol, list))
+                        new_total_markets = len(new_markets)
+
+                        new_data = {
+                            "orders": {
+                                "total_orders": new_total_orders,
+                                "total_markets": new_total_markets,
+                                **new_markets
+                            }
+                        }
+
                         try:
-                            with p.open("r") as f:
-                                calc_data = json.load(f)
-                            for e in (calc_data if isinstance(calc_data, list) else calc_data.values()):
-                                if isinstance(e, dict) and "market" in e:
-                                    source_map.setdefault(e["market"], []).append(calc_fname)
+                            with open(file, 'w', encoding='utf-8') as f:
+                                json.dump(new_data, f, indent=2, ensure_ascii=False)
+                            files_cleaned_this_broker += 1
                         except:
                             pass
 
-                # calculatedprices
-                for raw_mk, calc_fname in CALC_FILES.items():
-                    mk = normalize_market_key(raw_mk)
-                    p = risk_dir / calc_fname
-                    if p.is_file():
-                        try:
-                            with p.open("r") as f:
-                                data = json.load(f)
-                            removed = filter_market_data(data, mk)
-                            total_files += 1
-                            with p.open("w") as f:
-                                json.dump(data, f, indent=2)
-                            if removed:
-                                print(f"  [OUTPUT] {calc_fname} → removed {removed}")
-                        except Exception as e:
-                            print(f"  [ERROR] {p}: {e}")
-
-                # categorized
-                for cat_file in CATEGORY_FILES:
-                    p = risk_dir / cat_file
-                    if p.is_file():
-                        try:
-                            with p.open("r") as f:
-                                content = json.load(f)
-                            entries = content.get("entries", [])
-                            old_len = len(entries)
-                            filtered = []
-                            for e in entries:
-                                market = e.get("market")
-                                if not market:
-                                    continue
-                                norm_market = normalize_symbol(market)
-                                mk = None
-                                for src in source_map.get(market, []):
-                                    mk = FILENAME_TO_MARKET.get(src)
-                                    if mk:
-                                        break
-                                if not mk:
-                                    for cf in CALC_FILES.values():
-                                        if (risk_dir / cf).is_file():
-                                            mk = FILENAME_TO_MARKET.get(cf)
-                                            break
-                                if not mk:
-                                    filtered.append(e)
-                                    continue
-                                limited, allowed = market_rules.get(mk, (False, set()))
-                                if not limited or (allowed and norm_market in allowed):
-                                    filtered.append(e)
-                            content["entries"] = filtered
-                            with p.open("w") as f:
-                                json.dump(content, f, indent=2)
-                            removed = old_len - len(filtered)
-                            if removed:
-                                print(f"  [CAT] {cat_file} → removed {removed}")
-                            total_removed += removed
-                            total_files += 1
-                        except Exception as e:
-                            print(f"  [ERROR] {p}: {e}")
-
-    # ------------------------------------------------------------------
-    # FINAL REPORT
-    # ------------------------------------------------------------------
-    print("\n" + "="*90)
-    print("SYMBOLS FILTERING COMPLETE")
-    print(f"   • {total_removed:,} entries removed")
-    print(f"   • {total_files} files processed")
-    print(f"   • Rules: {ALLOWED_MARKETS_PATH.name}")
-    print("="*90 + "\n")
-    return True    
-    
-
-def clean_5m_timeframes():
-    """
-    1. Scans every *input* file (volumesandrisk.json) and deletes entries
-       where timeframe == "5m".
-    2. Scans every *output* file (calculatedprices.json) and deletes the
-       same entries.
-    Returns True on success, False if any step fails.
-    """
-    from pathlib import Path
-    import json
-    from datetime import datetime
-
-    # ------------------------------------------------------------------
-    # 1. INPUT FILES (volumesandrisk)
-    # ------------------------------------------------------------------
-    INPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points")
-    INPUT_FILES = [
-        "forexvolumesandrisk.json",
-        "syntheticsvolumesandrisk.json",
-        "cryptovolumesandrisk.json",
-        "basketindicesvolumesandrisk.json",
-        "indicesvolumesandrisk.json",
-        "metalsvolumesandrisk.json",
-        "stocksvolumesandrisk.json",
-        "etfsvolumesandrisk.json",
-        "equitiesvolumesandrisk.json",
-        "energiesvolumesandrisk.json",
-        "commoditiesvolumesandrisk.json",
-    ]
-
-    # ------------------------------------------------------------------
-    # 2. OUTPUT FILES (calculatedprices)
-    # ------------------------------------------------------------------
-    OUTPUT_ROOT = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
-    }
-    CALC_FILES = {
-        "forex": "forexcalculatedprices.json",
-        "synthetics": "syntheticscalculatedprices.json",
-        "crypto": "cryptocalculatedprices.json",
-        "basketindices": "basketindicescalculatedprices.json",
-        "indices": "indicescalculatedprices.json",
-        "metals": "metalscalculatedprices.json",
-        "stocks": "stockscalculatedprices.json",
-        "etfs": "etfscalculatedprices.json",
-        "equities": "equitiescalculatedprices.json",
-        "energies": "energiescalculatedprices.json",
-        "commodities": "commoditiescalculatedprices.json",
-    }
-
-    total_removed = 0
-    total_files = 0
-
-    print("\n" + "="*70, "HEADER")
-    print("CLEANING 5m TIMEFRAMES – INPUTS & OUTPUTS", "HEADER")
-    print("="*70 + "\n", "HEADER")
-
-    # ------------------------------------------------------------------
-    # Helper: filter a list / dict-of-lists and return removed count
-    # ------------------------------------------------------------------
-    def filter_5m(data):
-        removed = 0
-        if isinstance(data, dict):
-            for key in list(data.keys()):
-                if not isinstance(data[key], list):
-                    continue
-                original_len = len(data[key])
-                data[key] = [
-                    e for e in data[key]
-                    if str(e.get("timeframe", "")).strip().lower() != "5m"
-                ]
-                removed += original_len - len(data[key])
-        elif isinstance(data, list):
-            original_len = len(data)
-            data[:] = [
-                e for e in data
-                if str(e.get("timeframe", "")).strip().lower() != "5m"
-            ]
-            removed = original_len - len(data)
-        return removed
-
-    # ------------------------------------------------------------------
-    # 1. CLEAN INPUTS
-    # ------------------------------------------------------------------
-    print("PHASE 1 – Cleaning INPUT files …", "PHASE")
-    for fname in INPUT_FILES:
-        fpath = INPUT_ROOT / fname
-        if not fpath.is_file():
-            print(f"[INPUT] SKIP (missing): {fname}", "SKIP")
-            continue
-
-        try:
-            with fpath.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            print(f"[INPUT] READ ERROR {fname}: {e}", "ERROR")
-            continue
-
-        removed = filter_5m(data)
-        total_removed += removed
-        total_files += 1
-
-        if removed:
-            try:
-                with fpath.open("w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                print(f"[INPUT] {fname} → {removed} '5m' removed", "SUCCESS")
-            except Exception as e:
-                print(f"[INPUT] WRITE ERROR {fname}: {e}", "ERROR")
+        if files_cleaned_this_broker > 0:
+            print(f" → Cleaned {files_cleaned_this_broker} file(s), removed {orders_removed_this_broker} order(s)\n")
         else:
-            print(f"[INPUT] {fname} → no '5m' found", "INFO")
+            print(" → No changes\n")
 
-    # ------------------------------------------------------------------
-    # 2. CLEAN OUTPUTS (after calculations have been written)
-    # ------------------------------------------------------------------
-    print("\nPHASE 2 – Cleaning OUTPUT files …", "PHASE")
-    for broker_dir in OUTPUT_ROOT.iterdir():
-        if not broker_dir.is_dir():
-            continue
-        broker = broker_dir.name
+        total_files_cleaned += files_cleaned_this_broker
+        total_orders_removed += orders_removed_this_broker
 
-        for risk, folder_name in RISK_FOLDERS.items():
-            risk_dir = broker_dir / folder_name
-            if not risk_dir.is_dir():
-                continue
-
-            for asset, filename in CALC_FILES.items():
-                fpath = risk_dir / filename
-                if not fpath.is_file():
-                    continue
-
-                try:
-                    with fpath.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception as e:
-                    print(f"[OUTPUT] READ ERROR {broker}/{folder_name}/{filename}: {e}", "ERROR")
-                    continue
-
-                removed = filter_5m(data)
-                total_removed += removed
-                total_files += 1
-
-                if removed:
-                    try:
-                        with fpath.open("w", encoding="utf-8") as f:
-                            json.dump(data, f, indent=2)
-                        print(f"[OUTPUT] {broker}/{folder_name}/{filename} → {removed} '5m' removed", "SUCCESS")
-                    except Exception as e:
-                        print(f"[OUTPUT] WRITE ERROR {broker}/{folder_name}/{filename}: {e}", "ERROR")
-                else:
-                    # No need to spam – just count the file
-                    pass
-
-    print(f"\n[CLEAN 5m] Finished – {total_removed} '5m' entries removed from {total_files} files.", "SUCCESS")
-    print("="*70 + "\n", "FOOTER")
+    print(f"[SUMMARY] Files cleaned: {total_files_cleaned}, Orders removed: {total_orders_removed}")
     return True
 
-def delete_all_calculated_risk_jsons():
-    """
-    Deletes ALL calculated price JSON files AND categorized strategy JSONs in every broker's risk folders.
-    
-    This includes:
-        - forexcalculatedprices.json, syntheticscalculatedprices.json, etc.
-        - hightolow.json
-        - lowtohigh.json
-    
-    across all risk levels (0.5, 1, 2, ..., 16 USD).
-
-    Useful for resetting calculations before re-running SL/TP, filtering, or re-categorizing strategies.
-
-    Returns:
-        True if all deletions succeeded or no files were found.
-        False if critical path error occurs (e.g. permission denied on directory).
-    """
+def filter_orders_by_timeframe():
     from pathlib import Path
     import json
-    from collections import defaultdict
+    import os
 
-    BASE_OUTPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
-    }
-    ASSET_FILES = [
-        "forexcalculatedprices.json",
-        "syntheticscalculatedprices.json",
-        "cryptocalculatedprices.json",
-        "basketindicescalculatedprices.json",
-        "indicescalculatedprices.json",
-        "metalscalculatedprices.json",
-        "stockscalculatedprices.json",
-        "etfscalculatedprices.json",
-        "equitiescalculatedprices.json",
-        "energiescalculatedprices.json",
-        "commoditiescalculatedprices.json",
-    ]
-    STRATEGY_FILES = [
-        "hightolow.json",
-        "lowtohigh.json"
-    ]
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
 
-    ALL_TARGET_FILES = ASSET_FILES + STRATEGY_FILES
-
-    if not BASE_OUTPUT_DIR.exists():
-        print(f"[DELETE RISKS] Output directory not found: {BASE_OUTPUT_DIR}", "WARNING")
-        return True  # Nothing to delete
-
-    total_deleted = 0
-    total_files_checked = 0
-
-    print("\n" + "="*80)
-    print("DELETING ALL CALCULATED RISK & STRATEGY JSON FILES".center(80))
-    print("="*80 + "\n")
-
-    for broker_dir in BASE_OUTPUT_DIR.iterdir():
-        if not broker_dir.is_dir():
-            continue
-        broker = broker_dir.name
-        print(f"[BROKER] {broker}")
-
-        for risk, folder_name in RISK_FOLDERS.items():
-            risk_dir = broker_dir / folder_name
-            if not risk_dir.is_dir():
-                continue
-
-            deleted_in_risk = 0
-            print(f"  [RISK] ${risk} → {folder_name}")
-
-            for json_file in ALL_TARGET_FILES:
-                file_path = risk_dir / json_file
-                total_files_checked += 1
-                if file_path.is_file():
-                    try:
-                        file_path.unlink()  # Delete the file
-                        deleted_in_risk += 1
-                        total_deleted += 1
-                        file_type = "STRATEGY" if json_file in STRATEGY_FILES else "CALCULATED"
-                        print(f"    [{file_type}] DELETED → {json_file}")
-                    except PermissionError as pe:
-                        print(f"    [CRITICAL ERROR] Permission denied: {file_path} → {pe}", "ERROR")
-                        return False
-                    except Exception as e:
-                        print(f"    [ERROR] Failed to delete {file_path}: {e}", "ERROR")
-                # else: file doesn't exist → skip silently
-
-            if deleted_in_risk == 0:
-                print(f"    [INFO] No files found to delete in {folder_name}/")
-            else:
-                print(f"    [SUMMARY] {deleted_in_risk} file(s) deleted in {folder_name}/")
-
-        print()  # Empty line between brokers
-
-    # Final summary
-    print("="*80)
-    if total_deleted > 0:
-        print(f"SUCCESS: {total_deleted:,} JSON file(s) deleted ({total_files_checked} checked).")
-        print("   → Includes both calculated prices and strategy categorizations (hightolow/lowtohigh).")
-    else:
-        print("INFO: No calculated risk or strategy JSON files were found to delete.")
-    print("="*80 + "\n")
-
-    return True
-    
-def calculate_forex_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\forexvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd",
-        1.0: "risk_1_usd",
-        2.0: "risk_2_usd",
-        3.0: "risk_3_usd",
-        4.0: "risk_4_usd",
-        8.0: "risk_8_usd",
-        16.0: "risk_16_usd"
-    }
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
         return False
 
     try:
-        with in_file.open("r", encoding="utf-8") as f:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"Failed to read JSON: {e}", "ERROR")
+        print(f"[ERROR] Failed to load configuration: {e}")
         return False
 
-    # Group orders: broker → risk → list of entries
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    total_input_entries = 0
-
-    for section_key, section in data.items():
-        if not isinstance(section, list):
-            continue
-        for entry in section:
-            total_input_entries += 1
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-
-    print(f"Loaded {total_input_entries} total entries from JSON", "INFO")
-    processed_count = 0
-    saved = 0
-
-    # Debug: Show how many per broker/risk
-    for broker, risk_dict in orders_by_broker_risk.items():
-        for risk_usd, orders in risk_dict.items():
-            if orders:
-                print(f"[{broker}] Risk ${risk_usd}: {len(orders)} order(s) grouped", "DEBUG")
-
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                continue
-
-            for entry in risk_orders:  # CHANGED: Loop over ALL entries
-                market = entry.get("market")
-                if not market:
-                    print(f"[{broker}] Skipped: missing 'market'", "WARNING")
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ["buy_limit", "sell_limit"]:
-                    print(f"[{broker}] Skipped {market}: invalid limit_order '{limit_type}'", "WARNING")
-                    continue
-
-                # Required fields
-                required = ["entry_price", "volume", "tick_value"]
-                missing = [field for field in required if field not in entry]
-                if missing:
-                    print(f"[{broker}] Skipped {market}: missing fields {missing}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 1e-5))
-                except (ValueError, TypeError) as e:
-                    print(f"[{broker}] Skipped {market}: invalid numeric value - {e}", "WARNING")
-                    continue
-
-                # Pip logic
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-
-                if pip_value_usd <= 0:
-                    print(f"[{broker}] Skipped {market}: pip_value_usd <= 0 ({pip_value_usd})", "WARNING")
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                # Price calculation
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                # Round to correct digits
-                digits = 5 if tick_size <= 1e-5 else 3
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-
-                results_by_risk[risk_usd].append(calc_entry)
-                processed_count += 1
-
-                print(
-                    f"[{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({round(sl_pips, 2)} pips) | TP {tp_price} ({round(tp_pips, 2)} pips)",
-                    "INFO"
-                )
-
-        # Save per risk folder
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "forexcalculatedprices.json"
-
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[{broker}] Saved {len(calc_list)} calculation(s) for risk ${risk_usd} → {out_file}", "SUCCESS")
-            except Exception as e:
-                print(f"[{broker}] Failed to save risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"Forex SL/TP calculations done – Processed: {processed_count}, Saved: {saved} entries.", "SUCCESS")
-    return True
-
-def calculate_synthetics_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\syntheticsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Synthetics] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Synthetics] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Synthetics] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Synthetics] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Synthetics] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Synthetics][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "syntheticscalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Synthetics][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Synthetics][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Synthetics] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_crypto_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\cryptovolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Crypto] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Crypto] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Crypto] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Crypto] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Crypto] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Crypto][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "cryptocalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Crypto][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Crypto][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Crypto] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_basketindices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\basketindicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[BasketIndices] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[BasketIndices] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[BasketIndices] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[BasketIndices] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[BasketIndices] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[BasketIndices][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "basketindicescalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[BasketIndices][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[BasketIndices][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[BasketIndices] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_indices_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\indicesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Indices] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Indices] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Indices] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Indices] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Indices] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Indices][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "indicescalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Indices][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Indices][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Indices] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_metals_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\metalsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Metals] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Metals] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Metals] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Metals] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Metals] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Metals][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "metalscalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Metals][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Metals][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Metals] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_stocks_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\stocksvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Stocks] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Stocks] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Stocks] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Stocks] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Stocks] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Stocks][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "stockscalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Stocks][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Stocks][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Stocks] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def calculate_etfs_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\etfsvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[ETFs] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[ETFs] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[ETFs] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[ETFs] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[ETFs] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[ETFs][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "etfscalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[ETFs][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[ETFs][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[ETFs] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-
-def calculate_equities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\equitiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Equities] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Equities] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Equities] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Equities] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Equities] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Equities][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "equitiescalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Equities][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Equities][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Equities] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-
-def calculate_energies_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\energiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Energies] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Energies] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Energies] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Energies] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Energies] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Energies][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "energiescalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Energies][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Energies][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Energies] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-
-def calculate_commodities_sl_tp_markets():
-    INPUT_JSON = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_volumes_points\commoditiesvolumesandrisk.json"
-    BASE_OUTPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_FOLDERS = {0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd", 3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"}
-
-    in_file = Path(INPUT_JSON)
-    if not in_file.is_file():
-        print(f"INPUT FILE NOT FOUND: {INPUT_JSON}", "ERROR")
-        return False
-
-    with in_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    orders_by_broker_risk = defaultdict(lambda: {risk: [] for risk in RISK_FOLDERS})
-    if isinstance(data, dict):
-        for section in data.values():
-            if isinstance(section, list):
-                for entry in section:
-                    broker = entry.get("broker", "unknown")
-                    try:
-                        risk_usd = float(entry.get("riskusd_amount", 0))
-                    except (TypeError, ValueError):
-                        continue
-                    if risk_usd in RISK_FOLDERS:
-                        orders_by_broker_risk[broker][risk_usd].append(entry)
-    elif isinstance(data, list):
-        for entry in data:
-            broker = entry.get("broker", "unknown")
-            try:
-                risk_usd = float(entry.get("riskusd_amount", 0))
-            except (TypeError, ValueError):
-                continue
-            if risk_usd in RISK_FOLDERS:
-                orders_by_broker_risk[broker][risk_usd].append(entry)
-    else:
-        print("[Commodities] Unexpected JSON structure", "ERROR")
-        return False
-
-    print(f"[Commodities] Loaded orders by broker & risk", "INFO")
-
-    saved = 0
-    for broker, risk_dict in orders_by_broker_risk.items():
-        results_by_risk = {risk: [] for risk in RISK_FOLDERS}
-        for risk_usd in RISK_FOLDERS:
-            risk_orders = risk_dict.get(risk_usd, [])
-            if not risk_orders:
-                print(f"[Commodities] No orders for risk ${risk_usd} in {broker}", "WARNING")
-                continue
-
-            # FIXED: loop over ALL entries
-            for entry in risk_orders:
-                market = entry.get("market")
-                if not market:
-                    continue
-
-                limit_type = entry.get("limit_order")
-                if limit_type not in ("buy_limit", "sell_limit"):
-                    print(f"[Commodities] Invalid limit type {limit_type}", "WARNING")
-                    continue
-
-                try:
-                    entry_price = float(entry["entry_price"])
-                    volume = float(entry["volume"])
-                    tick_value = float(entry["tick_value"])
-                    tick_size = float(entry.get("tick_size", 0.01))
-                except (KeyError, ValueError):
-                    print(f"[Commodities] Missing/invalid field in {market}", "WARNING")
-                    continue
-
-                pip_size = 10 * tick_size
-                pip_value_usd = tick_value * volume * (pip_size / tick_size)
-                if pip_value_usd <= 0:
-                    continue
-
-                sl_pips = risk_usd / pip_value_usd
-                tp_pips = sl_pips * 3
-
-                if limit_type == "buy_limit":
-                    sl_price = entry_price - (sl_pips * pip_size)
-                    tp_price = entry_price + (tp_pips * pip_size)
-                else:  # sell_limit
-                    sl_price = entry_price + (sl_pips * pip_size)
-                    tp_price = entry_price - (tp_pips * pip_size)
-
-                digits = len(str(tick_size).split('.')[-1]) if '.' in str(tick_size) else 0
-                digits = max(digits, 2)
-                sl_price = round(sl_price, digits)
-                tp_price = round(tp_price, digits)
-
-                calc_entry = {
-                    "market": market,
-                    "limit_order": limit_type,
-                    "timeframe": entry.get("timeframe", ""),
-                    "entry_price": entry_price,
-                    "volume": volume,
-                    "riskusd_amount": risk_usd,
-                    "sl_price": sl_price,
-                    "sl_pips": round(sl_pips, 2),
-                    "tp_price": tp_price,
-                    "tp_pips": round(tp_pips, 2),
-                    "rr_ratio": 3.0,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": "all_valid_orders",
-                    "broker": broker
-                }
-                results_by_risk[risk_usd].append(calc_entry)
-
-                print(
-                    f"[Commodities][{broker}] Risk ${risk_usd}: {market} {limit_type} @ {entry_price} → "
-                    f"SL {sl_price} ({calc_entry['sl_pips']} pips) | TP {tp_price} ({calc_entry['tp_pips']} pips)",
-                    "INFO",
-                )
-
-        for risk_usd, calc_list in results_by_risk.items():
-            if not calc_list:
-                continue
-            broker_dir = Path(BASE_OUTPUT_DIR) / broker / RISK_FOLDERS[risk_usd]
-            broker_dir.mkdir(parents=True, exist_ok=True)
-            out_file = broker_dir / "commoditiescalculatedprices.json"
-            try:
-                with out_file.open("w", encoding="utf-8") as f:
-                    json.dump(calc_list, f, indent=2)
-                saved += len(calc_list)
-                print(f"[Commodities][{broker}] Saved {len(calc_list)} calc(s) for risk ${risk_usd}", "SUCCESS")
-            except Exception as e:
-                print(f"[Commodities][{broker}] Failed to save for risk ${risk_usd}: {e}", "ERROR")
-
-    print(f"[Commodities] SL/TP calculations done – {saved} entries saved.", "SUCCESS")
-    return True
-
-def scale_lowerorders_proportionally():
-    BASE_INPUT_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
+    # Comprehensive timeframe mapping (add more if needed in the future)
+    TF_MAP = {
+        "15m": "15m", "m15": "15m", "15min": "15m",
+        "30m": "30m", "m30": "30m",
+        "45m": "45m", "m45": "45m",
+        "1h": "1h", "h1": "1h", "60m": "1h",
+        "2h": "2h", "h2": "2h",
+        "4h": "4h", "h4": "4h",
+        "1d": "1d", "d1": "1d",
+        "1w": "1w", "w1": "1w",
+        "1mn": "1mn", "mn1": "1mn",
+        # Additional common ones to prevent surprises
+        "5m": "5m", "m5": "5m",
+        "1m": "1m", "m1": "1m",
+        "3m": "3m", "m3": "3m"
     }
-    STRATEGY_FILES = ["hightolow.json", "lowtohigh.json"]
 
-    total_promoted = 0
+    total_files_cleaned = 0
+    total_orders_removed = 0
 
-    for broker_dir in BASE_INPUT_DIR.iterdir():
-        if not broker_dir.is_dir():
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
             continue
-        broker = broker_dir.name
-        print(f"\n[Promoter] Processing broker: {broker}")
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
 
-        # Step 1: Collect all NATIVE (non-promoted) entries from ALL risk levels + both strategies
-        native_entries = []  # List of (risk, strategy_file, entry_dict)
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
 
-        for risk in RISK_LEVELS:
-            risk_folder = broker_dir / RISK_FOLDERS[risk]
-            if not risk_folder.is_dir():
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        files_cleaned_this_broker = 0
+        orders_removed_this_broker = 0
+
+        calc_risk_dirs = list(developer_path.rglob("calculatedrisk"))
+
+        for calc_risk_dir in calc_risk_dirs:
+            temp_dir = calc_risk_dir.parent
+            am_files = list(temp_dir.glob("*_accountmanagement.json"))
+            if not am_files:
                 continue
 
-            for strategy_file in STRATEGY_FILES:
-                file_path = risk_folder / strategy_file
-                if not file_path.is_file():
+            try:
+                with open(am_files[0], 'r', encoding='utf-8') as f:
+                    settings = json.load(f).get("settings", {})
+                raw_tfs = settings.get("order_timeframes", ["all"])
+                if not isinstance(raw_tfs, list):
+                    raw_tfs = [raw_tfs]
+            except Exception as e:
+                print(f"   [WARN] Could not read accountmanagement: {e}")
+                continue
+
+            allowed_tfs = set()
+            all_allowed = False
+            for tf in raw_tfs:
+                tf_str = str(tf).strip().lower()
+                if tf_str == "all":
+                    all_allowed = True
+                    break
+                norm = TF_MAP.get(tf_str, tf_str)  # use mapped value or keep original normalized
+                allowed_tfs.add(norm)
+
+            if all_allowed:
+                continue  # nothing to filter
+
+            for risk_folder in calc_risk_dir.iterdir():
+                if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_") or not risk_folder.name.endswith("_usd"):
                     continue
 
-                try:
-                    data = json.loads(file_path.read_text(encoding="utf-8"))
-                    entries = data.get("entries", [])
-                    for entry in entries:
-                        criteria = entry.get("selection_criteria", "")
-                        # Only native entries (not already promoted)
-                        if criteria and criteria.startswith("promoted_from_"):
+                for file in risk_folder.glob("*.json"):
+                    if "_accountmanagement" in file.name:
+                        continue
+
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            file_data = json.load(f)
+                    except Exception:
+                        continue
+
+                    orders = file_data.get("orders", {})
+                    if not isinstance(orders, dict):
+                        continue
+
+                    modified = False
+                    new_markets = {}
+
+                    for market, mdata in orders.items():
+                        if market in ["total_orders", "total_markets"]:
                             continue
-                        # Must have these fields
-                        if all(k in entry for k in ["market", "limit_order", "entry_price", "volume", "riskusd_amount"]):
-                            native_entries.append((risk, strategy_file, entry))
-                except Exception as e:
-                    print(f"[Promoter] Failed reading {file_path}: {e}")
+                        if not isinstance(mdata, dict):
+                            continue
 
-        if not native_entries:
-            print(f"[Promoter] No native entries found for {broker}")
-            continue
+                        # Keep only allowed timeframes
+                        new_tfs = {}
+                        for tf, order_list in mdata.items():
+                            if not isinstance(order_list, list):
+                                continue
 
-        print(f"[Promoter] Found {len(native_entries)} native entries to promote")
+                            tf_str = str(tf).strip().lower()
+                            norm_tf = TF_MAP.get(tf_str, tf_str)
 
-        # Step 2: Promote each native entry to all HIGHER risk levels
-        for base_risk, strategy_file, base_entry in native_entries:
-            base_volume = base_entry["volume"]
-            market = base_entry["market"]
-            direction = base_entry["limit_order"]
+                            if norm_tf not in allowed_tfs:
+                                removed_count = len(order_list)
+                                orders_removed_this_broker += removed_count
+                                modified = True
+                                # Optional debug print
+                                # print(f"   Removing {tf} ({removed_count} orders) from {file.name}")
+                                continue
 
-            for target_risk in RISK_LEVELS:
-                if target_risk <= base_risk:
-                    continue
+                            # Keep the original key name (as in source file)
+                            new_tfs[tf] = order_list
 
-                scale_factor = target_risk / base_risk
-                new_volume = round(base_volume * scale_factor, 8)
+                        if new_tfs:  # only add market if it still has allowed timeframes
+                            # Preserve essential metadata fields
+                            new_market_data = {
+                                "category": mdata.get("category"),
+                                "broker": mdata.get("broker"),
+                                "tick_size": mdata.get("tick_size"),
+                                "tick_value": mdata.get("tick_value"),
+                                # Add any other metadata fields you know exist and want to keep
+                            }
+                            # Remove None values to avoid clutter
+                            new_market_data = {k: v for k, v in new_market_data.items() if v is not None}
+                            # Add back only the allowed timeframes
+                            new_market_data.update(new_tfs)
+                            new_markets[market] = new_market_data
 
-                # Create promoted copy
-                promoted_entry = base_entry.copy()
-                promoted_entry.update({
-                    "volume": new_volume,
-                    "riskusd_amount": target_risk,
-                    "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "selection_criteria": f"promoted_from_${base_risk}_scaled_x{scale_factor}",
-                    "broker": broker
-                })
+                    if modified:
+                        # Recalculate totals
+                        new_total_orders = sum(len(ol) for m in new_markets.values() for ol in m.values() if isinstance(ol, list))
+                        new_total_markets = len(new_markets)
 
-                # Target file (same strategy file in higher risk folder)
-                target_folder = broker_dir / RISK_FOLDERS[target_risk]
-                target_file = target_folder / strategy_file
+                        new_file_data = {
+                            "orders": {
+                                "total_orders": new_total_orders,
+                                "total_markets": new_total_markets,
+                                **new_markets
+                            }
+                        }
 
-                # Load existing data
-                existing_data = {"summary": {}, "entries": []}
-                if target_file.is_file():
-                    try:
-                        existing_data = json.loads(target_file.read_text(encoding="utf-8"))
-                        if "entries" not in existing_data:
-                            existing_data["entries"] = []
-                    except:
-                        existing_data = {"summary": {}, "entries": []}
-
-                entries = existing_data["entries"]
-
-                # Avoid duplicate (same market + direction + promoted from same base risk)
-                duplicate = any(
-                    e.get("market") == market
-                    and e.get("limit_order") == direction
-                    and e.get("selection_criteria", "").startswith(f"promoted_from_${base_risk}")
-                    for e in entries
-                )
-
-                if duplicate:
-                    continue
-
-                # Add promoted entry
-                entries.append(promoted_entry)
-
-                # Write back
-                try:
-                    target_folder.mkdir(parents=True, exist_ok=True)
-                    target_file.write_text(
-                        json.dumps(existing_data, indent=2),
-                        encoding="utf-8"
-                    )
-                    print(f"[Promoter] PROMOTED | {market} {direction} | {strategy_file} | "
-                          f"${base_risk} → ${target_risk} (×{scale_factor}) | Vol: {base_volume} → {new_volume}")
-                    total_promoted += 1
-                except Exception as e:
-                    print(f"[Promoter] FAILED to write {target_file}: {e}")
-
-    print(f"\n[Promoter] Promotion complete – {total_promoted} entries promoted across all brokers & strategies.")
-    return True
-
-
-
-def checkriskorders():
-    BASE_INPUT_DIR = r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices"
-    RISK_LEVELS = [0.5, 1.0, 2.0, 3.0, 4.0, 8.0, 16.0]
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
-    }
-    ASSET_CLASSES = {
-        "forex": "forexcalculatedprices.json",
-        "synthetics": "syntheticscalculatedprices.json",
-        "crypto": "cryptocalculatedprices.json",
-        "basketindices": "basketindicescalculatedprices.json",
-        "indices": "indicescalculatedprices.json",
-        "metals": "metalscalculatedprices.json",
-        "stocks": "stockscalculatedprices.json",
-        "etfs": "etfscalculatedprices.json",
-        "equities": "equitiescalculatedprices.json",
-        "energies": "energiescalculatedprices.json",
-        "commodities": "commoditiescalculatedprices.json",
-    }
-
-    total_removed_invalid_placement = 0
-    total_removed_unscaled = 0
-    brokers_needing_rescaling = set()
-
-    # Build risk hierarchy: higher risk should NOT appear in lower risk folders
-    RISK_HIERARCHY = {r: [x for x in RISK_LEVELS if x < r] for r in RISK_LEVELS}
-
-    # Map each risk to its valid source (only equal or lower, but we care about promotion source)
-    VALID_SOURCE_FOR = {}
-    for target in RISK_LEVELS:
-        VALID_SOURCE_FOR[target] = [src for src in RISK_LEVELS if src <= target]
-
-    print(f"\n[Checker] Starting risk order integrity check...", "INFO")
-
-    for broker_dir in Path(BASE_INPUT_DIR).iterdir():
-        if not broker_dir.is_dir():
-            continue
-        broker = broker_dir.name
-        print(f"\n[Checker] Checking broker: {broker}", "INFO")
-
-        # Collect all base (lowest risk) entries per asset for volume reference
-        base_volumes = {}  # (asset, market) -> (risk, volume)
-
-        for asset, filename in ASSET_CLASSES.items():
-            file_path = broker_dir / RISK_FOLDERS[0.5] / filename
-            if file_path.is_file():
-                try:
-                    with file_path.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        for entry in data:
-                            if entry.get("riskusd_amount") == 0.5:
-                                base_volumes[(asset, entry["market"])] = (0.5, entry["volume"])
-                except Exception as e:
-                    print(f"[Checker] Failed to read base {file_path}: {e}", "ERROR")
-
-            # Also check higher risks for potential base if 0.5 missing
-            for risk in RISK_LEVELS:
-                if risk == 0.5:
-                    continue
-                file_path = broker_dir / RISK_FOLDERS[risk] / filename
-                if file_path.is_file():
-                    try:
-                        with file_path.open("r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            for entry in data:
-                                key = (asset, entry["market"])
-                                if entry.get("selection_criteria", "").startswith("promoted_from_"):
-                                    continue  # skip promoted
-                                if key not in base_volumes:
-                                    base_volumes[key] = (risk, entry["volume"])
-                    except Exception as e:
-                        print(f"[Checker] Failed to read {file_path}: {e}", "ERROR")
-
-        # Now scan all risk levels
-        for risk in RISK_LEVELS:
-            risk_folder = broker_dir / RISK_FOLDERS[risk]
-            if not risk_folder.exists():
-                continue
-
-            for asset, filename in ASSET_CLASSES.items():
-                file_path = risk_folder / filename
-                if not file_path.is_file():
-                    continue
-
-                try:
-                    with file_path.open("r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception as e:
-                    print(f"[Checker] Failed to read {file_path}: {e}", "ERROR")
-                    continue
-
-                valid_entries = []
-                modified = False
-
-                for entry in data:
-                    market = entry.get("market")
-                    entry_risk = entry.get("riskusd_amount")
-                    volume = entry.get("volume", 0)
-                    criteria = entry.get("selection_criteria", "")
-                    key = (asset, market)
-
-                    remove = False
-                    reason = ""
-
-                    # RULE 1: Higher risk orders must not appear in lower risk folders
-                    if entry_risk > risk:
-                        remove = True
-                        reason = f"risk ${entry_risk} found in ${risk} folder (invalid placement)"
-                        total_removed_invalid_placement += 1
-                    # RULE 2: Promoted entries must have correct scaling
-                    elif criteria.startswith("promoted_from_"):
-                        # Extract source risk
                         try:
-                            src_str = criteria.split("promoted_from_$")[1].split("_")[0]
-                            src_risk = float(src_str)
-                        except:
-                            src_risk = None
-
-                        if src_risk is not None and src_risk < risk:
-                            expected_scale = risk / src_risk
-                            base_volume = None
-
-                            # Find base volume
-                            if key in base_volumes:
-                                base_risk, base_vol = base_volumes[key]
-                                if base_risk == src_risk:
-                                    base_volume = base_vol
-
-                            # If no base, check if volume matches expected
-                            if base_volume is None:
-                                # Fallback: assume volume should be scaled from source
-                                remove = True
-                                reason = f"promoted entry missing base volume reference"
-                                total_removed_unscaled += 1
+                            if new_total_markets > 0:
+                                with open(file, 'w', encoding='utf-8') as f:
+                                    json.dump(new_file_data, f, indent=2, ensure_ascii=False)
+                                files_cleaned_this_broker += 1
                             else:
-                                expected_volume = round(base_volume * expected_scale, 8)
-                                if abs(volume - expected_volume) > 1e-8:
-                                    remove = True
-                                    reason = f"volume {volume} ≠ expected {expected_volume} (scale ×{expected_scale})"
-                                    total_removed_unscaled += 1
+                                # No markets left → delete the file
+                                file.unlink()
+                        except Exception as e:
+                            print(f"   [ERROR] Failed to write/delete {file}: {e}")
 
-                    if remove:
-                        print(f"[Checker] REMOVING {asset.upper()} | {market} | ${entry_risk} in ${risk} folder | {reason}", "WARNING")
-                        modified = True
-                        if criteria.startswith("promoted_from_") and not reason.startswith("risk $"):
-                            brokers_needing_rescaling.add(broker)
-                    else:
-                        valid_entries.append(entry)
+        if files_cleaned_this_broker > 0 or orders_removed_this_broker > 0:
+            print(f" → Cleaned {files_cleaned_this_broker} file(s), removed {orders_removed_this_broker} order(s)\n")
+        else:
+            print(" → No changes\n")
 
-                # Write back cleaned data
-                if modified and valid_entries:
-                    try:
-                        with file_path.open("w", encoding="utf-8") as f:
-                            json.dump(valid_entries, f, indent=2)
-                        print(f"[Checker] Cleaned {file_path.name} in {RISK_FOLDERS[risk]} ({len(data)} → {len(valid_entries)})", "SUCCESS")
-                    except Exception as e:
-                        print(f"[Checker] Failed to save {file_path}: {e}", "ERROR")
+        total_files_cleaned += files_cleaned_this_broker
+        total_orders_removed += orders_removed_this_broker
 
-        # End of broker
-
-    # Final summary
-    print(f"\n[Checker] Integrity check complete.", "INFO")
-    print(f"   • {total_removed_invalid_placement} entries removed due to invalid risk placement", "INFO")
-    print(f"   • {total_removed_unscaled} promoted entries removed due to incorrect scaling", "INFO")
-
-    # Trigger re-promotion if needed
-    if brokers_needing_rescaling:
-        print(f"[Checker] Re-running scale_lowerorders_proportionally() for {len(brokers_needing_rescaling)} broker(s) with scaling escapes...", "INFO")
-        scale_lowerorders_proportionally()
+    if total_files_cleaned > 0 or total_orders_removed > 0:
+        print(f"[SUMMARY] Files cleaned: {total_files_cleaned}, Orders removed: {total_orders_removed}")
     else:
-        print(f"[Checker] No rescaling needed.", "INFO")
-
+        print("[SUMMARY] No files needed cleaning.")
     return True
 
-def categorise_strategy():
-    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    RISK_FOLDERS = {
-        0.5: "risk_0_50cent_usd", 1.0: "risk_1_usd", 2.0: "risk_2_usd",
-        3.0: "risk_3_usd", 4.0: "risk_4_usd", 8.0: "risk_8_usd", 16.0: "risk_16_usd"
-    }
-    CALC_FILES = {
-        "forex": "forexcalculatedprices.json",
-        "synthetics": "syntheticscalculatedprices.json",
-        "crypto": "cryptocalculatedprices.json",
-        "basketindices": "basketindicescalculatedprices.json",
-        "indices": "indicescalculatedprices.json",
-        "metals": "metalscalculatedprices.json",
-        "stocks": "stockscalculatedprices.json",
-        "etfs": "etfscalculatedprices.json",
-        "equities": "equitiescalculatedprices.json",
-        "energies": "energiescalculatedprices.json",
-        "commodities": "commoditiescalculatedprices.json",
-    }
-    TIMEFRAME_ORDER = ["4h", "1h", "30m", "15m", "5m"]
-
-    total_high_to_low = 0
-    total_low_to_high = 0
-
-    for broker_dir in BASE_DIR.iterdir():
-        if not broker_dir.is_dir():
-            continue
-        broker = broker_dir.name
-
-        for risk_usd, folder_name in RISK_FOLDERS.items():
-            folder_path = broker_dir / folder_name
-            if not folder_path.is_dir():
-                continue
-
-            # -------------------------------------------------
-            # 1. Load all files for this risk folder
-            # -------------------------------------------------
-            symbol_data = defaultdict(list)   # market → list of entries
-            source_map = defaultdict(set)     # market → set of source filenames
-
-            for source, fname in CALC_FILES.items():
-                fpath = folder_path / fname
-                if not fpath.is_file():
-                    continue
-                try:
-                    data = json.loads(fpath.read_text(encoding="utf-8"))
-                    for e in data:
-                        market = e["market"]
-                        symbol_data[market].append(e)
-                        source_map[market].add(fname)
-                except Exception as exc:
-                    print(f"[Categorise][{broker}] Error reading {fpath}: {exc}")
-
-            if not symbol_data:
-                continue
-
-            # -------------------------------------------------
-            # 2. Helper
-            # -------------------------------------------------
-            def price_distance(buy_entry, sell_entry):
-                # distance between the two entry prices
-                return abs(buy_entry["entry_price"] - sell_entry["entry_price"])
-
-            def required_distance(buy_entry, sell_entry):
-                tick_sz = buy_entry.get("tick_size", 1e-5)
-                pip_sz = 10 * tick_sz
-                required_pips = 3 * min(buy_entry.get("sl_pips", 0), sell_entry.get("sl_pips", 0))
-                return required_pips * pip_sz
-
-            # -------------------------------------------------
-            # 3. Process every market once
-            # -------------------------------------------------
-            hightolow_entries = []   # high buy + low sell
-            lowtohigh_entries = []   # low buy + high sell
-            market_sources_htl = {}
-            market_sources_lth = {}
-
-            for market, entries in symbol_data.items():
-                # Group by timeframe (higher TF has priority)
-                tf_groups = defaultdict(list)
-                for e in entries:
-                    tf = e.get("timeframe", "").strip()
-                    tf = tf if tf in TIMEFRAME_ORDER else "unknown"
-                    tf_groups[tf].append(e)
-
-                # Candidates selected from highest timeframe downwards
-                best_high_buy = None   # highest price buy_limit
-                best_low_buy  = None   # lowest  price buy_limit
-                best_high_sell = None  # highest price sell_limit
-                best_low_sell  = None  # lowest  price sell_limit
-
-                for tf in TIMEFRAME_ORDER:
-                    if tf not in tf_groups:
-                        continue
-                    candidates = tf_groups[tf]
-
-                    buys  = [c for c in candidates if c["limit_order"] == "buy_limit"]
-                    sells = [c for c in candidates if c["limit_order"] == "sell_limit"]
-
-                    # ---- buys ----
-                    if buys:
-                        # highest entry price
-                        highest = max(buys, key=lambda x: x["entry_price"])
-                        if best_high_buy is None or highest["entry_price"] > best_high_buy["entry_price"]:
-                            best_high_buy = highest
-
-                        # lowest entry price
-                        lowest = min(buys, key=lambda x: x["entry_price"])
-                        if best_low_buy is None or lowest["entry_price"] < best_low_buy["entry_price"]:
-                            best_low_buy = lowest
-
-                    # ---- sells ----
-                    if sells:
-                        highest = max(sells, key=lambda x: x["entry_price"])
-                        if best_high_sell is None or highest["entry_price"] > best_high_sell["entry_price"]:
-                            best_high_sell = highest
-
-                        lowest = min(sells, key=lambda x: x["entry_price"])
-                        if best_low_sell is None or lowest["entry_price"] < best_low_sell["entry_price"]:
-                            best_low_sell = lowest
-
-                # -------------------------------------------------
-                # 4. Build HIGH→LOW (high buy + low sell)
-                # -------------------------------------------------
-                if best_high_buy and best_low_sell:
-                    if price_distance(best_high_buy, best_low_sell) >= required_distance(best_high_buy, best_low_sell):
-                        hightolow_entries.extend([best_high_buy, best_low_sell])
-                        market_sources_htl[market] = source_map[market]
-                elif best_high_buy:                     # only buy → still valid for HIGH→LOW if we expect reversal down
-                    hightolow_entries.append(best_high_buy)
-                    market_sources_htl[market] = source_map[market]
-                elif best_low_sell:                     # only sell → valid for HIGH→LOW
-                    hightolow_entries.append(best_low_sell)
-                    market_sources_htl[market] = source_map[market]
-
-                # -------------------------------------------------
-                # 5. Build LOW→HIGH (low buy + high sell)
-                # -------------------------------------------------
-                if best_low_buy and best_high_sell:
-                    if price_distance(best_low_buy, best_high_sell) >= required_distance(best_low_buy, best_high_sell):
-                        lowtohigh_entries.extend([best_low_buy, best_high_sell])
-                        market_sources_lth[market] = source_map[market]
-                elif best_low_buy:                      # only low buy → valid for LOW→HIGH
-                    lowtohigh_entries.append(best_low_buy)
-                    market_sources_lth[market] = source_map[market]
-                elif best_high_sell:                    # only high sell → valid for LOW→HIGH
-                    lowtohigh_entries.append(best_high_sell)
-                    market_sources_lth[market] = source_map[market]
-
-            # -------------------------------------------------
-            # 6. Summary helper
-            # -------------------------------------------------
-            def build_summary(market_sources_dict):
-                counts = {"allmarketssymbols": len(market_sources_dict)}
-                for src, fname in CALC_FILES.items():
-                    key = f"{src}symbols"
-                    counts[key] = sum(1 for src_set in market_sources_dict.values() if fname in src_set)
-                return counts
-
-            summary_htl = build_summary(market_sources_htl)
-            summary_lth = build_summary(market_sources_lth)
-
-            # -------------------------------------------------
-            # 7. Write files
-            # -------------------------------------------------
-            out_folder = folder_path
-            out_folder.mkdir(parents=True, exist_ok=True)
-
-            # HIGH→LOW
-            high_path = out_folder / "hightolow.json"
-            try:
-                high_path.write_text(json.dumps({
-                    "summary": summary_htl,
-                    "entries": hightolow_entries
-                }, indent=2), encoding="utf-8")
-                print(f"[Categorise][{broker}] ${risk_usd} hightolow.json → {len(hightolow_entries)} entries")
-                total_high_to_low += len(hightolow_entries)
-            except Exception as e:
-                print(f"[Categorise][{broker}] Failed hightolow.json ${risk_usd}: {e}")
-
-            # LOW→HIGH
-            low_path = out_folder / "lowtohigh.json"
-            try:
-                low_path.write_text(json.dumps({
-                    "summary": summary_lth,
-                    "entries": lowtohigh_entries
-                }, indent=2), encoding="utf-8")
-                print(f"[Categorise][{broker}] ${risk_usd} lowtohigh.json → {len(lowtohigh_entries)} entries")
-                total_low_to_high += len(lowtohigh_entries)
-            except Exception as e:
-                print(f"[Categorise][{broker}] Failed lowtohigh.json ${risk_usd}: {e}")
-
-    print(f"\n[Categorise] Finished – "
-          f"{total_high_to_low} HIGH→LOW entries | {total_low_to_high} LOW→HIGH entries")
-    return True
-    
-def symbolvolumeupdater():
-    '''NUCLEAR COMMAND: ALL RECORDS OF A SYMBOL = YOUR RULE
-    Now also triggers recalculation of SL/TP for affected asset classes.'''
+def remove_disabled_orders():
     from pathlib import Path
     import json
-    from datetime import datetime
+    import os
 
-    CONTROL = Path("C:/xampp/htdocs/chronedge/chart/symbols_volumes_points/allowedmarkets/allsymbolsvolumesandrisk.json")
-    ROOT = Path("C:/xampp/htdocs/chronedge/chart/symbols_volumes_points")
-
-    if not CONTROL.exists():
-        print("[NUKE] CONTROL FILE MISSING", "ERROR")
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
         return False
 
     try:
-        allowed = json.loads(CONTROL.read_text(encoding="utf-8"))
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
     except Exception as e:
-        print(f"[NUKE] Failed to parse control file: {e}", "ERROR")
+        print(f"[ERROR] Failed to load configuration: {e}")
         return False
 
-    changes = 0
-    changed_symbols = defaultdict(set)  # asset_class → {symbols}
-
-    # Build command dictionary: symbol → {risk, volume, asset_class}
-    commands = {}
-    for risk_key, groups in allowed.items():
-        try:
-            risk = float(risk_key.split(":")[1].strip())
-        except:
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
             continue
-        for asset, symbols in groups.items():
-            for s in symbols:
-                sym = s.get("symbol")
-                vol = s.get("volume")
-                if sym and vol is not None:
-                    commands[sym] = {"risk": risk, "volume": vol, "asset": asset}
-
-    if not commands:
-        print("[NUKE] NO COMMANDS FOUND", "INFO")
-        return True
-
-    # Map filename → asset class
-    FILENAME_TO_ASSET = {
-        "forexvolumesandrisk.json": "forex",
-        "syntheticsvolumesandrisk.json": "synthetics",
-        "cryptovolumesandrisk.json": "crypto",
-        "basketindicesvolumesandrisk.json": "basketindices",
-        "indicesvolumesandrisk.json": "indices",
-        "metalsvolumesandrisk.json": "metals",
-        "stocksvolumesandrisk.json": "stocks",
-        "etfsvolumesandrisk.json": "etfs",
-        "equitiesvolumesandrisk.json": "equities",
-        "energiesvolumesandrisk.json": "energies",
-        "commoditiesvolumesandrisk.json": "commodities",
-    }
-
-    # Master files to update
-    masters = list(FILENAME_TO_ASSET.keys())
-
-    # === PHASE 1: Apply changes to input files ===
-    for file in masters:
-        path = ROOT / file
-        if not path.exists():
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
             continue
 
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as e:
-            print(f"[NUKE] Failed to read {file}: {e}", "ERROR")
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
             continue
 
-        entries = []
-        if isinstance(data, list):
-            entries = data
-        elif isinstance(data, dict):
-            for v in data.values():
-                if isinstance(v, list):
-                    entries.extend(v)
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
 
-        asset_class = FILENAME_TO_ASSET[file]
-        changed_in_file = False
+        print(f"[BROKER] {user_brokerid}")
 
-        for entry in entries:
-            market = entry.get("market")
-            if not market or market not in commands:
+        files_cleaned_this_broker = 0
+        orders_removed_this_broker = 0
+
+        calc_risk_dirs = list(developer_path.rglob("calculatedrisk"))
+
+        for calc_risk_dir in calc_risk_dirs:
+            temp_dir = calc_risk_dir.parent
+
+            am_files = list(temp_dir.glob("*_accountmanagement.json"))
+            disable_mode = "sameordertype"
+            if am_files:
+                try:
+                    with open(am_files[0], 'r', encoding='utf-8') as f:
+                        settings = json.load(f).get("settings", {})
+                    mode = settings.get("disable_orders", "").strip().lower()
+                    if mode in ["sameordertype", "allordertype"]:
+                        disable_mode = mode
+                except:
+                    pass
+
+            disabled_files = list(temp_dir.glob("*_disabledorders.json"))
+            if not disabled_files:
                 continue
 
-            cmd = commands[market]
-            if cmd["asset"] != asset_class:
-                continue  # Wrong asset class
+            try:
+                with open(disabled_files[0], 'r', encoding='utf-8') as f:
+                    disabled_data = json.load(f)
+            except:
+                continue
 
-            old_risk = entry.get("riskusd_amount")
-            old_vol = entry.get("volume")
+            disabled = set()
+            for section in ["OPEN_POSITIONS", "PENDING_POSITIONS", "HISTORY_ORDERS"]:
+                for sym, info in disabled_data.get(section, {}).items():
+                    sym_norm = " ".join(sym.replace("_", " ").split()).upper()
+                    order_type = info.get("limit_order")
+                    if order_type in ["buy_limit", "sell_limit"]:
+                        if disable_mode == "allordertype":
+                            disabled.add(sym_norm)
+                        else:
+                            disabled.add((sym_norm, order_type))
 
-            if old_risk != cmd["risk"] or str(old_vol) != str(cmd["volume"]):
-                print(f"[NUKE] {market} | ${old_risk}→${cmd['risk']} | {old_vol}→{cmd['volume']} [{asset_class.upper()}]")
-                entry["riskusd_amount"] = cmd["risk"]
-                entry["volume"] = cmd["volume"]
-                entry["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                changes += 1
-                changed_in_file = True
-                changed_symbols[asset_class].add(market)
+            if not disabled:
+                continue
 
-        if changed_in_file:
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            print(f"[NUKE] SAVED {file}")
+            for risk_folder in calc_risk_dir.iterdir():
+                if not risk_folder.is_dir() or not risk_folder.name.startswith("risk_") or not risk_folder.name.endswith("_usd"):
+                    continue
 
-    if changes == 0:
-        print("[NUKE] NO CHANGES DETECTED – SKIPPING RECALCULATION", "INFO")
-        return True
+                for file in risk_folder.glob("*.json"):
+                    if "_accountmanagement" in file.name or "_disabledorders" in file.name:
+                        continue
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                    except:
+                        continue
 
-    # === PHASE 2: Recalculate SL/TP for affected asset classes ===
-    print(f"\n[NUKE] {changes} changes detected. Recalculating SL/TP for affected assets...", "INFO")
+                    orders = data.get("orders", {})
+                    modified = False
+                    new_markets = {}
 
-    # Map asset class → calculation function
-    CALC_FUNCTIONS = {
-        "forex": calculate_forex_sl_tp_markets,
-        "synthetics": calculate_synthetics_sl_tp_markets,
-        "crypto": calculate_crypto_sl_tp_markets,
-        "basketindices": calculate_basketindices_sl_tp_markets,
-        "indices": calculate_indices_sl_tp_markets,
-        "metals": calculate_metals_sl_tp_markets,
-        "stocks": calculate_stocks_sl_tp_markets,
-        "etfs": calculate_etfs_sl_tp_markets,
-        "equities": calculate_equities_sl_tp_markets,
-        "energies": calculate_energies_sl_tp_markets,
-        "commodities": calculate_commodities_sl_tp_markets,
-    }
+                    for market, mdata in orders.items():
+                        if market in ["total_orders", "total_markets"]:
+                            continue
+                        new_tfs = {}
+                        for tf, order_list in mdata.items():
+                            if not isinstance(order_list, list):
+                                continue
+                            valid = []
+                            for order in order_list:
+                                order_type = order.get("limit_order")
+                                if order_type not in ["buy_limit", "sell_limit"]:
+                                    valid.append(order)
+                                    continue
+                                sym_norm = " ".join(market.replace("_", " ").split()).upper()
+                                should_remove = (
+                                    (disable_mode == "allordertype" and sym_norm in disabled) or
+                                    (disable_mode == "sameordertype" and (sym_norm, order_type) in disabled)
+                                )
+                                if should_remove:
+                                    orders_removed_this_broker += 1
+                                    modified = True
+                                    continue
+                                valid.append(order)
+                            if valid:
+                                new_tfs[tf] = valid
 
-    recalc_success = 0
-    recalc_failed = 0
+                        if new_tfs:
+                            new_markets[market] = {**mdata, **new_tfs}
 
-    for asset_class, symbols in changed_symbols.items():
-        calc_func = CALC_FUNCTIONS.get(asset_class)
-        if not calc_func:
-            print(f"[NUKE] No calculator for {asset_class}", "WARNING")
-            continue
+                    if modified:
+                        new_total_orders = sum(len(ol) for m in new_markets.values() for ol in m.values() if isinstance(ol, list))
+                        new_total_markets = len(new_markets)
 
-        print(f"[NUKE] Recalculating {asset_class.upper()} for {len(symbols)} symbol(s): {', '.join(list(symbols)[:5])}{'...' if len(symbols)>5 else ''}")
-        try:
-            if calc_func():
-                recalc_success += 1
-            else:
-                recalc_failed += 1
-        except Exception as e:
-            print(f"[NUKE] {asset_class.upper()} recalc failed: {e}", "ERROR")
-            recalc_failed += 1
+                        if new_total_markets > 0:
+                            new_data = {
+                                "orders": {
+                                    "total_orders": new_total_orders,
+                                    "total_markets": new_total_markets,
+                                    **new_markets
+                                }
+                            }
+                            try:
+                                with open(file, 'w', encoding='utf-8') as f:
+                                    json.dump(new_data, f, indent=2, ensure_ascii=False)
+                                files_cleaned_this_broker += 1
+                            except:
+                                pass
+                        else:
+                            try:
+                                file.unlink()
+                            except:
+                                pass
 
-    print(f"[NUKE] Recalculation complete: {recalc_success} succeeded, {recalc_failed} failed.", "INFO")
+        if files_cleaned_this_broker > 0:
+            print(f" → Cleaned {files_cleaned_this_broker} file(s), removed {orders_removed_this_broker} order(s)\n")
+        else:
+            print(" → No changes\n")
 
-    # === PHASE 3: Re-promote & re-categorize ===
-    print("[NUKE] Running scale_lowerorders_proportionally()...", "INFO")
-    scale_lowerorders_proportionally()
-
-    print("[NUKE] Running categorise_strategy()...", "INFO")
-    categorise_strategy()
-
-    print(f"\n[NUKE] NUCLEAR SYNC COMPLETE | {changes} records updated | {recalc_success} asset(s) recalculated.", "SUCCESS")
     return True  
 
+def calculate_forex_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    import json
+    import os
 
-def get_chosen_broker() -> Optional[Dict[str, Any]]:
-    """
-    FINAL VERSION — Enforces correct folder naming (e.g. deriv6, not 'Deriv 6')
-    Finds the real chosen broker and syncs all same-type brokers perfectly.
-    """
-    BASE_DIR = Path(r"C:\xampp\htdocs\chronedge\synarex\chart\symbols_calculated_prices")
-    BROKERS_DICT_PATH = Path(r"C:\xampp\htdocs\chronedge\synarex\brokersdictionary.json")
+    # --- Path Configurations ---
+    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    DEV_BASE_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers"
+    SYMBOL_CATEGORY_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 
-    if not BASE_DIR.is_dir():
-        print(f"[get_chosen_broker] Base directory missing: {BASE_DIR}")
-        return None
-    if not BROKERS_DICT_PATH.is_file():
-        print(f"[get_chosen_broker] brokersdictionary.json missing: {BROKERS_DICT_PATH}")
-        return None
+    # Load Required Base Files
+    if not all(os.path.exists(p) for p in [USERS_JSON_PATH, SYMBOL_CATEGORY_PATH]):
+        print("[ERROR] Base configuration files missing.")
+        return False
 
-    # Load dictionary
     try:
-        brokers_dict = json.loads(BROKERS_DICT_PATH.read_text(encoding="utf-8"))
+        with open(USERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            users_dict = json.load(f)
+        with open(SYMBOL_CATEGORY_PATH, 'r', encoding='utf-8') as f:
+            category_data = json.load(f)
+        
+        # Identify which symbols are forex
+        forex_symbols = set(category_data.get("forex", []))
     except Exception as e:
-        print(f"[get_chosen_broker] Failed to read brokersdictionary.json: {e}")
-        return None
+        print(f"[ERROR] Failed to load initial data: {e}")
+        return False
 
-    chosen_broker = None
-    chosen_folder_path = None
-    chosen_key = None
+    # Iterate through each broker/user in users.json
+    for user_brokerid in users_dict.keys():
+        dev_path = os.path.join(DEV_BASE_PATH, user_brokerid)
+        limit_orders_path = os.path.join(dev_path, "limit_orders.json")
+        asv_path = os.path.join(dev_path, "allowedsymbolsandvolumes.json")
 
-    print("[get_chosen_broker] Starting scan with strict folder name enforcement...")
-
-    # Step 1: Find which broker is actually chosen (by checking its folder)
-    for broker_key, info in brokers_dict.items():
-        expected_folder_name = broker_key  # e.g. "deriv6"
-        expected_path = BASE_DIR / expected_folder_name
-
-        chosen_file = expected_path / "chosenbroker.json"
-        if not chosen_file.is_file():
+        # Skip if necessary files don't exist for this specific developer
+        if not os.path.exists(limit_orders_path):
             continue
 
+        print(f"[PROCESS] Checking Broker: {user_brokerid}")
+
+        # Load Allowed Symbols and Volumes
+        symbol_rules = {}
+        if os.path.exists(asv_path):
+            try:
+                with open(asv_path, 'r', encoding='utf-8') as f:
+                    asv_content = json.load(f)
+                    forex_cfg = asv_content.get("forex", {})
+                    # If limited is true, we only use symbols in the allowed list
+                    if forex_cfg.get("limited", False):
+                        for item in forex_cfg.get("allowed", []):
+                            sym = item.get("symbol", "").upper()
+                            symbol_rules[sym] = {
+                                "volume": float(item.get("volume", 0.01)),
+                                "risk": float(item.get("risk", 4.0))
+                            }
+                    else:
+                        # If not limited, we'll use a default later if symbol not in rules
+                        pass
+            except Exception as e:
+                print(f"  → Warning: Could not parse ASV for {user_brokerid}: {e}")
+
+        # Load existing limit_orders.json
         try:
-            data = json.loads(chosen_file.read_text(encoding="utf-8"))
-            if data.get("chosen") is True:
-                # Found the real chosen one!
-                chosen_broker = data
-                chosen_folder_path = expected_path.resolve()
-                chosen_key = broker_key
-
-                # Auto-fix wrong folder names (e.g. "Deriv 6" → "deriv6")
-                wrong_paths = [p for p in BASE_DIR.iterdir() if p.is_dir() and p.name.lower() == broker_key.lower() and p.name != broker_key]
-                for wrong in wrong_paths:
-                    correct = BASE_DIR / broker_key
-                    print(f"   Fixing wrong folder name: {wrong.name} → {broker_key}")
-                    if correct.exists():
-                        shutil.rmtree(correct)
-                    wrong.rename(correct)
-
-                print(f"[get_chosen_broker] Chosen broker confirmed: {broker_key}")
-                print(f"   Folder: {expected_folder_name}")
-                print(f"   Balance: ${data.get('balance', 'N/A')}")
-                break
+            with open(limit_orders_path, 'r', encoding='utf-8') as f:
+                orders_list = json.load(f)
         except Exception as e:
-            print(f"   [Error] Bad chosenbroker.json in {expected_path}: {e}")
-
-    if not chosen_broker:
-        print("[get_chosen_broker] No broker currently chosen.")
-        return None
-
-    # Step 2: Determine broker family (e.g. "deriv")
-    family = re.sub(r'\d+$', '', chosen_key).lower()  # deriv6 → deriv, octafx10 → octafx
-    print(f"[get_chosen_broker] Syncing all brokers in family: '{family}'")
-
-    # Step 3: Sync all same-family brokers
-    targets = []
-    for key, info in brokers_dict.items():
-        if not re.sub(r'\d+$', '', key).lower() == family:
+            print(f"  → Error reading limit_orders.json: {e}")
             continue
-        target_folder = BASE_DIR / key
-        if target_folder.resolve() == chosen_folder_path:
-            continue  # skip source
-        targets.append((key, target_folder))
 
-    if not targets:
-        print(f"[get_chosen_broker] No other '{family}' brokers to sync.")
-        return chosen_broker
+        updated_orders = []
+        changes_made = False
 
-    print(f"[get_chosen_broker] Syncing {len(targets)} broker(s)...")
+        for order in orders_list:
+            symbol = order.get("symbol", "").upper()
+            
+            # 1. Filter: Must be a Forex symbol according to symbolscategory.json
+            if symbol not in forex_symbols:
+                updated_orders.append(order)
+                continue
 
-    def copy_clean(src: Path, dst: Path):
-        if dst.exists():
-            print(f"   Replacing: {dst.name}")
-            shutil.rmtree(dst)
-        shutil.copytree(
-            src, dst,
-            ignore=shutil.ignore_patterns("chosenbroker.json", "*.log", "__pycache__")
-        )
-        # Extra safety
-        (dst / "chosenbroker.json").unlink(missing_ok=True)
+            # 2. Check ASV rules if "limited" was true
+            # (If symbol_rules is populated but symbol isn't in it, we skip calculation)
+            if symbol_rules and symbol not in symbol_rules:
+                updated_orders.append(order)
+                continue
 
-    for key, target_path in targets:
-        try:
-            copy_clean(chosen_folder_path, target_path)
-            print(f"   Synced → {key}")
-        except Exception as e:
-            print(f"   Failed to sync {key}: {e}")
+            # Get Volume and Risk (Prefer ASV, fallback to defaults)
+            rule = symbol_rules.get(symbol, {"volume": 0.01, "risk": 4.0})
+            volume = rule["volume"]
+            risk_usd = rule["risk"]
 
-    print(f"[get_chosen_broker] All '{family}' brokers synchronized successfully!")
-    print(f"    Source (active): {chosen_key}")
-    return chosen_broker
+            # Calculation Logic
+            try:
+                entry = float(order.get("entry", 0))
+                tick_size = float(order.get("tick_size", 0.00001))
+                tick_value = float(order.get("tick_value", 0))
+                rr_ratio = float(order.get("risk_reward", 1))
+                order_type = order.get("order_type", "")
 
-def main():
-    
-    symbolsorderfiltering()
-    clean_5m_timeframes()
-    print("\n" + "="*60, "HEADER")
-    print("SL/TP CALCULATOR + PROMOTER + STRATEGY CATEGORISER", "HEADER")
-    print("Starting full pipeline...", "INFO")
-    print("="*60 + "\n", "HEADER")
+                if tick_value <= 0 or entry <= 0:
+                    updated_orders.append(order)
+                    continue
 
-    # Phase 1: Calculate SL/TP for all asset classes
-    print("PHASE 1: Calculating SL/TP per broker & risk level...", "PHASE")
-    calculations = [
-        calculate_forex_sl_tp_markets,
-        calculate_synthetics_sl_tp_markets,
-        calculate_crypto_sl_tp_markets,
-        calculate_basketindices_sl_tp_markets,
-        calculate_indices_sl_tp_markets,
-        calculate_metals_sl_tp_markets,
-        calculate_stocks_sl_tp_markets,
-        calculate_etfs_sl_tp_markets,
-        calculate_equities_sl_tp_markets,
-        calculate_energies_sl_tp_markets,
-        calculate_commodities_sl_tp_markets,
-    ]
+                # Math for SL and TP
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume * (pip_size / tick_size)
+                
+                if pip_value_usd <= 0:
+                    updated_orders.append(order)
+                    continue
 
-    calc_success = 0
-    calc_failed = 0
+                sl_pips = risk_usd / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+                
+                # Determine decimals for rounding
+                digits = 5 if tick_size <= 1e-5 else 3
 
-    for calc_func in calculations:
-        try:
-            if calc_func():
-                calc_success += 1
-            else:
-                calc_failed += 1
-                asset = calc_func.__name__.replace("calculate_", "").replace("_sl_tp_markets", "").upper()
-                print(f"[{asset}] Failed (check logs above)", "ERROR")
-        except FileNotFoundError:
-            asset = calc_func.__name__.replace("calculate_", "").replace("_sl_tp_markets", "").upper()
-            print(f"[{asset}] Input file missing — SKIPPING", "SKIP")
-            calc_failed += 1
-        except Exception as e:
-            asset = calc_func.__name__.replace("calculate_", "").replace("_sl_tp_markets", "").upper()
-            print(f"[{asset}] Unexpected error: {e}", "ERROR")
-            calc_failed += 1
+                if order_type == "buy_limit":
+                    sl_price = round(entry - (sl_pips * pip_size), digits)
+                    tp_price = round(entry + (tp_pips * pip_size), digits)
+                elif order_type == "sell_limit":
+                    sl_price = round(entry + (sl_pips * pip_size), digits)
+                    tp_price = round(entry - (tp_pips * pip_size), digits)
+                else:
+                    updated_orders.append(order)
+                    continue
 
-    if calc_success == 0:
-        print(f"No calculations succeeded. Aborting.", "FATAL")
-        return False
+                # Update the original order structure
+                order["exit"] = sl_price
+                order["target"] = tp_price
+                # Optional: tracking metadata
+                order["calculated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                updated_orders.append(order)
+                changes_made = True
 
-    print(f"\n{calc_success} calculation(s) succeeded, {calc_failed} skipped/failed. Continuing...\n", "INFO")
+            except Exception as e:
+                print(f"  → Failed to calculate for {symbol}: {e}")
+                updated_orders.append(order)
 
-    
+        # Save back to the original file path without restructuring
+        if changes_made:
+            try:
+                with open(limit_orders_path, 'w', encoding='utf-8') as f:
+                    json.dump(updated_orders, f, indent=4, ensure_ascii=False)
+                print(f"  → Successfully updated SL/TP for {user_brokerid}")
+            except Exception as e:
+                print(f"  → Error saving file: {e}")
+        else:
+            print(f"  → No forex calculations needed for {user_brokerid}")
 
-    # Phase 3: Categorise strategies
-    print("PHASE 3: Categorising strategies (HIGH→LOW / LOW→HIGH)...", "PHASE")
-    if not categorise_strategy():
-        print("Strategy categorisation failed.", "ERROR")
-        return False
-    print("Strategy categorisation completed.\n", "SUCCESS")
-    # Phase 2: Promote lower risk orders
-    print("PHASE 2: Promoting lower-risk orders proportionally...", "PHASE")
-    if not scale_lowerorders_proportionally():
-        print("Promotion phase failed.", "ERROR")
-        return False
-    print("Promotion phase completed.\n", "SUCCESS")
-    clean_5m_timeframes()
-    get_chosen_broker()
-    print("="*60, "FOOTER")
-    print("FULL PIPELINE COMPLETED SUCCESSFULLY!", "SUCCESS")
-    print("="*60 + "\n", "FOOTER")
     return True
 
+def calculate_basketindices_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    # Assuming SYMBOLSTICK_DATA is defined globally or loaded elsewhere in your project
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing basket indices output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for basket_file in risk_folder.glob("*_basketindices.json"):
+                        try:
+                            basket_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            basket_config = asv_data.get("basket_indices", {})
+
+            # NEW LOGIC (same as updated forex version):
+            # - limited == True  → only process symbols listed in "allowed"
+            # - limited == False → allow ALL basket indices symbols found in temp file
+            limited = basket_config.get("limited", False)
+            allowed_list = basket_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                # limited=True but nothing allowed → no processing
+                continue
+
+            # Build symbol_rules only for limited mode
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management settings
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            basket_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "basket_indices":
+                    continue
+
+                basket_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                # Determine volume and risk
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    # limited=False → allow all basket indices with defaults
+                    volume_to_use = 0.01    # adjust default volume if needed
+                    risk_usd_to_use = 4.0   # adjust default risk if needed
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.001)
+                tick_value = tick_info.get("tick_value", 0.1)
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering (same as before)
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not basket_found or not results_by_risk:
+                continue
+
+            # Save output files
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder_name = f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder = calc_risk_dir / risk_folder_name
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "basket_indices",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.001),
+                        "tick_value": tick_info.get("tick_value", 0.1),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_basketindices.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except Exception as e:
+                    print(f"Failed to save {out_file}: {e}")
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} basket indices JSON file(s)\n")
+        else:
+            print(" → No basket indices output files generated\n")
+
+    return True 
+
+def calculate_synthetics_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    # Assumes SYMBOLSTICK_DATA is available globally
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing synthetics output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for synth_file in risk_folder.glob("*_synthetics.json"):
+                        try:
+                            synth_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            synthetics_config = asv_data.get("synthetics", {})
+
+            # NEW LOGIC (consistent with forex and basketindices):
+            # - limited == True  → only process symbols listed in "allowed"
+            # - limited == False → allow ALL synthetics symbols found in temp file
+            limited = synthetics_config.get("limited", False)
+            allowed_list = synthetics_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                # limited=True but nothing listed → no synthetics processing
+                continue
+
+            # Build symbol_rules only in limited mode
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management settings
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            synthetics_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "synthetics":
+                    continue
+
+                synthetics_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                # Determine volume and risk based on mode
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    # limited=False → allow all synthetics symbols with defaults
+                    volume_to_use = 0.01    # default volume for synthetics (adjust if needed)
+                    risk_usd_to_use = 4.0   # default risk in USD (adjust if needed)
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)
+                tick_value = tick_info.get("tick_value", 0.01)
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering: buys/sells only, max orders per symbol
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode for TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final calculated orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not synthetics_found or not results_by_risk:
+                continue
+
+            # Save to risk folders
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder_name = f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder = calc_risk_dir / risk_folder_name
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "synthetics",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 0.01),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_synthetics.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except Exception as e:
+                    print(f"Failed to save {out_file}: {e}")
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} synthetics JSON file(s)\n")
+        else:
+            print(" → No synthetics output files generated\n")
+
+    return True
+
+def calculate_energies_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    # Assumes SYMBOLSTICK_DATA is available globally (used in forex/synthetics/basket)
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing energies output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for energy_file in risk_folder.glob("*_energies.json"):
+                        try:
+                            energy_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            energies_config = asv_data.get("energies", {})
+
+            # NEW LOGIC: same as forex/synthetics/basket
+            limited = energies_config.get("limited", False)
+            allowed_list = energies_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                continue  # limited=True but empty allowed → no processing
+
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            energies_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "energies":
+                    continue
+
+                energies_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                # Determine volume/risk
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    volume_to_use = 0.01   # default for energies (e.g., oil, gas)
+                    risk_usd_to_use = 4.0
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)
+                tick_value = tick_info.get("tick_value", 1.0)  # typical for energies
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering per symbol
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not energies_found or not results_by_risk:
+                continue
+
+            # Save to risk folders
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder = calc_risk_dir / f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "energies",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 1.0),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_energies.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except:
+                    pass
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} energies JSON file(s)\n")
+        else:
+            print(" → No energies output files generated\n")
+
+    return True
+
+def calculate_indices_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for idx_file in risk_folder.glob("*_indices.json"):
+                        try:
+                            idx_file.unlink()
+                        except:
+                            pass
+
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            indices_config = asv_data.get("indices", {})
+
+            limited = indices_config.get("limited", False)
+            allowed_list = indices_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                continue
+
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            indices_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "indices":
+                    continue
+
+                indices_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    volume_to_use = 0.1   # typical for indices
+                    risk_usd_to_use = 16.0
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)
+                tick_value = tick_info.get("tick_value", 1.0)
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # [Same filtering, coordination, building, and saving logic as previous versions...]
+            # (Omitted for brevity — identical to energies version)
+
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only": filtered = buys
+                    elif record_from == "sells_only": filtered = sells
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+                filtered_symbol_orders[norm_market] = filtered
+
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2: continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders: continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not indices_found or not results_by_risk:
+                continue
+
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder = calc_risk_dir / f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "indices",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 1.0),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_indices.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except:
+                    pass
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} indices JSON file(s)\n")
+        else:
+            print(" → No indices output files generated\n")
+
+    return True
+
+def calculate_metals_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing metals output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for metals_file in risk_folder.glob("*_metals.json"):
+                        try:
+                            metals_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            metals_config = asv_data.get("metals", {})
+
+            # NEW LOGIC: same as forex/synthetics/basket/energies
+            limited = metals_config.get("limited", False)
+            allowed_list = metals_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                continue  # limited=True but empty → skip
+
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            metals_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "metals":
+                    continue
+
+                metals_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    volume_to_use = 0.01   # typical for XAUUSD/XAGUSD
+                    risk_usd_to_use = 16.0  # common default risk for gold
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)
+                tick_value = tick_info.get("tick_value", 1.0)  # usually 1 for metals
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering per symbol
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not metals_found or not results_by_risk:
+                continue
+
+            # Save to risk folders
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder = calc_risk_dir / f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "metals",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 1.0),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_metals.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except:
+                    pass
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} metals JSON file(s)\n")
+        else:
+            print(" → No metals output files generated\n")
+
+    return True
+
+def calculate_crypto_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing crypto output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for crypto_file in risk_folder.glob("*_crypto.json"):
+                        try:
+                            crypto_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            crypto_config = asv_data.get("crypto", {})
+
+            # NEW LOGIC: consistent with all other categories
+            limited = crypto_config.get("limited", False)
+            allowed_list = crypto_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                continue  # limited=True but empty allowed → no crypto processing
+
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management settings
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders from *_temp.json
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            crypto_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "crypto":
+                    continue
+
+                crypto_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                # Determine volume and risk
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    # Default values when allowing all crypto symbols
+                    volume_to_use = 0.01   # common for BTC/ETH
+                    risk_usd_to_use = 4.0
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)   # typical for crypto pairs
+                tick_value = tick_info.get("tick_value", 1.0)
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering per symbol
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final calculated orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not crypto_found or not results_by_risk:
+                continue
+
+            # Save to risk folders
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder = calc_risk_dir / f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "crypto",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 1.0),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_crypto.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except:
+                    pass
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} crypto JSON file(s)\n")
+        else:
+            print(" → No crypto output files generated\n")
+
+    return True
+
+def calculate_equities_sl_tp_market():
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+    import json
+    import os
+
+    BROKERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    brokers_dir = os.path.dirname(BROKERS_JSON_PATH)
+    developers_functions_path = os.path.join(brokers_dir, "developers_functions.json")
+    
+    if not os.path.exists(BROKERS_JSON_PATH) or not os.path.exists(developers_functions_path):
+        print("[ERROR] Required JSON files missing.")
+        return False
+
+    try:
+        with open(BROKERS_JSON_PATH, 'r', encoding='utf-8') as f:
+            usersdictionary = json.load(f)
+        with open(developers_functions_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return False
+
+    global SYMBOLSTICK_DATA
+
+    for user_brokerid, items in data.items():
+        if not isinstance(items, list):
+            continue
+        filename = next((item[len("filename:"):].strip() for item in items if str(item).strip().startswith("filename:")), None)
+        if not filename or not filename.endswith(".py"):
+            continue
+        if user_brokerid not in usersdictionary:
+            continue
+
+        cfg = usersdictionary[user_brokerid]
+        base_folder = cfg.get("BASE_FOLDER")
+        if not base_folder:
+            continue
+
+        developer_folder = os.path.join(base_folder, "..", "developers", user_brokerid)
+        developer_path = Path(developer_folder).resolve()
+        if not developer_path.is_dir():
+            continue
+
+        temp_files = list(developer_path.rglob("*_temp.json"))
+        if not temp_files:
+            continue
+
+        print(f"[BROKER] {user_brokerid}")
+
+        broker_clean = ''.join(c for c in user_brokerid if not c.isdigit()).lower()
+        files_saved_this_broker = 0
+
+        for temp_path in temp_files:
+            temp_name = temp_path.name.lower()
+            original_stem = temp_name[:-10] if temp_name.endswith('_temp.json') else temp_path.stem
+            temp_dir = temp_path.parent
+            calc_risk_dir = temp_dir / "calculatedrisk"
+            calc_risk_dir.mkdir(exist_ok=True)
+
+            # Clean existing equities output files
+            for risk_folder in calc_risk_dir.iterdir():
+                if risk_folder.is_dir() and risk_folder.name.startswith("risk_") and risk_folder.name.endswith("_usd"):
+                    for equities_file in risk_folder.glob("*_equities.json"):
+                        try:
+                            equities_file.unlink()
+                        except:
+                            pass
+
+            # Load *_allowedsymbolsandvolumes.json
+            prefixed_asv = temp_dir / f"{original_stem}_allowedsymbolsandvolumes.json"
+            if not prefixed_asv.is_file():
+                continue
+            try:
+                with open(prefixed_asv, 'r', encoding='utf-8') as f:
+                    asv_data = json.load(f)
+            except:
+                continue
+
+            equities_config = asv_data.get("equities", {})
+
+            # NEW LOGIC: consistent with all other categories
+            limited = equities_config.get("limited", False)
+            allowed_list = equities_config.get("allowed", [])
+
+            if limited and not allowed_list:
+                continue  # limited=True but empty allowed → no equities processing
+
+            symbol_rules = {}
+            if limited:
+                for item in allowed_list:
+                    sym = " ".join(item.get("symbol", "").replace("_", " ").split()).upper()
+                    vol = float(item.get("volume", 0))
+                    risk = float(item.get("risk", 0))
+                    if vol > 0 and risk > 0:
+                        symbol_rules[sym] = {"volume": vol, "risk_usd": risk}
+
+            # Load account management settings
+            prefixed_am = temp_dir / f"{original_stem}_accountmanagement.json"
+            if not prefixed_am.is_file():
+                continue
+            try:
+                with open(prefixed_am, 'r', encoding='utf-8') as f:
+                    am_data = json.load(f)
+            except:
+                continue
+
+            settings = am_data.get("settings", {})
+            calc_sl = str(settings.get("calculate_stoploss", "")).strip().lower() == "yes"
+            calc_tp = str(settings.get("calculate_takeprofit", "")).strip().lower() == "yes"
+            calculation_type = str(settings.get("calculation_type", "default")).strip().lower()
+
+            try:
+                rr_ratio_raw = settings.get("risk_reward_ratio", 3.0)
+                rr_ratio = float(rr_ratio_raw)
+                if rr_ratio <= 0:
+                    rr_ratio = 3.0
+            except:
+                rr_ratio = 3.0
+
+            record_from = str(settings.get("record_orders_from", "all")).strip().lower()
+            orders_per_sym_str = str(settings.get("orders_per_symbol", "all")).strip().lower()
+            max_orders_per_sym = None if orders_per_sym_str == "all" else int(orders_per_sym_str) if orders_per_sym_str.isdigit() else None
+
+            # Load orders from *_temp.json
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                orders_section = content.get("orders", {})
+            except:
+                continue
+
+            results_by_risk = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+            equities_found = False
+            symbol_orders = defaultdict(list)
+
+            for market_key, market_data in orders_section.items():
+                if market_key in ["total_orders", "total_markets"] or market_data.get("category", "").lower() != "equities":
+                    continue
+
+                equities_found = True
+                norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+
+                # Determine volume and risk
+                if limited:
+                    rule = symbol_rules.get(norm_market)
+                    if not rule:
+                        continue
+                    volume_to_use = rule["volume"]
+                    risk_usd_to_use = rule["risk_usd"]
+                else:
+                    # Default values when allowing all equities symbols
+                    volume_to_use = 1.0    # equities usually traded in whole shares/lots
+                    risk_usd_to_use = 16.0  # common higher risk for stocks
+
+                tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                if tick_info.get("broker") != broker_clean:
+                    tick_info = {}
+                tick_size = tick_info.get("tick_size", 0.01)
+                tick_value = tick_info.get("tick_value", 1.0)  # typically 1 USD per share
+                pip_size = 10 * tick_size
+                pip_value_usd = tick_value * volume_to_use * (pip_size / tick_size)
+                if pip_value_usd <= 0:
+                    continue
+
+                sl_pips = risk_usd_to_use / pip_value_usd
+                tp_pips = sl_pips * rr_ratio
+
+                for tf, order_list in market_data.items():
+                    if not isinstance(order_list, list):
+                        continue
+                    for order in order_list:
+                        order_type = order.get("order_type") or order.get("limit_order")
+                        if order_type not in ["buy_limit", "sell_limit"] or "entry_price" not in order:
+                            continue
+                        try:
+                            entry_price = float(order["entry_price"])
+                            exit_price = float(order.get("exit_price")) if order.get("exit_price") is not None else None
+                            profit_price = float(order.get("profit_price")) if order.get("profit_price") is not None else None
+                        except:
+                            continue
+
+                        order_info = {
+                            "tf": tf,
+                            "order_type": order_type,
+                            "entry_price": entry_price,
+                            "exit_price": exit_price,
+                            "profit_price": profit_price,
+                            "market_key": market_key,
+                            "volume_to_use": volume_to_use,
+                            "risk_usd_to_use": risk_usd_to_use,
+                            "sl_pips": sl_pips,
+                            "tp_pips": tp_pips,
+                            "tick_size": tick_size,
+                            "pip_size": pip_size
+                        }
+                        symbol_orders[norm_market].append(order_info)
+
+            # Filtering per symbol
+            filtered_symbol_orders = {}
+            for norm_market, orders in symbol_orders.items():
+                filtered = orders
+
+                if record_from != "all":
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    if record_from == "buys_only":
+                        filtered = buys
+                    elif record_from == "sells_only":
+                        filtered = sells
+
+                if max_orders_per_sym is not None and len(filtered) > max_orders_per_sym:
+                    buys_f = [o for o in filtered if o["order_type"] == "buy_limit"]
+                    sells_f = [o for o in filtered if o["order_type"] == "sell_limit"]
+                    selected = []
+                    if buys_f:
+                        selected.extend(sorted(buys_f, key=lambda x: x["entry_price"])[:max_orders_per_sym])
+                    if sells_f and len(selected) < max_orders_per_sym:
+                        remaining = max_orders_per_sym - len(selected)
+                        selected.extend(sorted(sells_f, key=lambda x: x["entry_price"], reverse=True)[:remaining])
+                    filtered = selected
+
+                filtered_symbol_orders[norm_market] = filtered
+
+            # Coordination mode TP
+            coordinated_tp = {}
+            if calculation_type == "coordination":
+                for norm_market, orders in filtered_symbol_orders.items():
+                    if len(orders) < 2:
+                        continue
+                    buys = [o for o in orders if o["order_type"] == "buy_limit"]
+                    sells = [o for o in orders if o["order_type"] == "sell_limit"]
+                    buy_prices = sorted([o["entry_price"] for o in buys])
+                    sell_prices = sorted([o["entry_price"] for o in sells])
+                    rr_distance_pips = orders[0]["sl_pips"] * rr_ratio
+
+                    for sell_order in sells:
+                        candidates = [p for p in buy_prices if p < sell_order["entry_price"]]
+                        if candidates:
+                            closest_buy = max(candidates)
+                            distance = sell_order["entry_price"] - closest_buy
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(sell_order["tf"], sell_order["entry_price"], "sell_limit")] = closest_buy - orders[0]["tick_size"]
+
+                    for buy_order in buys:
+                        candidates = [p for p in sell_prices if p > buy_order["entry_price"]]
+                        if candidates:
+                            closest_sell = min(candidates)
+                            distance = closest_sell - buy_order["entry_price"]
+                            if distance >= rr_distance_pips * orders[0]["pip_size"]:
+                                coordinated_tp[(buy_order["tf"], buy_order["entry_price"], "buy_limit")] = closest_sell + orders[0]["tick_size"]
+
+            # Build final calculated orders
+            for norm_market, orders in filtered_symbol_orders.items():
+                if not orders:
+                    continue
+                sample = orders[0]
+                digits = len(str(sample["tick_size"]).split('.')[-1]) if '.' in str(sample["tick_size"]) else 0
+                digits = max(digits, 2)
+
+                for ord_info in orders:
+                    entry_price = ord_info["entry_price"]
+                    order_type = ord_info["order_type"]
+                    tf = ord_info["tf"]
+                    manual_sl = ord_info["exit_price"]
+                    manual_tp = ord_info["profit_price"]
+                    market_key = ord_info["market_key"]
+
+                    sl_price = None
+                    tp_price = None
+
+                    if calc_sl:
+                        sl_price = entry_price - (ord_info["sl_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price + (ord_info["sl_pips"] * ord_info["pip_size"])
+                    elif manual_sl is not None:
+                        sl_price = manual_sl
+
+                    key = (tf, entry_price, order_type)
+                    if calculation_type == "coordination" and key in coordinated_tp:
+                        tp_price = coordinated_tp[key]
+                    elif calc_tp:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+                    elif manual_tp is not None:
+                        tp_price = manual_tp
+                    else:
+                        tp_price = entry_price + (ord_info["tp_pips"] * ord_info["pip_size"]) if order_type == "buy_limit" else entry_price - (ord_info["tp_pips"] * ord_info["pip_size"])
+
+                    if sl_price is not None:
+                        sl_price = round(sl_price, digits)
+                    tp_price = round(tp_price, digits)
+
+                    calc_order = {
+                        "market_name": market_key,
+                        "timeframe": tf,
+                        "limit_order": order_type,
+                        "entry_price": entry_price,
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                        "volume": ord_info["volume_to_use"],
+                        "riskusd_amount": ord_info["risk_usd_to_use"],
+                        "rr_ratio": rr_ratio,
+                        "sl_pips": round(ord_info["sl_pips"], 2),
+                        "tp_pips": round(ord_info["tp_pips"], 2),
+                        "calculated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "broker": user_brokerid
+                    }
+
+                    risk_usd = ord_info["risk_usd_to_use"]
+                    results_by_risk[risk_usd][market_key][tf].append(calc_order)
+
+            if not equities_found or not results_by_risk:
+                continue
+
+            # Save to risk folders
+            for risk_usd, markets_dict in results_by_risk.items():
+                risk_folder = calc_risk_dir / f"risk_{str(risk_usd).replace('.', '_')}_usd"
+                risk_folder.mkdir(parents=True, exist_ok=True)
+
+                orders_structure = {
+                    "orders": {
+                        "total_orders": sum(len(orders) for market in markets_dict.values() for orders in market.values()),
+                        "total_markets": len(markets_dict)
+                    }
+                }
+                orders_dict = orders_structure["orders"]
+
+                for market_key, tf_dict in markets_dict.items():
+                    norm_market = " ".join(market_key.replace("_", " ").split()).upper()
+                    tick_info = SYMBOLSTICK_DATA.get(norm_market, {})
+                    if tick_info.get("broker") != broker_clean:
+                        tick_info = {}
+                    orders_dict[market_key] = {
+                        "category": "equities",
+                        "broker": user_brokerid,
+                        "tick_size": tick_info.get("tick_size", 0.01),
+                        "tick_value": tick_info.get("tick_value", 1.0),
+                        **tf_dict
+                    }
+
+                out_file = risk_folder / f"{original_stem}_equities.json"
+                try:
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        json.dump(orders_structure, f, indent=2, ensure_ascii=False)
+                    files_saved_this_broker += 1
+                except:
+                    pass
+
+        if files_saved_this_broker > 0:
+            print(f" → Generated {files_saved_this_broker} equities JSON file(s)\n")
+        else:
+            print(" → No equities output files generated\n")
+
+    return True
+
+def calculate_orders():
+    calculate_forex_sl_tp_market()
+    calculate_basketindices_sl_tp_market()
+    calculate_synthetics_sl_tp_market()
+    calculate_energies_sl_tp_market()
+    calculate_indices_sl_tp_market()
+    calculate_metals_sl_tp_market()
+    calculate_crypto_sl_tp_market()
+    calculate_equities_sl_tp_market()
+    scale_orders_proportionally()
+    remove_non_allowed_symbol_orders()
+    filter_orders_by_timeframe()
+    remove_disabled_orders()
+    check_risk_integrity()
 
 
+
+
+
+def purge_unauthorized_symbols():
+    """
+    Iterates through all users, identifies allowed symbols across all categories,
+    and removes any orders from limit_orders.json that use unauthorized symbols.
+    """
+    try:
+        # 1. Load User IDs
+        if not os.path.exists(USERS_PATH):
+            print(f"Users file not found: {USERS_PATH}")
+            return False
+
+        with open(USERS_PATH, 'r') as f:
+            users_data = json.load(f)
+
+        for user_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, user_broker_id)
+            volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
+            
+            # Skip user if they don't have a config file
+            if not os.path.exists(volumes_path):
+                print(f"Config missing for user {user_broker_id}, skipping purge.")
+                continue
+
+            # 2. Extract ALL allowed symbols from all categories (forex, crypto, indices, etc.)
+            allowed_symbols = set()
+            with open(volumes_path, 'r') as f:
+                v_data = json.load(f)
+                for category in v_data:
+                    for item in v_data[category]:
+                        if 'symbol' in item:
+                            # We use uppercase for a case-insensitive comparison safety check
+                            allowed_symbols.add(item['symbol'].upper())
+
+            # 3. Locate all limit_orders.json files for this user
+            limit_order_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
+
+            for limit_path in limit_order_files:
+                with open(limit_path, 'r') as f:
+                    orders = json.load(f)
+
+                # 4. Filter the orders: Keep only if the symbol is in the allowed set
+                original_count = len(orders)
+                purged_orders = [
+                    order for order in orders 
+                    if order.get('symbol', '').upper() in allowed_symbols
+                ]
+
+                # 5. Save back if any orders were removed
+                if len(purged_orders) < original_count:
+                    with open(limit_path, 'w') as f:
+                        json.dump(purged_orders, f, indent=4)
+                    print(f"Purged {original_count - len(purged_orders)} unauthorized orders")
+
+        return True
+
+    except Exception as e:
+        print(f"Error during symbol purge: {e}")
+        return False
+
+def calculate_forex_orders():
+    
+    try:
+        # 1. Load User IDs
+        if not os.path.exists(USERS_PATH):
+            print(f"Users file not found: {USERS_PATH}")
+            return False
+            
+        with open(USERS_PATH, 'r') as f:
+            users_data = json.load(f)
+            
+        # 2. Load Global Forex symbols (for validation)
+        if not os.path.exists(SYMBOL_CATEGORY_PATH):
+            print(f"Symbol category file not found: {SYMBOL_CATEGORY_PATH}")
+            return False
+
+        with open(SYMBOL_CATEGORY_PATH, 'r') as f:
+            categories = json.load(f)
+            forex_symbols = categories.get("forex", [])
+
+        # 3. Iterate through each User
+        for user_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, user_broker_id)
+            
+            # --- Load User-Specific Account Management ---
+            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
+            if not os.path.exists(acc_mgmt_path):
+                print(f"Account management not found for {user_broker_id}, skipping RR expansion.")
+                rr_ratios = [] # Or set a default like [2] if you prefer
+            else:
+                with open(acc_mgmt_path, 'r') as f:
+                    acc_mgmt_data = json.load(f)
+                    rr_ratios = acc_mgmt_data.get("risk_reward_ratios", [])
+
+            # 4. Access allowedsymbolsandvolumes.json in user broker path
+            volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
+            user_config = {}
+            if os.path.exists(volumes_path):
+                with open(volumes_path, 'r') as f:
+                    v_data = json.load(f)
+                    user_config = {item['symbol']: item for item in v_data.get("forex", [])}
+
+            # 5. Find all limit_orders.json files in user subdirectories
+            limit_order_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
+
+            for limit_path in limit_order_files:
+                # Prevent processing files already inside a risk_reward subfolder
+                if "risk_reward_" in limit_path:
+                    continue
+
+                with open(limit_path, 'r') as f:
+                    original_orders = json.load(f)
+
+                base_dir = os.path.dirname(limit_path)
+
+                # 6. Generate a version for each Risk-Reward Ratio
+                for current_rr in rr_ratios:
+                    orders_copy = copy.deepcopy(original_orders)
+                    updated = False
+
+                    for order in orders_copy:
+                        symbol = order.get('symbol')
+                        if symbol not in forex_symbols:
+                            continue
+
+                        try:
+                            entry = float(order['entry'])
+                            rr_ratio = float(current_rr) 
+                            tf = order.get('timeframe', '1h')
+                            order_type = order['order_type'].upper()
+                            tick_size = float(order.get('tick_size', 0.00001))
+                            
+                            # Volume & Risk setup
+                            tf_vol_key = f"{tf}_volume"
+                            assigned_volume = 0.01 
+                            base_risk = 0
+
+                            if symbol in user_config:
+                                assigned_volume = user_config[symbol].get(tf_vol_key, 0.01)
+                                base_risk = user_config[symbol].get('risk', 0)
+                            
+                            order[tf_vol_key] = assigned_volume
+                            order['risk_reward'] = rr_ratio # Set the specific RR for this folder
+
+                            sl_price = order.get('exit')
+                            tp_price = order.get('target')
+
+                            # CALCULATION LOGIC
+                            # Logic 1: If Exit (SL) is missing, calculate from TP
+                            if (not sl_price or sl_price == 0) and tp_price and rr_ratio > 0:
+                                tp_dist = abs(float(tp_price) - entry)
+                                risk_dist = tp_dist / rr_ratio
+                                if "BUY" in order_type:
+                                    order['exit'] = round(entry - risk_dist, 5)
+                                else:
+                                    order['exit'] = round(entry + risk_dist, 5)
+
+                            # Logic 2: If Exit (SL) is missing, use base_risk (ticks)
+                            elif (not sl_price or sl_price == 0):
+                                risk_dist = base_risk * tick_size
+                                if "BUY" in order_type:
+                                    order['exit'] = round(entry - risk_dist, 5)
+                                    order['target'] = round(entry + (risk_dist * rr_ratio), 5)
+                                else:
+                                    order['exit'] = round(entry + risk_dist, 5)
+                                    order['target'] = round(entry - (risk_dist * rr_ratio), 5)
+
+                            # Logic 3: Standard (SL exists, calculate TP based on current RR)
+                            elif sl_price and rr_ratio > 0:
+                                risk_dist = abs(entry - float(sl_price))
+                                if "BUY" in order_type:
+                                    order['target'] = round(entry + (risk_dist * rr_ratio), 5)
+                                else:
+                                    order['target'] = round(entry - (risk_dist * rr_ratio), 5)
+
+                            order['status'] = "Calculated"
+                            order['calculated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            updated = True
+
+                        except (KeyError, ValueError, ZeroDivisionError) as e:
+                            continue
+
+                    # 7. Save to the dynamic subfolder
+                    if updated:
+                        rr_folder_name = f"risk_reward_{current_rr}"
+                        target_dir = os.path.join(base_dir, rr_folder_name)
+                        os.makedirs(target_dir, exist_ok=True)
+
+                        output_path = os.path.join(target_dir, "limit_orders.json")
+                        with open(output_path, 'w') as f:
+                            json.dump(orders_copy, f, indent=4)
+                        
+            print(f"Successfully processed all RR folders for user: {user_broker_id}")
+
+        return True
+    except Exception as e:
+        print(f"Critical Error: {e}")
+        return False
+        
+def limit_order_usd_live_sl_tp_amounts():
+    # Load Broker Login Dictionary
+    BROKER_DICT_PATH = r"C:\xampp\htdocs\chronedge\synarex\ohlc.json"
+    if not os.path.exists(BROKER_DICT_PATH):
+        print(f"Broker dictionary not found: {BROKER_DICT_PATH}")
+        return False
+
+    with open(BROKER_DICT_PATH, 'r') as f:
+        broker_configs = json.load(f)
+
+    # 1. Iterate through all users
+    for user_broker_id, config in broker_configs.items():
+        user_folder = os.path.join(DEV_PATH, user_broker_id)
+        
+        # Load Allowed Risks for this specific user
+        acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
+        allowed_risks = []
+        if os.path.exists(acc_mgmt_path):
+            with open(acc_mgmt_path, 'r') as f:
+                acc_mgmt_data = json.load(f)
+                allowed_risks = acc_mgmt_data.get("RISKS", [])
+
+        # Connection Details
+        TERMINAL_PATH = config.get("TERMINAL_PATH", "")
+        LOGIN_ID = config.get("LOGIN_ID")
+        PASSWORD = config.get("PASSWORD")
+        SERVER = config.get("SERVER")
+
+        print(f"\n--- PROCESSING LIVE RISK FOR: {user_broker_id.upper()} ---")
+
+        if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
+            print(f"MT5 Init failed for {user_broker_id}: {mt5.last_error()}")
+            continue
+
+        account_info = mt5.account_info()
+        if account_info is None:
+            print(f"Could not get account info for {user_broker_id}")
+            mt5.shutdown()
+            continue
+        
+        acc_currency = account_info.currency
+
+        # Find all limit_orders.json files
+        limit_order_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
+
+        for limit_path in limit_order_files:
+            # We only process limit_orders.json that are ALREADY inside a risk_reward_X folder
+            if "risk_reward_" not in limit_path:
+                continue
+            
+            # Prevent re-processing the files we are about to create (the nested ones)
+            if "_risk" in limit_path:
+                continue
+
+            with open(limit_path, 'r') as f:
+                orders = json.load(f)
+
+            # Dictionary to group orders by their calculated risk bucket
+            # { 0.5: [order1, order2], 1: [order3], ... }
+            risk_buckets = {}
+
+            for order in orders:
+                if order.get('status') != "Calculated":
+                    continue
+
+                symbol = order.get('symbol')
+                entry = float(order.get('entry', 0))
+                exit_price = float(order.get('exit', 0))
+                target_price = float(order.get('target', 0))
+                tf = order.get('timeframe', '1h')
+                volume = float(order.get(f"{tf}_volume", 0.01))
+
+                info = mt5.symbol_info(symbol)
+                if info is None:
+                    continue
+
+                # Calculate Live Values
+                action = mt5.ORDER_TYPE_BUY if "BUY" in order['order_type'].upper() else mt5.ORDER_TYPE_SELL
+                sl_risk = mt5.order_calc_profit(action, symbol, volume, entry, exit_price)
+                tp_reward = mt5.order_calc_profit(action, symbol, volume, entry, target_price)
+
+                # Fallback
+                if sl_risk is None:
+                    point = info.point
+                    contract_size = info.trade_contract_size
+                    sl_points = abs(entry - exit_price) / point
+                    sl_risk = -(sl_points * (contract_size * point) * volume)
+
+                if tp_reward is None:
+                    point = info.point
+                    contract_size = info.trade_contract_size
+                    tp_points = abs(target_price - entry) / point
+                    tp_reward = tp_points * (contract_size * point) * volume
+
+                # Round and set attributes
+                abs_risk = round(abs(sl_risk), 2)
+                order['live_sl_risk_amount'] = abs_risk
+                order['live_tp_reward_amount'] = round(abs(tp_reward), 2)
+                order['account_currency'] = acc_currency
+
+                # --- BUCKET LOGIC ---
+                # Determine which allowed risk bucket this order falls into
+                assigned_risk_bucket = None
+                
+                if abs_risk < 1.00:
+                    if 0.5 in allowed_risks:
+                        assigned_risk_bucket = 0.5
+                else:
+                    # Floor the value (e.g., 1.99 -> 1)
+                    floored_risk = int(math.floor(abs_risk))
+                    if floored_risk in allowed_risks:
+                        assigned_risk_bucket = floored_risk
+
+                # If it matches an allowed risk, add to group
+                if assigned_risk_bucket is not None:
+                    if assigned_risk_bucket not in risk_buckets:
+                        risk_buckets[assigned_risk_bucket] = []
+                    risk_buckets[assigned_risk_bucket].append(order)
+
+            # --- SAVE GROUPED ORDERS ---
+            base_rr_folder = os.path.dirname(limit_path)
+            
+            for risk_val, grouped_orders in risk_buckets.items():
+                # Folder: .../risk_reward_2/0.5usd_risk/
+                risk_folder_name = f"{risk_val}usd_risk"
+                target_dir = os.path.join(base_rr_folder, risk_folder_name)
+                os.makedirs(target_dir, exist_ok=True)
+
+                # File: .../risk_reward_2/0.5usd_risk/0.5usd_risk.json
+                output_filename = f"{risk_val}usd_risk.json"
+                output_path = os.path.join(target_dir, output_filename)
+                
+                with open(output_path, 'w') as f:
+                    json.dump(grouped_orders, f, indent=4)
+
+        mt5.shutdown()
+
+    print("\nLIVE RISK CALCULATION AND DIRECTORY MAPPING COMPLETE.")
+    return True
+
+    
+def calculate_orders():
+    purge_unauthorized_symbols()
+    calculate_forex_orders()
 
 if __name__ == "__main__":
-    get_chosen_broker()
+    calculate_orders()
+    limit_order_usd_live_sl_tp_amounts()
+     
     
    
