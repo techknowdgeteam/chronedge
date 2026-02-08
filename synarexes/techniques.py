@@ -18,6 +18,7 @@ import shutil
 from collections import defaultdict
 
 
+DEV_PATH = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers'
 
 def load_developers_dictionary():
     path = r"C:\xampp\htdocs\chronedge\synarex\users.json"
@@ -2609,13 +2610,12 @@ def entry_point_of_interest(broker_name):
                         break
 
         return processed_data
-    
+
     def apply_definition_conditions(candles, identify_config, new_filename_value, file_key):
         if not identify_config or not isinstance(candles, list):
             return candles, {}
 
         # --- SECTION 1: DYNAMIC VALIDATION (The "Logic Check") ---
-        # (Using the trace-back logic from the previous step to find the correct define_n)
         for target_candle in candles:
             if not isinstance(target_candle, dict): continue
             conn_keys = [k for k in target_candle.keys() if "_in_connection_with_" in k]
@@ -2624,9 +2624,9 @@ def entry_point_of_interest(broker_name):
                 parts = conn_key.split('_')
                 curr_def_base = f"{parts[0]}_{parts[1]}" 
                 
-                condition_cfg = identify_config.get(curr_def_base, {}).get("condition", "").lower()
+                def_cfg = identify_config.get(curr_def_base, {})
+                condition_cfg = def_cfg.get("condition", "").lower()
                 if not condition_cfg: 
-                    # If no condition (like define_1), it's automatically "met"
                     target_candle[f"{conn_key}_met"] = True
                     continue
 
@@ -2653,27 +2653,56 @@ def entry_point_of_interest(broker_name):
                     if not search_key: break
 
                 if ref_candle:
-                    # Apply the price logic comparison
-                    curr_h, curr_l = target_candle.get("high"), target_candle.get("low")
                     ref_h, ref_l = ref_candle.get("high"), ref_candle.get("low")
-                    c_type, r_type = target_candle.get("swing_type", "").lower(), ref_candle.get("swing_type", "").lower()
+                    r_type = ref_candle.get("swing_type", "").lower()
                     
-                    logic_met = False
-                    if mode == "behind":
-                        if c_type == "higher_high" and r_type == "higher_high": logic_met = curr_h < ref_h
-                        elif c_type == "lower_low" and r_type == "lower_low": logic_met = curr_l > ref_l
-                        elif c_type == "higher_high" and r_type == "lower_low": logic_met = curr_l > ref_h
-                        elif c_type == "lower_low" and r_type == "higher_high": logic_met = curr_h < ref_l
-                    elif mode == "beyond":
-                        if c_type == "higher_high" and r_type == "higher_high": logic_met = curr_h > ref_h
-                        elif c_type == "lower_low" and r_type == "lower_low": logic_met = curr_l < ref_l
-                        elif c_type == "higher_high" and r_type == "lower_low": logic_met = curr_h > ref_h
-                        elif c_type == "lower_low" and r_type == "higher_high": logic_met = curr_l < ref_l
+                    # Helper function for the core price logic
+                    def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                        if mode == "behind":
+                            if c_type == "higher_high" and r_type == "higher_high": return c_h < r_h
+                            if c_type == "lower_low" and r_type == "lower_low": return c_l > r_l
+                            if c_type == "higher_high" and r_type == "lower_low": return c_l > r_h
+                            if c_type == "lower_low" and r_type == "higher_high": return c_h < r_l
+                        elif mode == "beyond":
+                            if c_type == "higher_high" and r_type == "higher_high": return c_h > r_h
+                            if c_type == "lower_low" and r_type == "lower_low": return c_l < r_l
+                            if c_type == "higher_high" and r_type == "lower_low": return c_h > r_h
+                            if c_type == "lower_low" and r_type == "higher_high": return c_l < r_l
+                        return False
+
+                    # 1. Check the target candle itself
+                    curr_h, curr_l = target_candle.get("high"), target_candle.get("low")
+                    c_type = target_candle.get("swing_type", "").lower()
+                    
+                    logic_met = check_logic(c_type, curr_h, curr_l, r_type, ref_h, ref_l, mode)
+
+                    # 2. Check Collective Beyond Requirement
+                    min_collective = def_cfg.get("minimum_collectivebeyondcandles")
+                    if logic_met and mode == "beyond" and isinstance(min_collective, int) and min_collective > 0:
+                        # Find index of current candle to look behind in the list
+                        try:
+                            curr_idx = candles.index(target_candle)
+                            # Check the 'n' candles before this one
+                            for i in range(1, min_collective + 1):
+                                prev_idx = curr_idx - i
+                                if prev_idx < 0:
+                                    logic_met = False # Not enough history
+                                    break
+                                
+                                prev_c = candles[prev_idx]
+                                p_h, p_l = prev_c.get("high"), prev_c.get("low")
+                                # We use the target's swing type for the collective check as they are "with" the target
+                                if not check_logic(c_type, p_h, p_l, r_type, ref_h, ref_l, mode):
+                                    logic_met = False
+                                    break
+                        except ValueError:
+                            pass
 
                     if logic_met:
                         target_candle[f"{conn_key}_met"] = True
 
         # --- SECTION 2: EXTRACTION (The "Grouping") ---
+        # (Rest of the function remains the same)
         def_nums = [int(k.split('_')[1]) for k in identify_config.keys() if k.startswith("define_")]
         max_def = max(def_nums) if def_nums else 0
         patterns_dict = {}
@@ -2681,49 +2710,34 @@ def entry_point_of_interest(broker_name):
 
         for candle in candles:
             if not isinstance(candle, dict): continue
-            
-            # Start from the 'final' definition in the sequence (e.g., define_5)
             last_def_keys = [k for k in candle.keys() if k.startswith(f"define_{max_def}_") and k.endswith("_met")]
-            
             for m_key in last_def_keys:
                 current_family = [candle]
                 is_valid_family = True
                 current_trace_key = m_key
-                
-                # Walk backward from max_def to 1
                 for d in range(max_def, 1, -1):
-                    # 1. Parse who the current candle thinks is the parent
                     p_parts = current_trace_key.split('_')
                     parent_num = int(p_parts[9])
                     parent_def_lvl = int(p_parts[8])
-                    
-                    # 2. Find that parent candle
                     parent_candle = next((c for c in candles if c.get("candle_number") == parent_num), None)
-                    
                     if not parent_candle:
                         is_valid_family = False
                         break
-                    
-                    # 3. Check if the parent candle itself met its own condition
-                    # (Note: define_1 doesn't have a condition, so it's always valid)
                     if parent_def_lvl > 1:
                         parent_met_key = next((k for k in parent_candle.keys() if k.startswith(f"define_{parent_def_lvl}_") and k.endswith("_met")), None)
                         if not parent_met_key:
                             is_valid_family = False
                             break
                         current_trace_key = parent_met_key
-                    
                     current_family.insert(0, parent_candle)
 
                 if is_valid_family:
-                    # Deduplicate candles in family (in case of recursive connections)
                     unique_family = []
                     seen_nums = set()
                     for c in current_family:
                         if c['candle_number'] not in seen_nums:
                             unique_family.append(c)
                             seen_nums.add(c['candle_number'])
-                    
                     patterns_dict[f"pattern_{pattern_idx}"] = unique_family
                     pattern_idx += 1
 
@@ -3543,10 +3557,10 @@ def entry_point_of_interest(broker_name):
     # ---- Execute Main Logic ---- 3
     return main_logic()
 
-def clear_symbol_folders(broker_name):
+def clear_unathorized_entries_folders(broker_name):
     """
-    Identifies valid symbols from the source directory and deletes only those 
-    matching folders in the developer output directory.
+    1. Identifies protected filenames from accountmanagement.json in DEV_PATH.
+    2. Deletes any folder in the developer directory NOT listed in the JSON's protected filenames.
     """
     dev_dict = load_developers_dictionary()
     cfg = dev_dict.get(broker_name)
@@ -3555,34 +3569,57 @@ def clear_symbol_folders(broker_name):
         print(f"[{broker_name}] Error: Broker not in dictionary.")
         return False
 
-    base_folder = cfg.get("BASE_FOLDER")
-    # This is where your outputs live
-    dev_output_base = os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name))
+    # Path for Developer Output and JSON
+    # Assumes DEV_PATH is defined globally in your script
+    dev_output_base = os.path.join(DEV_PATH, broker_name)
+    json_path = os.path.join(dev_output_base, "accountmanagement.json")
 
-    if not os.path.exists(base_folder):
-        print(f"[{broker_name}] Source folder missing: {base_folder}")
+    # --- PART 1: Identify Protected Filenames from JSON ---
+    protected_filenames = set()
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+            
+            # Navigate the specific JSON structure
+            poi_conditions = (data.get("chart", {})
+                                  .get("define_candles", {})
+                                  .get("entries_poi_condition", {}))
+            
+            for key, apprehend_box in poi_conditions.items():
+                if key.startswith("apprehend") and isinstance(apprehend_box, dict):
+                    for entry_key, entry_val in apprehend_box.items():
+                        if entry_key.startswith("entry_") and isinstance(entry_val, dict):
+                            filename = entry_val.get("new_filename")
+                            if filename:
+                                protected_filenames.add(filename)
+        except Exception as e:
+            print(f"[{broker_name}] Error reading JSON: {e}")
+            return False
+    else:
+        print(f"[{broker_name}] JSON not found at: {json_path}. Aborting cleanup to prevent accidental wipe.")
         return False
 
-    # 1. Identify valid symbols by looking at the source directory
-    # (Matches the logic: for sym in sorted(os.listdir(base_folder)))
-    valid_symbols = [
-        sym for sym in os.listdir(base_folder) 
-        if os.path.isdir(os.path.join(base_folder, sym))
-    ]
+    # --- PART 2: Cleanup ---
+    if not os.path.exists(dev_output_base):
+        return True
 
     deleted_count = 0
-    
-    # 2. Only delete folders in 'developers' that are actually symbols
-    for sym in valid_symbols:
-        target_path = os.path.join(dev_output_base, sym)
-        
-        if os.path.exists(target_path) and os.path.isdir(target_path):
-            try:
-                shutil.rmtree(target_path)
-                deleted_count += 1
-            except Exception as e:
-                print("")
-    return True
+    try:
+        for item in os.listdir(dev_output_base):
+            item_path = os.path.join(dev_output_base, item)
+            
+            # Target ONLY folders; ignore files like accountmanagement.json
+            if os.path.isdir(item_path):
+                if item not in protected_filenames:
+                    shutil.rmtree(item_path)
+                    deleted_count += 1
+                    #print(f"[{broker_name}] cleaned up unauthorized {item} folder")
+                    
+    except Exception as e:
+        print(f"[{broker_name}] Cleanup Error: {e}")
+        return False
+    return 
 
 def single():  
     dev_dict = load_developers_dictionary()
@@ -3598,7 +3635,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & lower lows
-        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
+        hh_ll_results = pool.map(clear_unathorized_entries_folders, broker_names)
         for r in hh_ll_results: print(r)
 
 def main():
@@ -3627,8 +3664,9 @@ def main():
         hh_ll_results = pool.map(entry_point_of_interest, broker_names)
         for r in hh_ll_results: print(r)
 
-        hh_ll_results = pool.map(clear_symbol_folders, broker_names)
+        hh_ll_results = pool.map(clear_unathorized_entries_folders, broker_names)
         for r in hh_ll_results: print(r)
+
 
 
 
@@ -3639,7 +3677,7 @@ def main():
     print("\n[SUCCESS] All tasks completed.")
 
 if __name__ == "__main__":
-    single()
+   main()
 
 
 

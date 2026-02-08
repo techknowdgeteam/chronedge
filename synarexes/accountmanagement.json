@@ -1,5 +1,6 @@
 {
-    "RISKS":[0.5, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096],
+    "RISKS":[0.5, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,24,25,26,27,28,29,30,31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,48, 49,50],
+    "risk_reward_ratios": [1,2,3,4,5],
     "settings":{
         "calculate_stoploss":"yes",
         "calculate_takeprofit":"yes",
@@ -7,7 +8,6 @@
         "record_orders_from":"all",
         "orders_per_symbol":"all",
         "order_timeframes":["15m","30m","45m","1h","4h"],
-        "risk_reward_ratio": 3,
         "disable_orders": "allordertype"
     },
     "chart":{
@@ -82,11 +82,13 @@
                             },
                             "define_3": {
                                 "type": "define_2_type_opposite",
-                                "condition": "beyond_define_1"
+                                "condition": "beyond_define_1",
+                                "minimum_collectivebeyondcandles": 4
                             },
                             "define_4": {
                                 "type": "define_3_type_opposite",
-                                "condition": "beyond_define_2"
+                                "condition": "beyond_define_2",
+                                "minimum_collectivebeyondcandles": null
                             },
                             "define_5": {
                                 "type": "define_4_type_opposite",
