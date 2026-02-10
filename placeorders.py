@@ -9374,8 +9374,9 @@ def place_usd_orders():
 
 def main():
     sort_orders()
+    live_risk_reward_amounts_and_scale_investors()
     place_usd_orders()
 
 if __name__ == "__main__":
-   live_risk_reward_amounts_and_scale_investors()
+   main()
 

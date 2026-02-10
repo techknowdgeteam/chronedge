@@ -1036,6 +1036,6 @@ def calculate_orders():
     print(f"✅ Symbols order price levels calculation completed.")
 
 if __name__ == "__main__":
-    sync_dev_investors()
+    calculate_orders()
     
    

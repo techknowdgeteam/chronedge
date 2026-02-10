@@ -4108,8 +4108,8 @@ def main():
         hh_ll_results = pool.map(entry_point_of_interest, broker_names)
         for r in hh_ll_results: print(r)
 
-        #hh_ll_results = pool.map(clear_unathorized_entries_folders, broker_names)
-        #for r in hh_ll_results: print(r)
+        hh_ll_results = pool.map(clear_unathorized_entries_folders, broker_names)
+        for r in hh_ll_results: print(r)
 
 
 
