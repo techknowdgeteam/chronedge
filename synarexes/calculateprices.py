@@ -8,12 +8,16 @@ import MetaTrader5 as mt5
 import copy
 import math
 import shutil
+import re
 
 # --- GLOBALS ---
 BROKER_DICT_PATH = r"C:\xampp\htdocs\chronedge\synarex\ohlc.json"
-USERS_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+DEVELOPER_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.json"
+INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
 SYMBOL_CATEGORY_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 DEV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers"
+INV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors"
+DEFAULT_ACCOUNTMANAGEMENT = r"C:\xampp\htdocs\chronedge\synarex\default_accountmanagement.json"
 
 
 def clean_risk_folders():
@@ -32,7 +36,6 @@ def clean_risk_folders():
     risk_folders = glob.glob(os.path.join(DEV_PATH, "**", "*usd_risk"), recursive=True)
 
     if not risk_folders:
-        print("No risk folders found to delete.")
         return True
 
     deleted_count = 0
@@ -45,7 +48,7 @@ def clean_risk_folders():
             except Exception as e:
                 print(f" ! Error deleting {folder_path}: {e}")
 
-    print(f"FINISHED CLEANUP: {deleted_count} folders removed.")
+    print(f"FINISHED CLEANUP: {deleted_count} folders cleaned.")
     return True
 
 def purge_unauthorized_symbols():
@@ -55,20 +58,20 @@ def purge_unauthorized_symbols():
     """
     try:
         # 1. Load User IDs
-        if not os.path.exists(USERS_PATH):
-            print(f"Users file not found: {USERS_PATH}")
+        if not os.path.exists(DEVELOPER_USERS):
+            print(f"Users file not found: {DEVELOPER_USERS}")
             return False
 
-        with open(USERS_PATH, 'r') as f:
+        with open(DEVELOPER_USERS, 'r') as f:
             users_data = json.load(f)
 
-        for user_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, user_broker_id)
+        for dev_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, dev_broker_id)
             volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
             
             # Skip user if they don't have a config file
             if not os.path.exists(volumes_path):
-                print(f"Config missing for user {user_broker_id}, skipping purge.")
+                print(f"Config missing for user {dev_broker_id}, skipping purge.")
                 continue
 
             # 2. Extract ALL allowed symbols from all categories (forex, crypto, indices, etc.)
@@ -114,17 +117,17 @@ def backup_limit_orders():
     """
     try:
         # 1. Load User IDs to know which folders to scan
-        if not os.path.exists(USERS_PATH) or os.path.getsize(USERS_PATH) == 0:
-            print(f"Users file not found or empty: {USERS_PATH}")
+        if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
+            print(f"Users file not found or empty: {DEVELOPER_USERS}")
             return False
             
-        with open(USERS_PATH, 'r') as f:
+        with open(DEVELOPER_USERS, 'r') as f:
             users_data = json.load(f)
         
         backup_count = 0
         
-        for user_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, user_broker_id)
+        for dev_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, dev_broker_id)
             
             # 2. Find all limit_orders.json files recursively
             # We search for the exact filename to avoid backing up backups
@@ -154,18 +157,18 @@ def backup_limit_orders():
     except Exception as e:
         print(f"Critical Error during backup: {e}")
         return False
-    
+
 def enforce_risk():
     def enforce_risk_v2():
         try:
-            if not os.path.exists(USERS_PATH) or os.path.getsize(USERS_PATH) == 0:
+            if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
                 return False
                 
-            with open(USERS_PATH, 'r') as f:
+            with open(DEVELOPER_USERS, 'r') as f:
                 users_data = json.load(f)
             
-            for user_broker_id in users_data.keys():
-                user_folder = os.path.join(DEV_PATH, user_broker_id)
+            for dev_broker_id in users_data.keys():
+                user_folder = os.path.join(DEV_PATH, dev_broker_id)
                 
                 # 1. Identify all config files
                 acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
@@ -182,7 +185,7 @@ def enforce_risk():
 
                 all_configs = [os.path.join(user_folder, "allowedsymbolsandvolumes.json")] + secondary_configs
                 
-                # 2. Build the Master Lookup (Symbol -> Timeframe -> Risk)
+                # 2. Build the Master Lookup (Normalized for Case Insensitivity)
                 risk_master_data = {}
                 for config_path in all_configs:
                     if not os.path.exists(config_path): continue
@@ -192,18 +195,22 @@ def enforce_risk():
                     for category_list in c_data.values():
                         if not isinstance(category_list, list): continue
                         for item in category_list:
-                            sym = item.get("symbol")
-                            if not sym: continue
+                            raw_sym = item.get("symbol")
+                            if not raw_sym: continue
+                            
+                            # Normalize symbol to UPPERCASE
+                            sym = raw_sym.upper()
                             
                             if sym not in risk_master_data: 
                                 risk_master_data[sym] = {}
                             
-                            # Extract specs (e.g., "5m_specs" -> "5m")
+                            # Extract specs and normalize timeframe
                             for key, val in item.items():
                                 if "_specs" in key and isinstance(val, dict):
-                                    tf_clean = key.replace("_specs", "")
+                                    # Normalize timeframe (e.g., "5M")
+                                    tf_clean = key.replace("_specs", "").upper()
                                     risk_val = val.get("usd_risk", 0)
-                                    # Only store if it's a valid non-zero risk
+                                    
                                     if risk_val > 0:
                                         risk_master_data[sym][tf_clean] = risk_val
 
@@ -217,14 +224,19 @@ def enforce_risk():
                     
                     modified = False
                     for order in orders:
-                        sym, tf = order.get('symbol'), order.get('timeframe')
+                        # Normalize order data for the lookup
+                        raw_sym = order.get('symbol', '')
+                        raw_tf = order.get('timeframe', '')
+                        
+                        sym = raw_sym.upper() if raw_sym else ""
+                        tf = raw_tf.upper() if raw_tf else ""
                         
                         # TRIGGER: Both exit and target are essentially empty/zero
                         is_missing_targets = order.get('exit') in [0, "0", None] and \
                                             order.get('target') in [0, "0", None]
                         
                         if is_missing_targets:
-                            # Attempt to grab risk from master table
+                            # Attempt to grab risk from master table using normalized keys
                             found_risk = risk_master_data.get(sym, {}).get(tf)
                             
                             if found_risk:
@@ -233,31 +245,33 @@ def enforce_risk():
                                 order['usd_risk'] = found_risk
                                 order['usd_based_risk_only'] = True
                                 modified = True
-                                
                             else:
-                                print(f"❌ Failed: {sym} ({tf}) has no exit/target but no usd_risk found in configs.")
+                                # Log the mismatch for debugging
+                                if sym:
+                                    print(f"❌ Failed: {raw_sym} ({raw_tf}) has no exit/target but no risk found in configs.")
 
                     if modified:
                         with open(limit_path, 'w') as f:
                             json.dump(orders, f, indent=4)
+                            
             return True
         except Exception as e:
             print(f"Error: {e}")
-            return False     
+            return False
     enforce_risk_v2()
     try:
         # 1. Load User IDs
-        if not os.path.exists(USERS_PATH) or os.path.getsize(USERS_PATH) == 0:
-            print(f"Users file not found or empty: {USERS_PATH}")
+        if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
+            print(f"Users file not found or empty: {DEVELOPER_USERS}")
             return False
             
-        with open(USERS_PATH, 'r') as f:
+        with open(DEVELOPER_USERS, 'r') as f:
             users_data = json.load(f)
         
-        for user_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, user_broker_id)
+        for dev_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, dev_broker_id)
             
-            # --- Get Config Paths (Primary + Secondary from Account Management) ---
+            # --- Get Config Paths ---
             acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
             secondary_configs = []
             if os.path.exists(acc_mgmt_path):
@@ -278,10 +292,10 @@ def enforce_risk():
                 with open(config_path, 'r') as f:
                     config_data = json.load(f)
                 
-                # --- Build Universal Lookup Table ---
+                # --- Build Lookup Table ---
+                # We store original, UPPER, and lower versions to ensure a match
                 risk_lookup = {}
                 
-                # Iterate through all categories (forex, crypto, etc.)
                 for category in config_data.values():
                     if not isinstance(category, list): continue
                     
@@ -289,18 +303,19 @@ def enforce_risk():
                         symbol = item.get("symbol")
                         if not symbol: continue
                         
-                        if symbol not in risk_lookup: risk_lookup[symbol] = {}
-                        
+                        specs = {}
                         for key, value in item.items():
                             if key.endswith("_specs") and isinstance(value, dict):
                                 tf = key.replace("_specs", "")
-                                is_enforced = str(value.get("enforce_usd_risk", "no")).lower() == "yes"
-                                risk_val = value.get("usd_risk", 0)
-                                
-                                risk_lookup[symbol][tf] = {
-                                    "enforce": is_enforced,
-                                    "usd_risk": risk_val
+                                specs[tf] = {
+                                    "enforce": str(value.get("enforce_usd_risk", "no")).lower() == "yes",
+                                    "usd_risk": value.get("usd_risk", 0)
                                 }
+                        
+                        # Store multiple variations of the symbol to be safe
+                        risk_lookup[symbol] = specs          # Exact match
+                        risk_lookup[symbol.upper()] = specs  # Uppercase fallback
+                        risk_lookup[symbol.lower()] = specs  # Lowercase fallback
 
                 # --- Apply to Limit Orders ---
                 config_dir = os.path.dirname(config_path)
@@ -315,204 +330,48 @@ def enforce_risk():
                     
                     modified = False
                     for order in orders:
-                        sym, tf = order.get('symbol'), order.get('timeframe')
+                        sym = order.get('symbol')
+                        tf = order.get('timeframe')
                         
-                        if sym in risk_lookup and tf in risk_lookup[sym]:
-                            rule = risk_lookup[sym][tf]
+                        # Tiered Symbol Lookup
+                        matched_specs = None
+                        if sym in risk_lookup:
+                            matched_specs = risk_lookup[sym]
+                        elif sym.upper() in risk_lookup:
+                            matched_specs = risk_lookup[sym.upper()]
+                        elif sym.lower() in risk_lookup:
+                            matched_specs = risk_lookup[sym.lower()]
                             
+                        if matched_specs and tf in matched_specs:
+                            rule = matched_specs[tf]
                             if rule["enforce"]:
-                                # 1. Set exit/target to zero
                                 order['exit'] = 0
                                 order['target'] = 0
-                                
-                                # 2. Extract and assign the risk value
                                 order['usd_risk'] = rule["usd_risk"]
-                                
-                                # 3. Tag the record for system awareness
                                 order['usd_based_risk_only'] = True
-                                
                                 modified = True
                     
                     if modified:
                         with open(limit_path, 'w') as f:
                             json.dump(orders, f, indent=4)
-        print(f"Usd risk Based completed")
+                            
+        print(f"Risk enforcement sync complete. All casing variations handled.")
         return True
     except Exception as e:
         print(f"Critical Error: {e}")
-        return False
-
-def calculate_symbols_orderss():
-    try:
-        # 1. Load User IDs
-        if not os.path.exists(USERS_PATH) or os.path.getsize(USERS_PATH) == 0:
-            print(f"Users file not found: {USERS_PATH}")
-            return False
-            
-        with open(USERS_PATH, 'r', encoding='utf-8') as f:
-            users_data = json.load(f)
-            
-        # 2. Load Global Symbols (Flatten all categories into one set)
-        if not os.path.exists(SYMBOL_CATEGORY_PATH) or os.path.getsize(SYMBOL_CATEGORY_PATH) == 0:
-            print(f"Symbol category file not found: {SYMBOL_CATEGORY_PATH}")
-            return False
-
-        all_valid_symbols = set()
-        with open(SYMBOL_CATEGORY_PATH, 'r', encoding='utf-8') as f:
-            categories = json.load(f)
-            for category_list in categories.values():
-                for sym in category_list:
-                    all_valid_symbols.add(sym.upper())
-
-        # 3. Iterate through each User
-        for user_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, user_broker_id)
-            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
-            primary_volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
-
-            if not os.path.exists(acc_mgmt_path):
-                continue
-
-            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
-                acc_mgmt_data = json.load(f)
-            
-            rr_ratios = acc_mgmt_data.get("risk_reward_ratios", [1.0])
-            poi_conditions = acc_mgmt_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
-            
-            # --- Handle Secondary Config Directories (Automation) ---
-            secondary_paths = []
-            for apprehend_val in poi_conditions.values():
-                if isinstance(apprehend_val, dict):
-                    for entry_val in apprehend_val.values():
-                        if isinstance(entry_val, dict) and entry_val.get("new_filename"):
-                            target_dir = os.path.join(user_folder, entry_val["new_filename"])
-                            secondary_file = os.path.join(target_dir, "allowedsymbolsandvolumes.json")
-                            if not os.path.exists(secondary_file) and os.path.exists(primary_volumes_path):
-                                os.makedirs(target_dir, exist_ok=True)
-                                shutil.copy2(primary_volumes_path, secondary_file)
-                            secondary_paths.append(secondary_file)
-
-            all_config_files = list(set([primary_volumes_path] + secondary_paths))
-
-            for volumes_path in all_config_files:
-                if not os.path.exists(volumes_path): continue
-
-                # Dynamically load all symbols from allowedsymbolsandvolumes.json regardless of key
-                user_config = {}
-                with open(volumes_path, 'r', encoding='utf-8') as f:
-                    v_data = json.load(f)
-                    for category_key in v_data: 
-                        if isinstance(v_data[category_key], list):
-                            for item in v_data[category_key]:
-                                user_config[item['symbol'].upper()] = item
-
-                config_folder = os.path.dirname(volumes_path)
-                limit_order_files = glob.glob(os.path.join(config_folder, "**", "limit_orders.json"), recursive=True)
-
-                for limit_path in limit_order_files:
-                    if "risk_reward_" in limit_path: continue
-                    with open(limit_path, 'r', encoding='utf-8') as f:
-                        original_orders = json.load(f)
-
-                    base_dir = os.path.dirname(limit_path)
-
-                    for current_rr in rr_ratios:
-                        orders_copy = copy.deepcopy(original_orders)
-                        updated = False
-
-                        for order in orders_copy:
-                            symbol = order.get('symbol', '').upper()
-                            if symbol not in all_valid_symbols: continue
-
-                            try:
-                                # Data Extraction
-                                entry = float(order.get('entry', 0))
-                                rr_ratio = float(current_rr)
-                                order_type = order.get('order_type', '').upper()
-                                tick_size = float(order.get('tick_size', 0.00001))
-                                tick_value = float(order.get('tick_value', 0))
-                                tf = order.get('timeframe', '1h')
-                                
-                                # --- DYNAMIC PRECISION LOGIC ---
-                                # Converts tick_size 0.00001 to 5, or 0.1 to 1, or 1.0 to 0
-                                if tick_size < 1:
-                                    digits = len(str(tick_size).split('.')[-1])
-                                else:
-                                    digits = 0
-                                
-                                tf_specs = user_config.get(symbol, {}).get(f"{tf}_specs", {})
-                                volume = float(tf_specs.get('volume', 0.01))
-                                
-                                # --- LOGIC BRANCH A: USD RISK BASED ---
-                                if order.get("usd_based_risk_only") is True:
-                                    risk_val = float(order.get("usd_risk", tf_specs.get("usd_risk", 0)))
-                                    
-                                    if risk_val > 0 and tick_value > 0:
-                                        # Pip size is usually 10 ticks in Forex, but 1 tick in many indices.
-                                        # For a truly universal approach, we use the Tick Value directly.
-                                        # Risk = (Distance / TickSize) * TickValue * Volume
-                                        # Distance = (Risk * TickSize) / (TickValue * Volume)
-                                        
-                                        sl_dist = (risk_val * tick_size) / (tick_value * volume)
-                                        tp_dist = sl_dist * rr_ratio
-
-                                        if "BUY" in order_type:
-                                            order["exit"] = round(entry - sl_dist, digits)
-                                            order["target"] = round(entry + tp_dist, digits)
-                                        else:
-                                            order["exit"] = round(entry + sl_dist, digits)
-                                            order["target"] = round(entry - tp_dist, digits)
-
-                                # --- LOGIC BRANCH B: DISTANCE BASED ---
-                                else:
-                                    sl_price = float(order.get('exit', 0))
-                                    tp_price = float(order.get('target', 0))
-
-                                    if sl_price == 0 and tp_price > 0:
-                                        tp_dist = abs(tp_price - entry)
-                                        risk_dist = tp_dist / rr_ratio
-                                        order['exit'] = round(entry - risk_dist if "BUY" in order_type else entry + risk_dist, digits)
-                                    
-                                    elif sl_price > 0:
-                                        risk_dist = abs(entry - sl_price)
-                                        order['target'] = round(entry + (risk_dist * rr_ratio) if "BUY" in order_type else entry - (risk_dist * rr_ratio), digits)
-
-                                # Finalize
-                                order.pop("usd_risk", None) # Remove if exists
-                                order[f"{tf}_volume"] = volume
-                                order['risk_reward'] = rr_ratio
-                                order['status'] = "Calculated"
-                                order['calculated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                updated = True
-
-                            except Exception as e:
-                                print(f"Error calculating {symbol}: {e}")
-                                continue
-
-                        if updated:
-                            target_out_dir = os.path.join(base_dir, f"risk_reward_{current_rr}")
-                            os.makedirs(target_out_dir, exist_ok=True)
-                            with open(os.path.join(target_out_dir, "limit_orders.json"), 'w', encoding='utf-8') as f:
-                                json.dump(orders_copy, f, indent=4)
-            
-            print(f"Processed: {user_broker_id}")
-
-        return True
-    except Exception as e:
-        print(f"Critical Error: {e}")
-        return False
+        return False       
 
 def calculate_symbols_orders():
     try:
         # 1. Load User IDs
-        if not os.path.exists(USERS_PATH) or os.path.getsize(USERS_PATH) == 0:
-            print(f"Users file not found: {USERS_PATH}")
+        if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
+            print(f"Users file not found: {DEVELOPER_USERS}")
             return False
             
-        with open(USERS_PATH, 'r', encoding='utf-8') as f:
+        with open(DEVELOPER_USERS, 'r', encoding='utf-8') as f:
             users_data = json.load(f)
             
-        # 2. Load Global Symbols (Flatten every category into one master set)
+        # 2. Load Global Symbols (Normalized)
         all_valid_symbols = set()
         if os.path.exists(SYMBOL_CATEGORY_PATH) and os.path.getsize(SYMBOL_CATEGORY_PATH) > 0:
             with open(SYMBOL_CATEGORY_PATH, 'r', encoding='utf-8') as f:
@@ -520,12 +379,11 @@ def calculate_symbols_orders():
                 for category_content in categories.values():
                     if isinstance(category_content, list):
                         for sym in category_content:
-                            # Normalize: "us oil" -> "US OIL"
                             all_valid_symbols.add(str(sym).strip().upper())
 
         # 3. Iterate through each User
-        for user_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, user_broker_id)
+        for dev_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, dev_broker_id)
             acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
             primary_volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
 
@@ -538,7 +396,7 @@ def calculate_symbols_orders():
             rr_ratios = acc_mgmt_data.get("risk_reward_ratios", [1.0])
             poi_conditions = acc_mgmt_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
             
-            # --- Auto-generate secondary folders if they don't exist ---
+            # --- Auto-generate secondary folders ---
             secondary_paths = []
             for apprehend_val in poi_conditions.values():
                 if isinstance(apprehend_val, dict):
@@ -556,17 +414,20 @@ def calculate_symbols_orders():
             for volumes_path in all_config_files:
                 if not os.path.exists(volumes_path): continue
 
-                # --- UNIVERSAL CONFIG LOAD: Bypass Category Names ---
+                # --- UNIVERSAL CONFIG LOAD ---
                 user_config = {}
                 with open(volumes_path, 'r', encoding='utf-8') as f:
                     v_data = json.load(f)
-                    # Loop through EVERY key (forex, metals, energies, etc.)
                     for category_key in v_data:
                         symbol_list = v_data[category_key]
                         if isinstance(symbol_list, list):
                             for item in symbol_list:
                                 sym_name = str(item.get('symbol', '')).strip().upper()
-                                user_config[sym_name] = item
+                                # Normalize all keys within the symbol item (the specs)
+                                normalized_item = {}
+                                for k, v in item.items():
+                                    normalized_item[k.lower()] = v
+                                user_config[sym_name] = normalized_item
 
                 config_folder = os.path.dirname(volumes_path)
                 limit_order_files = glob.glob(os.path.join(config_folder, "**", "limit_orders.json"), recursive=True)
@@ -583,9 +444,9 @@ def calculate_symbols_orders():
                         updated_any_order = False
 
                         for order in orders_copy:
-                            symbol = str(order.get('symbol', '')).strip().upper()
+                            raw_sym = order.get('symbol', '')
+                            symbol = str(raw_sym).strip().upper()
                             
-                            # Ensure symbol exists in our master flattened list
                             if symbol not in user_config:
                                 continue
 
@@ -593,21 +454,21 @@ def calculate_symbols_orders():
                                 # Data Extraction
                                 entry = float(order.get('entry', 0))
                                 rr_ratio = float(current_rr)
-                                order_type = order.get('order_type', '').upper()
+                                order_type = str(order.get('order_type', '')).upper()
                                 tick_size = float(order.get('tick_size', 0.00001))
                                 tick_value = float(order.get('tick_value', 0))
-                                tf = order.get('timeframe', '1h')
                                 
-                                # --- DYNAMIC PRECISION LOGIC ---
-                                # Determines decimals based on tick_size (e.g., 0.00001 -> 5, 1.0 -> 0)
-                                if tick_size < 1:
-                                    # Count decimals by splitting at dot
-                                    digits = len(str(tick_size).split('.')[-1])
-                                else:
-                                    digits = 0
+                                # Normalize timeframe check
+                                raw_tf = order.get('timeframe', '1h')
+                                tf = str(raw_tf).lower()
                                 
-                                # Fetch specs from our flattened config
-                                tf_specs = user_config.get(symbol, {}).get(f"{tf}_specs", {})
+                                # Precision Logic
+                                digits = len(str(tick_size).split('.')[-1]) if tick_size < 1 else 0
+                                
+                                # Fetch specs using normalized timeframe key
+                                spec_key = f"{tf}_specs"
+                                tf_specs = user_config.get(symbol, {}).get(spec_key, {})
+                                
                                 volume = float(tf_specs.get('volume', 0.01))
                                 
                                 # --- LOGIC BRANCH A: USD RISK BASED ---
@@ -615,7 +476,6 @@ def calculate_symbols_orders():
                                     risk_val = float(order.get("usd_risk", tf_specs.get("usd_risk", 0)))
                                     
                                     if risk_val > 0 and tick_value > 0:
-                                        # Universal Formula: Distance = (Risk * TickSize) / (TickValue * Volume)
                                         sl_dist = (risk_val * tick_size) / (tick_value * volume)
                                         tp_dist = sl_dist * rr_ratio
 
@@ -658,7 +518,7 @@ def calculate_symbols_orders():
                             with open(os.path.join(target_out_dir, "limit_orders.json"), 'w', encoding='utf-8') as f:
                                 json.dump(orders_copy, f, indent=4)
             
-            print(f"Processed: {user_broker_id}")
+            print(f"Processed: {dev_broker_id}")
 
         return True
     except Exception as e:
@@ -679,13 +539,13 @@ def live_risk_reward_amounts_and_scale():
 
     print("STARTING LIVE RISK CALCULATION...")
 
-    for user_broker_id, config in broker_configs.items():
-        user_folder = os.path.join(DEV_PATH, user_broker_id)
+    for dev_broker_id, config in broker_configs.items():
+        user_folder = os.path.join(DEV_PATH, dev_broker_id)
         
         # 1. Load Account Management
         acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
         if not os.path.exists(acc_mgmt_path):
-            print(f" ! Skipping {user_broker_id}: accountmanagement.json not found.")
+            print(f" ! Skipping {dev_broker_id}: accountmanagement.json not found.")
             continue
 
         with open(acc_mgmt_path, 'r') as f:
@@ -719,7 +579,7 @@ def live_risk_reward_amounts_and_scale():
         SERVER = config.get("SERVER")
 
         if not mt5.initialize(path=TERMINAL_PATH, login=int(LOGIN_ID), password=PASSWORD, server=SERVER):
-            print(f" ! MT5 Init failed for {user_broker_id}")
+            print(f" ! MT5 Init failed for {dev_broker_id}")
             continue
 
         account_info = mt5.account_info()
@@ -728,7 +588,7 @@ def live_risk_reward_amounts_and_scale():
             continue
         
         acc_currency = account_info.currency
-        print(f" > Processing {user_broker_id.upper()} (Max Risk: {max_allowed_risk})...")
+        print(f" > Processing {dev_broker_id.upper()} (Max Risk: {max_allowed_risk})...")
 
         # 4. Iterate through Primary and all Secondary subfolders
         for current_search_path in target_subfolders:
@@ -1023,7 +883,146 @@ def deduplicate_risk_bucket_orders():
 
     print("FINISHED DEDUPLICATION.")
     return True
-    
+
+def sync_dev_investors():
+    def compact_json_format(data):
+        """Custom formatter to keep lists on one line while indenting dictionaries."""
+        res = json.dumps(data, indent=4)
+        res = re.sub(r'\[\s+([^\[\]]+?)\s+\]', 
+                    lambda m: "[" + ", ".join([line.strip() for line in m.group(1).splitlines()]).replace('"', '"') + "]", 
+                    res)
+        res = res.replace(",,", ",")
+        return res
+
+    try:
+        # 1. Load Global Defaults & User Databases
+        if not all(os.path.exists(f) for f in [INVESTOR_USERS, DEVELOPER_USERS, DEFAULT_ACCOUNTMANAGEMENT]):
+            print("Error: Required configuration files missing (Investors, Developers, or Defaults).")
+            return False
+
+        with open(DEFAULT_ACCOUNTMANAGEMENT, 'r', encoding='utf-8') as f:
+            default_acc_data = json.load(f)
+            default_risk_mgmt = default_acc_data.get("account_balance_default_risk_management", {})
+
+        with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
+            investors_data = json.load(f)
+        
+        with open(DEVELOPER_USERS, 'r', encoding='utf-8') as f:
+            developers_data = json.load(f)
+
+        # 2. Iterate through Investors
+        for inv_broker_id, inv_info in investors_data.items():
+            invested_string = inv_info.get("INVESTED_WITH", "")
+            
+            # --- SELECTIVE FILENAME PARSING ---
+            if "_" not in invested_string:
+                continue
+            
+            parts = invested_string.split("_", 1)
+            dev_broker_id = parts[0]
+            target_strat_name = parts[1] 
+
+            if dev_broker_id not in developers_data:
+                continue
+
+            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
+            inv_user_folder = os.path.join(INV_PATH, inv_broker_id)
+            
+            dev_acc_path = os.path.join(dev_user_folder, "accountmanagement.json")
+            inv_acc_path = os.path.join(inv_user_folder, "accountmanagement.json")
+
+            if not os.path.exists(dev_acc_path):
+                continue
+
+            # 3. SYNC ACCOUNT MANAGEMENT
+            with open(dev_acc_path, 'r', encoding='utf-8') as f:
+                dev_acc_data = json.load(f)
+            
+            os.makedirs(inv_user_folder, exist_ok=True)
+            inv_acc_data = {}
+            if os.path.exists(inv_acc_path):
+                with open(inv_acc_path, 'r', encoding='utf-8') as f:
+                    try:
+                        inv_acc_data = json.load(f)
+                    except:
+                        inv_acc_data = {}
+
+            # --- RESTORED RESET_ALL CAPABILITY ---
+            is_reset = inv_acc_data.get("reset_all", False)
+            if is_reset:
+                # Wipe current data to force a fresh sync from developer/defaults
+                inv_acc_data = {"reset_all": False}
+            
+            needs_save = is_reset # Always save if reset was triggered
+            
+            # A. Sync Standard Keys from Developer
+            # Added "RISKS" to this list so it follows the exact same logic as risk_reward_ratios
+            keys_from_dev = ["RISKS", "risk_reward_ratios", "symbols_priority", "settings"]
+            
+            for key in keys_from_dev:
+                # If key is missing, or it's empty, or reset_all was True (which wiped the dict above)
+                if key not in inv_acc_data or not inv_acc_data[key]:
+                    # Get from developer, provide defaults if developer is missing the key
+                    if key == "RISKS":
+                        default_val = [0.5, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+                        inv_acc_data[key] = dev_acc_data.get(key, default_val)
+                    elif key == "risk_reward_ratios":
+                        inv_acc_data[key] = dev_acc_data.get(key, [1.0])
+                    else:
+                        inv_acc_data[key] = dev_acc_data.get(key, {})
+                    
+                    needs_save = True
+
+            # B. Sync Risk Management from Default File
+            risk_key = "account_balance_default_risk_management"
+            if risk_key not in inv_acc_data:
+                inv_acc_data[risk_key] = default_risk_mgmt
+                needs_save = True
+            
+            if needs_save:
+                formatted_json = compact_json_format(inv_acc_data)
+                with open(inv_acc_path, 'w', encoding='utf-8') as f:
+                    f.write(formatted_json)
+
+            # 4. SELECTIVE CLONE & CLEAN STRATEGY FOLDER
+            forbidden_files = ["limit_orders.json", "limit_orders_backup.json"]
+            
+            dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
+            inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
+
+            if os.path.exists(dev_strat_path):
+                try:
+                    if os.path.exists(inv_strat_path):
+                        shutil.rmtree(inv_strat_path)
+                        
+                    shutil.copytree(dev_strat_path, inv_strat_path, dirs_exist_ok=True)
+                    
+                    # --- DEEP CLEANUP LOGIC ---
+                    for item in os.listdir(inv_strat_path):
+                        item_path = os.path.join(inv_strat_path, item)
+                        
+                        if item == "pending_orders" and os.path.isdir(item_path):
+                            for sub_item in os.listdir(item_path):
+                                if sub_item in forbidden_files:
+                                    os.remove(os.path.join(item_path, sub_item))
+                            continue 
+                        
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                        else:
+                            os.remove(item_path)
+                            
+                    print(f"Successfully synced {target_strat_name} (including RISKS) for {inv_broker_id}")
+                except Exception as e:
+                    print(f" ! Folder copy/clean error for {target_strat_name}: {e}")
+
+        print("SUCCESS: Targeted Investors synchronized with full reset capability.")
+        return True
+
+    except Exception as e:
+        print(f"Enrichment Error: {e}")
+        return False
+        
 def calculate_orders():
     purge_unauthorized_symbols()
     clean_risk_folders()
@@ -1033,10 +1032,10 @@ def calculate_orders():
     live_risk_reward_amounts_and_scale()
     usd_based_risk_scaling()
     deduplicate_risk_bucket_orders()
-    print(f"✅ Symbols orders price levels calculation completed.")
+    sync_dev_investors()
+    print(f"✅ Symbols order price levels calculation completed.")
 
 if __name__ == "__main__":
-    calculate_symbols_orders()
-     
+    sync_dev_investors()
     
    

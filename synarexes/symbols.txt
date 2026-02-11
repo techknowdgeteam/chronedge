@@ -16,7 +16,9 @@
     "US TECH 100",
     "Wall Street 30"
   ],
-  "commodities": [],
+  "commodities": [
+    "COMUSD"
+  ],
   "synthetics": [
     "Volatility 150 (1s) Index",
     "Volatility 250 (1s) Index",
@@ -44,8 +46,39 @@
     "Volatility 30 (1s) Index"
   ],
   "crypto": [
+    "APTUSD",
+    "DOTUSD",
+    "ETCUSD",
+    "FILUSD",
+    "IMXUSD",
+    "NEOUSD",
+    "NERUSD",
+    "TONUSD",
+    "TRUUSD",
+    "UNIUSD",
+    "ZECUSD",
+    "FETUSD",
+    "SANUSD",
+    "XMRUSD",
+    "DSHUSD",
+    "ADAUSD",
+    "BATUSD",
+    "BNBUSD",
+    "IOTUSD",
+    "LTCUSD",
+    "MLNUSD",
+    "SOLUSD",
+    "XTZUSD",
+    "ALGUSD",
+    "APEUSD",
+    "ETHUSD",
+    "LNKUSD",
+    "XRPUSD",
+    "AAVUSD",
+    "BCHUSD",
     "BTCUSD",
-    "ETHUSD"
+    "DOGUSD",
+    "XLMUSD"
   ],
   "forex": [
     "AUDNZD",
@@ -77,7 +110,10 @@
     "GBPAUD"
   ],
   "energies": [
-    "US Oil"
+    "USOIL",
+    "US Oil",
+    "US_Oil",
+    "USOUSD"
   ],
   "basket_indices": [
     "AUD Basket",
