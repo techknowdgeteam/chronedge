@@ -4067,7 +4067,6 @@ def entry_point_of_interest(broker_name):
             try:
                 with open(orders_file, 'w', encoding='utf-8') as f:
                     json.dump(updated_orders, f, indent=4)
-                log(f"Added {orders_added} missing orders from paused symbols to limit orders")
             except Exception as e:
                 log(f"Error writing updated limit orders: {e}")
                 return 0

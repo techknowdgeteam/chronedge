@@ -1,0 +1,225 @@
+{
+  "forex": [
+      {
+          "symbol": "USDJPY",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "USDCAD",
+          "5m_volume": 0.02,
+          "15m_volume": 0.02,
+          "30m_volume": 0.02,
+          "45m_volume": 0.02,
+          "1h_volume": 0.02,
+          "4h_volume": 0.02,
+          "risk": 4
+      },
+      {
+          "symbol": "USDCHF",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "GBPUSD",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "EURGBP",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "GBPAUD",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 8
+      },
+      {
+          "symbol": "AUDNZD",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 1
+      }
+  ],
+  "synthetics": [],
+  "crypto": [
+      {
+          "symbol": "BTCUSD",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "ETHUSD",
+          "5m_volume": 0.02,
+          "15m_volume": 0.02,
+          "30m_volume": 0.02,
+          "45m_volume": 0.02,
+          "1h_volume": 0.02,
+          "4h_volume": 0.02,
+          "risk": 4
+      }
+  ],
+  "basket_indices": [
+      {
+          "symbol": "AUD Basket",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "GBP Basket",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "USD Basket",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "Gold Basket",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      },
+      {
+          "symbol": "EUR Basket",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 4
+      }
+  ],
+  "indices": [
+      {
+          "symbol": "wall street 30",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      },
+      {
+          "symbol": "us tech 100",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      },
+      {
+          "symbol": "DJ30",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      },
+      {
+          "symbol": "US30m",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      },
+      {
+          "symbol": "NAS100",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      },
+      {
+          "symbol": "USTECm",
+          "5m_volume": 0.1,
+          "15m_volume": 0.1,
+          "30m_volume": 0.1,
+          "45m_volume": 0.1,
+          "1h_volume": 0.1,
+          "4h_volume": 0.1,
+          "risk": 16
+      }
+  ],
+  "metals": [
+      {
+          "symbol": "xauusd",
+          "5m_volume": 0.01,
+          "15m_volume": 0.01,
+          "30m_volume": 0.01,
+          "45m_volume": 0.01,
+          "1h_volume": 0.01,
+          "4h_volume": 0.01,
+          "risk": 16
+      }
+  ],
+  "equities": [],
+  "energies": []
+}
