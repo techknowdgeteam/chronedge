@@ -420,8 +420,10 @@ def check_orders_live_risk():
 
 def repair_order_buckets():
     """
-    Function 2: Identifies and fixes bucket violations for both overflow and underflow.
-    Moves orders to the correct bucket based on: floor(live_risk_amt).
+    Identifies and fixes bucket violations.
+    Logic: 
+    - Risk < $1.00 goes to '0.5usd_risk'
+    - Risk >= $1.00 goes to floor(risk) bucket (e.g., 1.99 -> 1usd_risk)
     """
     print(f"ARRANGING ORDERS TO THEIR PROPORTIONAL BUCKETS.") 
     total_files_processed = 0
@@ -444,6 +446,8 @@ def repair_order_buckets():
         investor_files_updated = 0
         investor_orders_moved = 0
 
+        # Initialize MT5 connection
+        import MetaTrader5 as mt5
         if not mt5.initialize(
             path=broker_cfg["TERMINAL_PATH"], 
             login=int(broker_cfg["LOGIN_ID"]), 
@@ -459,11 +463,11 @@ def repair_order_buckets():
             found_files = list(inv_root.rglob(search_pattern))
             
             for target_file_path in found_files:
+                # Use float to parse names like '0.5' or '1'
                 try:
-                    # current_bucket_limit is the integer name (e.g., 2 for '2usd_risk')
-                    current_bucket_limit = int(target_file_path.stem.replace('usd_risk', ''))
+                    current_bucket_limit = float(target_file_path.stem.replace('usd_risk', ''))
                 except:
-                    current_bucket_limit = 0
+                    current_bucket_limit = -1.0 
                     print(f"    [!] Could not parse bucket limit from {target_file_path.name}")
 
                 try:
@@ -481,33 +485,32 @@ def repair_order_buckets():
                             staying_entries.append(entry)
                             continue
 
-                        # --- NEW LOGIC: VALIDATE BUCKET BOUNDARIES ---
-                        # Correct bucket for $1.50 is bucket 1. Correct for $2.10 is bucket 2.
-                        correct_bucket_val = int(math.floor(live_risk_amt))
+                        # --- HYBRID BUCKET LOGIC ---
+                        if live_risk_amt < 1.0:
+                            # Any cent value (0.01 - 0.99) belongs in the 0.5 bucket
+                            correct_bucket_val = 0.5
+                        else:
+                            # Any value >= 1.0 is floored to the nearest dollar
+                            correct_bucket_val = float(math.floor(live_risk_amt))
                         
-                        # Check if order is in the wrong place (too high OR too low)
-                        is_violation = correct_bucket_val != current_bucket_limit
+                        # Compare floats
+                        is_violation = not math.isclose(correct_bucket_val, current_bucket_limit)
 
                         if not is_violation:
-                            # Order is exactly where it belongs
                             staying_entries.append(entry)
                         else:
-                            # --- MOVE LOGIC ---
-                            raw_symbol = entry.get("symbol")
-                            symbol = get_normalized_symbol(raw_symbol, norm_map)
-                            
-                            # Log the reason
-                            direction = "OVERFLOW" if live_risk_amt >= (current_bucket_limit + 1) else "UNDERFLOW"
-                            new_bucket_name = f"{correct_bucket_val}usd_risk"
-                            
+                            # Determine folder name (keep .5 for cents, integer for dollars)
+                            if correct_bucket_val == 0.5:
+                                new_bucket_name = "0.5usd_risk"
+                            else:
+                                new_bucket_name = f"{int(correct_bucket_val)}usd_risk"
 
-                            # File Migration Logic
+                            # File Migration
                             parent_rr_folder = target_file_path.parent.parent
                             new_dir = parent_rr_folder / new_bucket_name
                             new_dir.mkdir(parents=True, exist_ok=True)
                             new_file_path = new_dir / f"{new_bucket_name}.json"
 
-                            # Load or create destination data
                             dest_data = []
                             if new_file_path.exists():
                                 try:
@@ -523,7 +526,7 @@ def repair_order_buckets():
                             investor_orders_moved += 1
                             total_moved_orders += 1
 
-                    # Save updated source file (removing moved orders)
+                    # Save source file minus the moved orders
                     if file_changed:
                         with open(target_file_path, 'w', encoding='utf-8') as f:
                             json.dump(staying_entries, f, indent=4)
@@ -541,7 +544,7 @@ def repair_order_buckets():
         print(f"<<< [FINISHED: {inv_id}] Updated {investor_files_updated} files, moved {investor_orders_moved} orders.")
         total_files_processed += investor_files_updated
         
-    print(f"BUCKET REPAIR COMPLET")
+    print(f"BUCKET REPAIR COMPLETE")
     return True
 
 def enrich_orphanage_buckets():

@@ -423,10 +423,7 @@ def calculate_symbols_orders():
                         if isinstance(symbol_list, list):
                             for item in symbol_list:
                                 sym_name = str(item.get('symbol', '')).strip().upper()
-                                # Normalize all keys within the symbol item (the specs)
-                                normalized_item = {}
-                                for k, v in item.items():
-                                    normalized_item[k.lower()] = v
+                                normalized_item = {k.lower(): v for k, v in item.items()}
                                 user_config[sym_name] = normalized_item
 
                 config_folder = os.path.dirname(volumes_path)
@@ -451,30 +448,46 @@ def calculate_symbols_orders():
                                 continue
 
                             try:
+                                # --- 1. VALIDATION: Check for None values before float conversion ---
+                                required_keys = ['entry', 'tick_size', 'tick_value']
+                                missing_keys = [k for k in required_keys if order.get(k) is None]
+                                
+                                if missing_keys:
+                                    print(f"Skipping {symbol}: Missing required data {missing_keys}")
+                                    continue
+
                                 # Data Extraction
-                                entry = float(order.get('entry', 0))
+                                entry = float(order['entry'])
                                 rr_ratio = float(current_rr)
                                 order_type = str(order.get('order_type', '')).upper()
-                                tick_size = float(order.get('tick_size', 0.00001))
-                                tick_value = float(order.get('tick_value', 0))
+                                tick_size = float(order['tick_size'])
+                                tick_value = float(order['tick_value'])
                                 
-                                # Normalize timeframe check
                                 raw_tf = order.get('timeframe', '1h')
                                 tf = str(raw_tf).lower()
                                 
                                 # Precision Logic
                                 digits = len(str(tick_size).split('.')[-1]) if tick_size < 1 else 0
                                 
-                                # Fetch specs using normalized timeframe key
+                                # Fetch specs and validate volume
                                 spec_key = f"{tf}_specs"
-                                tf_specs = user_config.get(symbol, {}).get(spec_key, {})
+                                tf_specs = user_config.get(symbol, {}).get(spec_key)
                                 
-                                volume = float(tf_specs.get('volume', 0.01))
-                                
+                                if tf_specs is None or tf_specs.get('volume') is None:
+                                    print(f"Skipping {symbol}: No volume/specs found for timeframe {tf}")
+                                    continue
+                                    
+                                volume = float(tf_specs['volume'])
+
                                 # --- LOGIC BRANCH A: USD RISK BASED ---
                                 if order.get("usd_based_risk_only") is True:
-                                    risk_val = float(order.get("usd_risk", tf_specs.get("usd_risk", 0)))
+                                    risk_val = order.get("usd_risk") if order.get("usd_risk") is not None else tf_specs.get("usd_risk")
                                     
+                                    if risk_val is None:
+                                        print(f"Skipping {symbol}: usd_based_risk_only is True but no risk value found.")
+                                        continue
+
+                                    risk_val = float(risk_val)
                                     if risk_val > 0 and tick_value > 0:
                                         sl_dist = (risk_val * tick_size) / (tick_value * volume)
                                         tp_dist = sl_dist * rr_ratio
@@ -1036,6 +1049,6 @@ def calculate_orders():
     print(f"✅ Symbols order price levels calculation completed.")
 
 if __name__ == "__main__":
-    sync_dev_investors()
+    calculate_orders()
     
    
