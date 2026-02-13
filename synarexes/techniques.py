@@ -19,15 +19,21 @@ from collections import defaultdict
 
 
 DEV_PATH = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers'
+DEV_USERS = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.json'
 
 def load_developers_dictionary():
-    path = r"C:\xampp\htdocs\chronedge\synarex\users.json"
-    if not os.path.exists(path):
+    # Corrected os.path.exists logic
+    if not os.path.exists(DEV_USERS):
+        print(f"Error: File not found at {DEV_USERS}")
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(DEV_USERS, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except:
+    except json.JSONDecodeError as e:
+        print(f"Error: {DEV_USERS} contains invalid JSON: {e}")
+        return {}
+    except Exception as e:
+        print(f"Error loading developers dictionary: {e}")
         return {}
 
 def get_account_management(broker_name):
@@ -4220,7 +4226,7 @@ def single():
     with Pool(processes=cores) as pool:
 
         # STEP 2: Higher Highs & lower lows
-        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
+        hh_ll_results = pool.map(higher_highs_lower_lows, broker_names)
         for r in hh_ll_results: print(r)
 
 def main():

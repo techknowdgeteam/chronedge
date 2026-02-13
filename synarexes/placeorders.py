@@ -140,52 +140,69 @@ def debug_print_all_broker_symbols():
 
 def get_normalized_symbol(record_symbol, norm_map):
     """
-    1. Takes "US Oil" from record.
-    2. Cleans it to "USOIL".
-    3. Finds the list in Normalization JSON.
-    4. Checks broker for any name in that list.
+    Finds the correct broker symbol, prioritizing those that allow full trading.
+    Checks for suffixes like '+', '.', 'm', '..', etc.
     """
     if not record_symbol:
         return None
 
-    # Step 1: Clean the record name for searching (remove spaces, underscores, dots)
-    # "US Oil" -> "USOIL" | "US_OIL" -> "USOIL"
     search_term = record_symbol.replace(" ", "").replace("_", "").replace(".", "").upper()
-    
     norm_data = norm_map.get("NORMALIZATION", {})
     target_synonyms = []
 
-    # Step 2: Go to Normalization straight
+    # 1. Identify potential base names from the normalization map
     for standard_key, synonyms in norm_data.items():
-        # Clean the standard key and all synonyms for a fair comparison
         clean_key = standard_key.replace("_", "").upper()
         clean_syns = [s.replace(" ", "").replace("_", "").replace("/", "").upper() for s in synonyms]
         
         if search_term == clean_key or search_term in clean_syns:
-            target_synonyms = synonyms
+            target_synonyms = list(synonyms)
             break
 
-    # If the record symbol isn't in our map, at least try the cleaned version
     if not target_synonyms:
         target_synonyms = [record_symbol, search_term]
 
-    # Step 3: Check Broker for any of these possibilities
-    # Fetch all available names once to save time
-    available_symbols = [s.name for s in mt5.symbols_get()]
+    # 2. Get all symbols from broker
+    all_symbols = mt5.symbols_get()
+    if not all_symbols:
+        return None
+    
+    available_names = [s.name for s in all_symbols]
+
+    # 3. Helper to check if a symbol is actually tradeable
+    def is_tradeable(sym_name):
+        info = mt5.symbol_info(sym_name)
+        if info is None:
+            mt5.symbol_select(sym_name, True)
+            info = mt5.symbol_info(sym_name)
+        # Check if symbol exists AND trade_mode allows full access (2)
+        return info is not None and info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL
+
+    # 4. Search Strategy:
+    # First, try exact matches. If not tradeable, look for suffix variations.
+    common_suffixes = ["+", "m", ".", "..", "#", "i", "z"]
     
     for option in target_synonyms:
-        # Check for Exact Match (e.g., "USOUSD")
-        if option in available_symbols:
-            return option
-            
-        # Check for Suffix Match (e.g., "USOUSD+")
-        # We check if any broker symbol starts with our synonym
         clean_opt = option.replace("/", "").upper()
-        for broker_name in available_symbols:
+        
+        # Priority A: Check for exact match first
+        if clean_opt in available_names and is_tradeable(clean_opt):
+            return clean_opt
+        
+        # Priority B: Look for any broker symbol that starts with our option (e.g., AUDUSD -> AUDUSD+)
+        for broker_name in available_names:
             if broker_name.upper().startswith(clean_opt):
-                return broker_name
+                if is_tradeable(broker_name):
+                    return broker_name
 
-    print(f"[!] No broker match found for {record_symbol} even after normalization check.")
+    # Priority C: Manual Suffix Append (Last Resort)
+    for option in target_synonyms:
+        clean_opt = option.replace("/", "").upper()
+        for suffix in common_suffixes:
+            test_name = f"{clean_opt}{suffix}"
+            if test_name in available_names and is_tradeable(test_name):
+                return test_name
+
     return None
 
 def get_filling_mode(symbol):
@@ -204,540 +221,7 @@ def get_filling_mode(symbol):
     else:
         # Most common for Deriv/Indices if FOK/IOC are restricted
         return mt5.ORDER_FILLING_RETURN
-
-def check_orders_live_volume():
-
-    """
-    Function 2: Validates and modifies volumes to match broker constraints.
-    Now utilizes the same stable initialization logic as place_usd_orders.
-    """
-    print("\n" + "="*80)
-    print("STARTING VALIDATE_ORDERS_VOLUME (SYNCHRONIZED INIT)")
-    print("="*80)
     
-    total_files_updated = 0
-
-    # --- DATA INITIALIZATION ---
-    try:
-        if not os.path.exists(NORMALIZE_SYMBOLS_PATH):
-            print("CRITICAL ERROR: Normalization map path does not exist.")
-            return False
-        with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-            norm_map = json.load(f)
-    except Exception as e:
-        print(f"CRITICAL ERROR: Could not load normalization map: {e}")
-        return False
-
-    for user_brokerid, broker_cfg in usersdictionary.items():
-        print(f"\n{'-'*80}\nPROCESSING VOLUMES FOR: {user_brokerid}\n{'-'*80}")
-        inv_root = Path(INV_PATH) / user_brokerid
-        
-        # --- START STABLE INIT LOGIC (Mirroring place_usd_orders) ---
-        mt5.shutdown() 
-        login_id = int(broker_cfg['LOGIN_ID'])
-        mt5_path = broker_cfg["TERMINAL_PATH"]
-        
-        print(f"  Initializing terminal at: {mt5_path}")
-        if not mt5.initialize(path=mt5_path, timeout=180000):
-            print(f"  [ERROR] initialize() failed: {mt5.last_error()}")
-            continue
-
-        # Login check
-        acc = mt5.account_info()
-        if acc is None or acc.login != login_id:
-            if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
-                print(f"  [ERROR] Login failed: {mt5.last_error()}")
-                continue
-            print(f"  [OK] Logged into {login_id}")
-        else:
-            print(f"  [OK] Already logged into {login_id}")
-        # --- END STABLE INIT LOGIC ---
-
-        search_pattern = "**/risk_reward_*/*usd_risk/*usd_risk.json"
-        found_files = list(inv_root.rglob(search_pattern))
-
-        for target_file_path in found_files:
-            try:
-                with open(target_file_path, 'r', encoding='utf-8') as f:
-                    entries = json.load(f)
-
-                file_changed = False
-                for entry in entries:
-                    raw_symbol = entry.get("symbol")
-                    symbol = get_normalized_symbol(raw_symbol, norm_map)
-                    
-                    info = mt5.symbol_info(symbol)
-                    if info is None:
-                        # Attempt to select it if not visible
-                        mt5.symbol_select(symbol, True)
-                        info = mt5.symbol_info(symbol)
-                        if info is None: continue
-
-                    vol_key = next((k for k in entry.keys() if k.endswith("_volume")), "volume")
-                    current_vol = float(entry.get(vol_key, 0.0))
-
-                    # 1. Minimum Volume Check
-                    new_vol = max(current_vol, info.volume_min)
-
-                    # 2. Volume Step / Decimal Check
-                    step = info.volume_step
-                    if step > 0:
-                        new_vol = round(math.floor(new_vol / step + 1e-9) * step, 2)
-                    
-                    # Final safety check
-                    if new_vol < info.volume_min:
-                        new_vol = info.volume_min
-
-                    if abs(new_vol - current_vol) > 1e-7: # Floating point comparison
-                        entry[vol_key] = new_vol
-                        file_changed = True
-                        print(f"    [FIX] {symbol}: {current_vol} -> {new_vol}")
-
-                if file_changed:
-                    with open(target_file_path, 'w', encoding='utf-8') as f:
-                        json.dump(entries, f, indent=4)
-                    total_files_updated += 1
-
-            except Exception as e:
-                print(f"    [!] Error in {target_file_path}: {e}")
-
-    mt5.shutdown()
-    print("\n" + "="*80)
-    print(f"COMPLETED: Updated {total_files_updated} files.")
-    print("="*80)
-    return True
-
-def check_orders_live_risk():
-
-
-    """
-    Function 1: Only calculates and adds live risk/reward fields to orders.
-    Does NOT move files between buckets - only adds broker-specific risk fields.
-    """
-    print(f"CHECKING ORDERS RISK")
-    total_files_processed = 0
-    total_errors_encountered = 0
-
-    try:
-        with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-            norm_map = json.load(f)
-    except Exception as e:
-        print(f"CRITICAL ERROR: Could not load normalization map: {e}")
-        return False
-
-    for user_brokerid, broker_cfg in usersdictionary.items():
-        inv_id = user_brokerid
-        inv_root = Path(INV_PATH) / inv_id
-        broker_name = broker_cfg.get("SERVER", "UnknownBroker")
-        
-        print(f"\n>>> [INVESTOR: {inv_id}] Calculating live risk on {broker_name}...")
-        investor_files_updated = 0
-
-        if not mt5.initialize(
-            path=broker_cfg["TERMINAL_PATH"], 
-            login=int(broker_cfg["LOGIN_ID"]), 
-            password=broker_cfg["PASSWORD"], 
-            server=broker_cfg["SERVER"]
-        ):
-            print(f"    [!] CONNECTION ERROR for {inv_id}: {mt5.last_error()}")
-            total_errors_encountered += 1
-            continue
-
-        try:
-            search_pattern = "**/risk_reward_*/*usd_risk/*usd_risk.json"
-            found_files = list(inv_root.rglob(search_pattern))
-            
-            for target_file_path in found_files:
-                try:
-                    with open(target_file_path, 'r', encoding='utf-8') as f:
-                        entries = json.load(f)
-
-                    file_changed = False
-                    updated_entries = []
-
-                    for entry in entries:
-                        # Remove old broker-specific risk fields before adding fresh ones
-                        for key in list(entry.keys()):
-                            if key.endswith("_sl_risk_amount") or key.endswith("_tp_reward_amount"):
-                                entry.pop(key, None)
-
-                        raw_symbol = entry.get("symbol")
-                        symbol = get_normalized_symbol(raw_symbol, norm_map)
-                        
-                        if not symbol or mt5.symbol_info(symbol) is None:
-                            total_errors_encountered += 1
-                            updated_entries.append(entry)
-                            continue
-
-                        info = mt5.symbol_info(symbol)
-                        if not info.visible: 
-                            mt5.symbol_select(symbol, True)
-
-                        # Extract values
-                        entry_p = float(entry.get("entry", 0))
-                        exit_p = float(entry.get("exit", 0))
-                        target_p = float(entry.get("target", 0))
-                        vol_key = next((k for k in entry.keys() if k.endswith("_volume")), "volume")
-                        current_vol = float(entry.get(vol_key, 0.0))
-                        
-                        order_type_str = entry.get("order_type", "").lower()
-                        calc_type = mt5.ORDER_TYPE_BUY if "buy" in order_type_str else mt5.ORDER_TYPE_SELL
-
-                        # Calculate live risk and reward
-                        sl_risk = mt5.order_calc_profit(calc_type, symbol, current_vol, entry_p, exit_p)
-                        
-                        if sl_risk is not None:
-                            risk_amt = round(abs(sl_risk), 2)
-                            reward_amt = round(abs(mt5.order_calc_profit(calc_type, symbol, current_vol, entry_p, target_p)), 2)
-                            
-                            # Add broker-specific live risk fields
-                            entry[f"{broker_name}_sl_risk_amount"] = risk_amt
-                            entry[f"{broker_name}_tp_reward_amount"] = reward_amt
-                            file_changed = True
-                        
-                        updated_entries.append(entry)
-
-                    # Save updated entries with new risk fields
-                    if file_changed:
-                        with open(target_file_path, 'w', encoding='utf-8') as f:
-                            json.dump(updated_entries, f, indent=4)
-                        investor_files_updated += 1
-
-                except Exception as e:
-                    print(f"    [!] Error processing file {target_file_path}: {e}")
-                    total_errors_encountered += 1
-                    continue
-
-        except Exception as e:
-            print(f"    [!] CRASH for {inv_id}: {e}")
-            total_errors_encountered += 1
-        
-        mt5.shutdown()
-        print(f"<<< [FINISHED: {inv_id}] Updated {investor_files_updated} files with live risk fields.")
-        total_files_processed += investor_files_updated
-    print(f"ORDERS RISK CHECK COMPLETED.") 
-    return True
-
-def repair_order_buckets():
-    """
-    Identifies and fixes bucket violations.
-    Logic: 
-    - Risk < $1.00 goes to '0.5usd_risk'
-    - Risk >= $1.00 goes to floor(risk) bucket (e.g., 1.99 -> 1usd_risk)
-    """
-    print(f"ARRANGING ORDERS TO THEIR PROPORTIONAL BUCKETS.") 
-    total_files_processed = 0
-    total_errors_encountered = 0
-    total_moved_orders = 0
-
-    try:
-        with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-            norm_map = json.load(f)
-    except Exception as e:
-        print(f"CRITICAL ERROR: Could not load normalization map: {e}")
-        return False
-
-    for user_brokerid, broker_cfg in usersdictionary.items():
-        inv_id = user_brokerid
-        inv_root = Path(INV_PATH) / inv_id
-        broker_name = broker_cfg.get("SERVER", "UnknownBroker")
-        
-        print(f"\n>>> [INVESTOR: {inv_id}] Repairing bucket violations on {broker_name}...")
-        investor_files_updated = 0
-        investor_orders_moved = 0
-
-        # Initialize MT5 connection
-        import MetaTrader5 as mt5
-        if not mt5.initialize(
-            path=broker_cfg["TERMINAL_PATH"], 
-            login=int(broker_cfg["LOGIN_ID"]), 
-            password=broker_cfg["PASSWORD"], 
-            server=broker_cfg["SERVER"]
-        ):
-            print(f"    [!] CONNECTION ERROR for {inv_id}: {mt5.last_error()}")
-            total_errors_encountered += 1
-            continue
-
-        try:
-            search_pattern = "**/risk_reward_*/*usd_risk/*usd_risk.json"
-            found_files = list(inv_root.rglob(search_pattern))
-            
-            for target_file_path in found_files:
-                # Use float to parse names like '0.5' or '1'
-                try:
-                    current_bucket_limit = float(target_file_path.stem.replace('usd_risk', ''))
-                except:
-                    current_bucket_limit = -1.0 
-                    print(f"    [!] Could not parse bucket limit from {target_file_path.name}")
-
-                try:
-                    with open(target_file_path, 'r', encoding='utf-8') as f:
-                        entries = json.load(f)
-
-                    staying_entries = []
-                    file_changed = False
-
-                    for entry in entries:
-                        risk_field = f"{broker_name}_sl_risk_amount"
-                        live_risk_amt = entry.get(risk_field)
-                        
-                        if live_risk_amt is None:
-                            staying_entries.append(entry)
-                            continue
-
-                        # --- HYBRID BUCKET LOGIC ---
-                        if live_risk_amt < 1.0:
-                            # Any cent value (0.01 - 0.99) belongs in the 0.5 bucket
-                            correct_bucket_val = 0.5
-                        else:
-                            # Any value >= 1.0 is floored to the nearest dollar
-                            correct_bucket_val = float(math.floor(live_risk_amt))
-                        
-                        # Compare floats
-                        is_violation = not math.isclose(correct_bucket_val, current_bucket_limit)
-
-                        if not is_violation:
-                            staying_entries.append(entry)
-                        else:
-                            # Determine folder name (keep .5 for cents, integer for dollars)
-                            if correct_bucket_val == 0.5:
-                                new_bucket_name = "0.5usd_risk"
-                            else:
-                                new_bucket_name = f"{int(correct_bucket_val)}usd_risk"
-
-                            # File Migration
-                            parent_rr_folder = target_file_path.parent.parent
-                            new_dir = parent_rr_folder / new_bucket_name
-                            new_dir.mkdir(parents=True, exist_ok=True)
-                            new_file_path = new_dir / f"{new_bucket_name}.json"
-
-                            dest_data = []
-                            if new_file_path.exists():
-                                try:
-                                    with open(new_file_path, 'r', encoding='utf-8') as nf:
-                                        dest_data = json.load(nf)
-                                except: pass
-                            
-                            dest_data.append(entry)
-                            with open(new_file_path, 'w', encoding='utf-8') as nf:
-                                json.dump(dest_data, nf, indent=4)
-                            
-                            file_changed = True
-                            investor_orders_moved += 1
-                            total_moved_orders += 1
-
-                    # Save source file minus the moved orders
-                    if file_changed:
-                        with open(target_file_path, 'w', encoding='utf-8') as f:
-                            json.dump(staying_entries, f, indent=4)
-                        investor_files_updated += 1
-
-                except Exception as e:
-                    print(f"    [!] Error processing file {target_file_path}: {e}")
-                    total_errors_encountered += 1
-
-        except Exception as e:
-            print(f"    [!] CRASH for {inv_id}: {e}")
-            total_errors_encountered += 1
-        
-        mt5.shutdown()
-        print(f"<<< [FINISHED: {inv_id}] Updated {investor_files_updated} files, moved {investor_orders_moved} orders.")
-        total_files_processed += investor_files_updated
-        
-    print(f"BUCKET REPAIR COMPLETE")
-    return True
-
-def enrich_orphanage_buckets():
-    """
-    Function 3: Creates volume-varied copies of orders across all possible risk buckets.
-    Handles decimal buckets (e.g., 0.5) and integer buckets (e.g., 10).
-    """
-    total_files_processed = 0
-    total_errors_encountered = 0
-    start_time = time.time()
-
-    print("ENRICHING & CLEANING ORPHANAGE BUCKETS - GLOBAL START")
-    
-    try:
-        with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-            norm_map = json.load(f)
-        print(f"[✓] Loaded normalization map with {len(norm_map)} symbols")
-    except Exception as e:
-        print(f"[✗] CRITICAL ERROR: Could not load normalization map: {e}")
-        return False
-
-    for user_brokerid, broker_cfg in usersdictionary.items():
-        inv_id = user_brokerid
-        inv_root = Path(INV_PATH) / inv_id
-        broker_name = broker_cfg.get("SERVER", "UnknownBroker")
-        
-        inv_files_handled = 0
-        inv_misfits_removed = 0
-        inv_copies_generated = 0
-
-        print(f"\n>>> STARTING INVESTOR: {inv_id} ({broker_name})")
-        
-        account_mgmt_path = inv_root / "accountmanagement.json"
-        available_risks = []
-        
-        try:
-            with open(account_mgmt_path, 'r') as f:
-                account_data = json.load(f)
-                available_risks = sorted([float(r) for r in account_data.get("RISKS", [])])
-        except Exception as e:
-            print(f"    [✗] Could not load accountmanagement.json: {e}")
-            total_errors_encountered += 1
-            continue
-
-        if not available_risks:
-            print(f"    [!] No risk buckets defined. Skipping.")
-            continue
-
-        # Dynamic range calculation: Step is the distance to the next bucket, default to 1.0
-        max_allowed_risk = max(available_risks)
-
-        if not mt5.initialize(
-            path=broker_cfg["TERMINAL_PATH"], 
-            login=int(broker_cfg["LOGIN_ID"]), 
-            password=broker_cfg["PASSWORD"], 
-            server=broker_cfg["SERVER"]
-        ):
-            print(f"    [✗] CONNECTION FAILED for terminal.")
-            total_errors_encountered += 1
-            continue
-
-        try:
-            search_pattern = "**/risk_reward_*/*usd_risk/*usd_risk.json"
-            found_files = list(inv_root.rglob(search_pattern))
-            
-            for source_file_path in found_files:
-                try:
-                    # FIX: Use float() instead of int() to capture 0.5
-                    try:
-                        current_bucket_base = float(source_file_path.stem.replace('usd_risk', ''))
-                        
-                        # Find the next bucket up to define the upper limit
-                        next_buckets = [r for r in available_risks if r > current_bucket_base]
-                        bucket_max_limit = next_buckets[0] - 0.01 if next_buckets else current_bucket_base + 0.99
-                    except:
-                        current_bucket_base = 0.0
-                        bucket_max_limit = 0.0
-
-                    with open(source_file_path, 'r', encoding='utf-8') as f:
-                        entries = json.load(f)
-
-                    original_count = len(entries)
-                    valid_entries_for_this_file = []
-                    
-                    for entry in entries:
-                        # 1. VALIDATION
-                        symbol = get_normalized_symbol(entry.get("symbol"), norm_map)
-                        symbol_info = mt5.symbol_info(symbol)
-                        if symbol_info is None: continue 
-
-                        entry_p = float(entry.get("entry", 0))
-                        exit_p = float(entry.get("exit", 0))
-                        target_p = float(entry.get("target", 0))
-                        vol_key = next((k for k in entry.keys() if k.endswith("_volume")), "volume")
-                        current_vol = float(entry.get(vol_key, 0.0))
-                        order_type_str = entry.get("order_type", "").lower()
-                        calc_type = mt5.ORDER_TYPE_BUY if "buy" in order_type_str else mt5.ORDER_TYPE_SELL
-
-                        live_risk_val = mt5.order_calc_profit(calc_type, symbol, current_vol, entry_p, exit_p)
-                        if live_risk_val is None: continue
-                        actual_risk_amt = round(abs(live_risk_val), 2)
-                        
-                        # --- DYNAMIC CLEANUP LOGIC ---
-                        if not (current_bucket_base <= actual_risk_amt <= bucket_max_limit):
-                            inv_misfits_removed += 1
-                            continue
-                        
-                        valid_entries_for_this_file.append(entry)
-
-                        # 2. ENRICHMENT
-                        if entry.get("is_volume_copy", False): continue
-
-                        volume_risk_map = {}
-                        vol = symbol_info.volume_min
-                        iteration = 0
-                        
-                        while vol <= symbol_info.volume_max and iteration < 1000:
-                            risk_val = mt5.order_calc_profit(calc_type, symbol, vol, entry_p, exit_p)
-                            if risk_val is not None:
-                                risk_amt = round(abs(risk_val), 2)
-                                
-                                # Find which bucket this volume belongs to
-                                target_bucket = None
-                                for i, r in enumerate(available_risks):
-                                    upper = available_risks[i+1] if (i+1) < len(available_risks) else r + 1.0
-                                    if r <= risk_amt < upper:
-                                        target_bucket = r
-                                        break
-                                
-                                if target_bucket is not None:
-                                    if target_bucket not in volume_risk_map or vol > volume_risk_map[target_bucket]['volume']:
-                                        volume_risk_map[target_bucket] = {
-                                            'volume': vol,
-                                            'risk': risk_amt,
-                                            'reward': round(abs(mt5.order_calc_profit(calc_type, symbol, vol, entry_p, target_p)), 2)
-                                        }
-                            
-                            vol = round(vol + symbol_info.volume_step, 8)
-                            iteration += 1
-
-                        # Save Copies
-                        parent_rr_folder = source_file_path.parent.parent
-                        for target_bucket, vol_data in volume_risk_map.items():
-                            # Format bucket name to match file system (e.g., 0.5 -> "0.5", 10.0 -> "10")
-                            b_str = str(int(target_bucket)) if target_bucket.is_integer() else str(target_bucket)
-                            if target_bucket == current_bucket_base: continue
-                            
-                            order_copy = entry.copy()
-                            order_copy.update({
-                                vol_key: vol_data['volume'],
-                                f"{broker_name}_sl_risk_amount": vol_data['risk'],
-                                f"{broker_name}_tp_reward_amount": vol_data['reward'],
-                                "is_volume_copy": True,
-                                "parent_bucket": b_str,
-                                "enriched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            })
-
-                            target_bucket_name = f"{b_str}usd_risk"
-                            target_file_path = parent_rr_folder / target_bucket_name / f"{target_bucket_name}.json"
-                            target_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-                            dest_data = []
-                            if target_file_path.exists():
-                                with open(target_file_path, 'r', encoding='utf-8') as nf:
-                                    dest_data = json.load(nf)
-                            
-                            if not any(ex.get("symbol") == order_copy["symbol"] and 
-                                       ex.get("entry") == order_copy["entry"] and 
-                                       abs(ex.get(vol_key, 0) - vol_data['volume']) < 0.0001 
-                                       for ex in dest_data):
-                                dest_data.append(order_copy)
-                                with open(target_file_path, 'w', encoding='utf-8') as nf:
-                                    json.dump(dest_data, nf, indent=4)
-                                inv_copies_generated += 1
-
-                    if len(valid_entries_for_this_file) != original_count:
-                        with open(source_file_path, 'w', encoding='utf-8') as f:
-                            json.dump(valid_entries_for_this_file, f, indent=4)
-                    
-                    inv_files_handled += 1
-
-                except Exception as e:
-                    print(f"    [✗] Error processing file {source_file_path.name}: {e}")
-                    total_errors_encountered += 1
-
-        except Exception as e:
-            print(f"    [✗] CRITICAL INVESTOR CRASH for {inv_id}: {e}")
-            total_errors_encountered += 1
-        
-        mt5.shutdown()
-    print(f"FINISHED ENRICHING ORPHANAGE BUCKETS.") 
-    return True
-
 def deduplicate_orders():
     """
     Scans all risk bucket JSON files and removes duplicate orders based on:
@@ -1037,32 +521,48 @@ def place_usd_orders():
         
         for idx, entry in enumerate(all_entries):
             try:
+                # The normalization function now ensures we get a TRADEABLE symbol
                 symbol = get_normalized_symbol(entry["symbol"], norm_map)
+                
+                if not symbol:
+                    print(f"      [SKIP] {entry['symbol']} - No tradeable symbol found on broker.")
+                    failed += 1
+                    continue
+
+                # Ensure symbol is visible in Market Watch
+                if not mt5.symbol_select(symbol, True):
+                    print(f"      [FAIL] {symbol} - Could not select symbol.")
+                    failed += 1
+                    continue
+
+                symbol_info = mt5.symbol_info(symbol)
                 vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
                 
-                symbol_info = mt5.symbol_info(symbol)
-                if symbol_info is None:
-                    mt5.symbol_select(symbol, True)
-                    symbol_info = mt5.symbol_info(symbol)
-                    if not symbol_info:
-                        failed += 1; continue
-                
                 # Check for existing positions or orders
-                if mt5.positions_get(symbol=symbol) or any(round(o.price_open, 5) == round(float(entry["entry"]), 5) for o in (mt5.orders_get(symbol=symbol) or [])):
-                    skipped += 1; continue
+                existing_orders = mt5.orders_get(symbol=symbol) or []
+                existing_pos = mt5.positions_get(symbol=symbol) or []
+                
+                entry_price = round(float(entry["entry"]), symbol_info.digits)
+                
+                if existing_pos or any(round(o.price_open, symbol_info.digits) == entry_price for o in existing_orders):
+                    skipped += 1
+                    continue
 
                 volume = float(entry[vol_key])
                 if symbol_info.volume_step > 0:
                     volume = round(volume / symbol_info.volume_step) * symbol_info.volume_step
                 
+                # Clamp volume to broker limits
+                volume = max(symbol_info.volume_min, min(symbol_info.volume_max, volume))
+
                 request = {
                     "action": mt5.TRADE_ACTION_PENDING,
                     "symbol": symbol,
                     "volume": round(volume, 2),
                     "type": mt5.ORDER_TYPE_BUY_LIMIT if entry["order_type"] == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT,
-                    "price": round(float(entry["entry"]), 5),
-                    "sl": float(entry["exit"]),
-                    "tp": float(entry["target"]),
+                    "price": entry_price,
+                    "sl": round(float(entry["exit"]), symbol_info.digits),
+                    "tp": round(float(entry["target"]), symbol_info.digits),
                     "magic": int(entry.get("magic", default_magic)),
                     "comment": f"Risk_Agg_RR{selected_rr}",
                     "type_time": mt5.ORDER_TIME_GTC,
@@ -1075,10 +575,12 @@ def place_usd_orders():
                     placed += 1
                 else:
                     ret_msg = res.comment if res else "No response"
-                    print(f"      [FAIL] {symbol} @ {entry['entry']} - Error: {ret_msg}")
+                    print(f"      [FAIL] {symbol} @ {entry_price} - Error: {ret_msg} (Code: {res.retcode if res else 'N/A'})")
                     failed += 1
-            except:
+            except Exception as e:
+                print(f"      [ERROR] Fatal error placing {entry.get('symbol')}: {e}")
                 failed += 1
+                
         return placed, failed, skipped
 
     # --- MAIN EXECUTION FLOW ---
@@ -1153,16 +655,125 @@ def place_usd_orders():
     print("\n" + "="*80 + "\nCOMPLETED\n" + "="*80)
     return True  
 
-def main():
+def default_price_repair():
+    """
+    Synchronizes 'exit' and 'target' prices from limit_orders_backup.json 
+    to all active risk bucket files ONLY if 'default_price' is set to true 
+    in accountmanagement.json.
+    """
+    print("--- STARTING DEFAULT-PRICE MODIFICATION---")
+    
+    if not os.path.exists(INV_PATH):
+        print(f"Error: Investor path {INV_PATH} not found.")
+        return False
+
+    investor_ids = [f for f in os.listdir(INV_PATH) if os.path.isdir(os.path.join(INV_PATH, f))]
+
+    for inv_id in investor_ids:
+        inv_root = Path(INV_PATH) / inv_id
+        acc_mgmt_path = inv_root / "accountmanagement.json"
+        
+        # --- 1. PERMISSION CHECK ---
+        if not acc_mgmt_path.exists():
+            print(f" > Skipping {inv_id}: accountmanagement.json missing.")
+            continue
+
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Check the nested setting: settings -> default_price
+            settings = config.get("settings", {})
+            is_allowed = settings.get("default_price", False)
+            
+            if not is_allowed:
+                continue
+        except Exception as e:
+            print(f" ! Error reading config for {inv_id}: {e}")
+            continue
+
+        # --- 2. BACKUP LOCATION ---
+        backup_files = list(inv_root.rglob("limit_orders_backup.json"))
+        if not backup_files:
+            print(f" > Skipping {inv_id}: No limit_orders_backup.json found.")
+            continue
+            
+        backup_path = backup_files[0]
+        print(f"{inv_id} [AUTHORIZED] default price")
+
+        # --- 3. LOAD MASTER DATA ---
+        try:
+            with open(backup_path, 'r', encoding='utf-8') as f:
+                backup_entries = json.load(f)
+            
+            master_map = {}
+            for b_entry in backup_entries:
+                key = (b_entry.get("symbol"), b_entry.get("entry"), b_entry.get("order_type"))
+                master_map[key] = b_entry
+                
+        except Exception as e:
+            print(f" ! Error loading backup data for {inv_id}: {e}")
+            continue
+
+        # --- 4. APPLY UPDATES TO RISK BUCKETS ---
+        risk_files = list(inv_root.rglob("*usd_risk.json"))
+        investor_updates = 0
+        total_orders_patched = 0
+
+        for target_file in risk_files:
+            # Avoid self-referencing if backup uses the same naming convention
+            if target_file.name == "limit_orders_backup.json":
+                continue
+
+            file_changed = False
+            try:
+                with open(target_file, 'r', encoding='utf-8') as f:
+                    active_entries = json.load(f)
+
+                if not isinstance(active_entries, list):
+                    continue
+
+                for active_entry in active_entries:
+                    key = (active_entry.get("symbol"), active_entry.get("entry"), active_entry.get("order_type"))
+                    
+                    if key in master_map:
+                        backup_ref = master_map[key]
+                        
+                        # Apply Exit repair (if not 0)
+                        b_exit = backup_ref.get("exit", 0)
+                        if b_exit != 0 and active_entry.get("exit") != b_exit:
+                            active_entry["exit"] = b_exit
+                            file_changed = True
+                            total_orders_patched += 1
+                        
+                        # Apply Target repair (if not 0)
+                        b_target = backup_ref.get("target", 0)
+                        if b_target != 0 and active_entry.get("target") != b_target:
+                            active_entry["target"] = b_target
+                            file_changed = True
+                            total_orders_patched += 1
+
+                if file_changed:
+                    with open(target_file, 'w', encoding='utf-8') as f:
+                        json.dump(active_entries, f, indent=4)
+                    investor_updates += 1
+
+            except Exception as e:
+                print(f" ! Error processing {target_file.name}: {e}")
+
+        print(f" [✓] {inv_id}: Successfully repaired {total_orders_patched} prices.")
+
+    print("--- Default Price Repair Completed ---")
+    return True
+
+def place_orders():
     sort_orders()
-    check_orders_live_volume()
-    check_orders_live_risk()
-    repair_order_buckets()
-    enrich_orphanage_buckets()
     deduplicate_orders()
     place_usd_orders()
     check_limit_orders_risk()
+    default_price_repair()
+
 
 if __name__ == "__main__":
-   main()
+   place_orders()
 
