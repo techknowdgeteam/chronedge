@@ -114,10 +114,11 @@ def clean_risk_folders():
 
 def purge_unauthorized_symbols():
     """
-    Iterates through all users, identifies allowed symbols across all categories,
-    and removes any orders from limit_orders.json that use unauthorized symbols.
+    Iterates through users and their specific strategy folders (new_filename).
+    Validates symbols in limit_orders.json against the local strategy config.
+    Removes unauthorized orders from BOTH 'limit_orders.json' and 'limit_orders_backup.json'.
     """
-    print(f"\n{'='*10} PURGING UNAUTHORIZED SYMBOLS {'='*10}")
+    print(f"\n{'='*10} PURGING UNAUTHORIZED SYMBOLS BY STRATEGY {'='*10}")
     
     try:
         # 1. Load User IDs
@@ -131,67 +132,99 @@ def purge_unauthorized_symbols():
         total_purged_overall = 0
 
         for dev_broker_id in users_data.keys():
-            print(f" [{dev_broker_id}] 🔍 Auditing symbol permissions...")
+            print(f" [{dev_broker_id}] 🔍 Auditing strategy-specific permissions...")
             
             user_folder = os.path.join(DEV_PATH, dev_broker_id)
-            volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
+            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
             
-            # Skip user if they don't have a config file
-            if not os.path.exists(volumes_path):
-                print(f"  └─ ⚠️  Config missing: Skipping audit")
+            if not os.path.exists(acc_mgmt_path):
+                print(f"  └─ ⚠️  accountmanagement.json missing: Skipping user")
                 continue
 
-            # 2. Extract ALL allowed symbols
-            allowed_symbols = set()
+            # 2. Identify Strategy Folders (new_filename) from accountmanagement.json
+            strategy_folders = []
             try:
-                with open(volumes_path, 'r') as f:
-                    v_data = json.load(f)
-                    for category in v_data.values():
-                        if isinstance(category, list):
-                            for item in category:
-                                if 'symbol' in item:
-                                    allowed_symbols.add(item['symbol'].upper())
+                with open(acc_mgmt_path, 'r') as f:
+                    acc_data = json.load(f)
+                
+                # Navigate the nested JSON structure to find 'new_filename'
+                poi = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
+                for app_val in poi.values():
+                    if isinstance(app_val, dict):
+                        for ent_val in app_val.values():
+                            if isinstance(ent_val, dict) and ent_val.get("new_filename"):
+                                strategy_dir = os.path.join(user_folder, ent_val["new_filename"])
+                                if strategy_dir not in strategy_folders:
+                                    strategy_folders.append(strategy_dir)
             except Exception as e:
-                print(f"  └─ ❌ Error reading config: {e}")
+                print(f"  └─ ❌ Error parsing strategy folders: {e}")
                 continue
 
-            # 3. Locate and Filter limit_orders.json files
-            limit_order_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
-            user_purged_count = 0
-
-            for limit_path in limit_order_files:
-                # We skip the calculated risk_reward folders to avoid redundant processing
-                if "risk_reward_" in limit_path: continue
+            # 3. Process each Strategy Folder independently
+            for strategy_folder in strategy_folders:
+                folder_name = os.path.basename(strategy_folder)
+                volumes_path = os.path.join(strategy_folder, "allowedsymbolsandvolumes.json")
                 
+                if not os.path.exists(volumes_path):
+                    continue
+
+                # Load allowed symbols for THIS specific strategy
+                allowed_symbols = set()
                 try:
-                    with open(limit_path, 'r') as f:
-                        orders = json.load(f)
-                except: continue
+                    with open(volumes_path, 'r') as f:
+                        v_data = json.load(f)
+                        for category in v_data.values():
+                            if isinstance(category, list):
+                                for item in category:
+                                    if 'symbol' in item:
+                                        allowed_symbols.add(item['symbol'].upper())
+                except:
+                    continue
 
-                original_count = len(orders)
-                # Keep only if the symbol is in the allowed set
-                purged_orders = [
-                    order for order in orders 
-                    if order.get('symbol', '').upper() in allowed_symbols
-                ]
+                # 4. Audit limit_orders and limit_orders_backup in this folder
+                target_patterns = ["limit_orders.json", "limit_orders_backup.json"]
+                strategy_purged_count = 0
 
-                # 4. Save back if any orders were removed
-                diff = original_count - len(purged_orders)
-                if diff > 0:
-                    try:
-                        with open(limit_path, 'w') as f:
-                            json.dump(purged_orders, f, indent=4)
-                        user_purged_count += diff
-                    except Exception as e:
-                        print(f"  └─ ❌ Failed to save {limit_path}: {e}")
+                for pattern in target_patterns:
+                    # Look only within this specific strategy directory
+                    files_to_audit = glob.glob(os.path.join(strategy_folder, "**", pattern), recursive=True)
 
-            if user_purged_count > 0:
-                print(f"  └─ ✅ Purged {user_purged_count} unauthorized orders")
-                total_purged_overall += user_purged_count
-            else:
-                print(f"  └─ 🔘 All active symbols authorized")
+                    for file_path in files_to_audit:
+                        if "risk_reward_" in file_path: 
+                            continue
+                        
+                        try:
+                            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+                                continue
 
-        print(f"{'='*10} PURGE COMPLETE: {total_purged_overall} REMOVED {'='*10}\n")
+                            with open(file_path, 'r') as f:
+                                orders = json.load(f)
+                            
+                            if not isinstance(orders, list):
+                                continue
+
+                            original_count = len(orders)
+                            
+                            # Filter logic: Keep only symbols authorized in THIS strategy's config
+                            purged_orders = [
+                                order for order in orders 
+                                if order.get('symbol', '').upper() in allowed_symbols
+                            ]
+
+                            diff = original_count - len(purged_orders)
+                            if diff > 0:
+                                with open(file_path, 'w') as f:
+                                    json.dump(purged_orders, f, indent=4)
+                                strategy_purged_count += diff
+                                
+                        except Exception as e:
+                            print(f"    └─ ❌ Failed to process {folder_name}/{os.path.basename(file_path)}: {e}")
+
+                if strategy_purged_count > 0:
+                    print(f"  └─ [{folder_name}] ✅ Purged {strategy_purged_count} unauthorized entries")
+                    total_purged_overall += strategy_purged_count
+
+        print(f"\n{'='*10} PURGE COMPLETE: {total_purged_overall} TOTAL REMOVED {'='*10}\n")
         return True
 
     except Exception as e:
@@ -200,10 +233,11 @@ def purge_unauthorized_symbols():
 
 def backup_limit_orders():
     """
-    Traverses all user folders and creates a copy of every 'limit_orders.json' 
-    file named 'limit_orders_backup.json' in the same directory.
+    Identifies strategy folders via accountmanagement.json.
+    Targets limit orders specifically within the 'pending_orders' subfolder.
+    Prioritizes restoring from backup; otherwise, creates a new backup.
     """
-    print(f"\n{'='*10} BACKING UP LIMIT ORDERS {'='*10}")
+    print(f"\n{'='*10} SYNCING STRATEGY-SPECIFIC LIMIT ORDERS {'='*10}")
     
     try:
         # 1. Load User IDs
@@ -214,188 +248,417 @@ def backup_limit_orders():
         with open(DEVELOPER_USERS, 'r') as f:
             users_data = json.load(f)
         
-        total_backups = 0
+        total_restored = 0
+        total_backed_up = 0
         
         for dev_broker_id in users_data.keys():
-            print(f" [{dev_broker_id}] 💾 Creating safety snapshots...")
+            print(f" [{dev_broker_id}] 🔍 Auditing strategy directories for sync...")
             
             user_folder = os.path.join(DEV_PATH, dev_broker_id)
-            user_backup_count = 0
+            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
             
-            # 2. Find all limit_orders.json files recursively
-            limit_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
-            
-            for limit_path in limit_files:
-                # Filter logic: Skip secondary files and existing backups
-                if "risk_reward_" in limit_path or "limit_orders_backup.json" in limit_path:
-                    continue
-                
-                if not os.path.exists(limit_path) or os.path.getsize(limit_path) == 0:
-                    continue
-                
-                # 3. Define the destination path
-                directory = os.path.dirname(limit_path)
-                backup_path = os.path.join(directory, "limit_orders_backup.json")
-                
-                try:
-                    # Preserve metadata with copy2
-                    shutil.copy2(limit_path, backup_path)
-                    user_backup_count += 1
-                except Exception as e:
-                    print(f"  └─ ❌ Failed to backup {os.path.basename(directory)}: {e}")
+            if not os.path.exists(acc_mgmt_path):
+                print(f"  └─ ⚠️  accountmanagement.json missing: Skipping user")
+                continue
 
-            if user_backup_count > 0:
-                print(f"  └─ ✅ Secured {user_backup_count} backup files")
-                total_backups += user_backup_count
-            else:
-                print(f"  └─ 🔘 No active orders found to back up")
+            # 2. Extract specific strategy folders (new_filename)
+            strategy_folders = []
+            try:
+                with open(acc_mgmt_path, 'r') as f:
+                    acc_data = json.load(f)
+                
+                # Navigate nested structure to find 'new_filename'
+                poi = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
+                for app_val in poi.values():
+                    if isinstance(app_val, dict):
+                        for ent_val in app_val.values():
+                            if isinstance(ent_val, dict) and ent_val.get("new_filename"):
+                                strategy_dir = os.path.join(user_folder, ent_val["new_filename"])
+                                if strategy_dir not in strategy_folders:
+                                    strategy_folders.append(strategy_dir)
+            except Exception as e:
+                print(f"  └─ ❌ Error parsing strategy folders: {e}")
+                continue
 
-        print(f"{'='*10} BACKUP COMPLETE: {total_backups} FILES {'='*10}\n")
+            # 3. Sync files within the 'pending_orders' subfolder
+            for strategy_folder in strategy_folders:
+                # Update path to target the 'pending_orders' subfolder
+                pending_folder = os.path.join(strategy_folder, "pending_orders")
+                
+                if not os.path.exists(pending_folder):
+                    # We skip if the subfolder doesn't exist yet
+                    continue
+
+                folder_name = os.path.basename(strategy_folder)
+                limit_path = os.path.join(pending_folder, "limit_orders.json")
+                backup_path = os.path.join(pending_folder, "limit_orders_backup.json")
+
+                # --- SYNC LOGIC ---
+                
+                # Priority 1: Restore (Backup exists and has data)
+                if os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
+                    try:
+                        shutil.copy2(backup_path, limit_path)
+                        total_restored += 1
+                        print(f"  └─ [{folder_name}/pending_orders] 🔄 Restored (Backup -> Original)")
+                    except Exception as e:
+                        print(f"  └─ [{folder_name}] ❌ Restore failed: {e}")
+
+                # Priority 2: Create Backup (Original exists, but backup is missing/empty)
+                elif os.path.exists(limit_path) and os.path.getsize(limit_path) > 0:
+                    try:
+                        shutil.copy2(limit_path, backup_path)
+                        total_backed_up += 1
+                        print(f"  └─ [{folder_name}/pending_orders] 💾 Backed up (Original -> Backup)")
+                    except Exception as e:
+                        print(f"  └─ [{folder_name}] ❌ Backup failed: {e}")
         return True
 
     except Exception as e:
-        print(f" [!] Critical Error during backup: {e}")
+        print(f" [!] Critical Error during sync: {e}")
         return False
 
-def enforce_risk():
+def provide_orders_volume():
     """
-    Synchronizes USD risk rules from configuration files to limit orders.
-    Uses symbol normalization and cleaning to ensure accurate config lookups.
+    Synchronizes specific volumes from allowedsymbolsandvolumes.json to limit_orders.json.
+    Includes professional logging with change detection and Developer/Broker grouping.
     """
     try:
-        # 1. Basic Path Validation
         if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
-            print(f" [!] Error: Users file not found at {DEVELOPER_USERS}")
+            print(f" [!] Error: Users file not found: {DEVELOPER_USERS}")
             return False
 
-        # 2. Load Normalization Map (to match live_risk_reward logic)
-        norm_map = {}
-        if os.path.exists(NORMALIZE_SYMBOLS_PATH):
-            try:
-                with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-                    norm_map = json.load(f)
-            except Exception as e:
-                print(f" [!] Warning: Could not load normalization map: {e}")
-
-        with open(DEVELOPER_USERS, 'r') as f:
+        with open(DEVELOPER_USERS, 'r', encoding='utf-8') as f:
             users_data = json.load(f)
 
-        print(f"\n{'='*10} ENFORCING RISK RULES {'='*10}")
+        print(f"\n{'='*20} VOLUME SYNCHRONIZATION ENGINE {'='*20}")
 
-        for dev_broker_id in users_data.keys():
-            user_folder = os.path.join(DEV_PATH, dev_broker_id)
-            print(f" [{dev_broker_id}] 🛡️  Syncing risk enforcement...")
-
-            # 3. Identify all config files (Primary + Secondary)
+        for user_broker_id in users_data.keys():
+            print(f"\n 👤 DEVELOPER ID: {user_broker_id}")
+            print(f" └{'─'*45}")
+            
+            user_folder = os.path.join(DEV_PATH, user_broker_id)
             acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
-            secondary_configs = []
+
+            if not os.path.exists(acc_mgmt_path):
+                print(f"   ⚠️  Skipping: accountmanagement.json not found.")
+                continue
+
+            # 1. Identify strategy folders
+            secondary_folders = []
+            try:
+                with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                    acc_data = json.load(f)
+                poi = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
+                for app_val in poi.values():
+                    if isinstance(app_val, dict):
+                        for ent_val in app_val.values():
+                            if isinstance(ent_val, dict) and ent_val.get("new_filename"):
+                                path = os.path.join(user_folder, ent_val["new_filename"])
+                                if path not in secondary_folders:
+                                    secondary_folders.append(path)
+            except Exception as e:
+                print(f"   ❌ Error parsing account management: {e}")
+                continue
+
+            # 2. Process each strategy folder
+            for strategy_folder in secondary_folders:
+                folder_name = os.path.basename(strategy_folder)
+                config_path = os.path.join(strategy_folder, "allowedsymbolsandvolumes.json")
+                
+                if not os.path.exists(config_path):
+                    continue
+
+                print(f"   📂 Strategy: {folder_name}")
+
+                # Build Volume Lookup
+                volume_map = {}
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    for category in config_data.values():
+                        if not isinstance(category, list): continue
+                        for item in category:
+                            symbol = str(item.get("symbol", "")).upper()
+                            if not symbol: continue
+                            if symbol not in volume_map: volume_map[symbol] = {}
+                            for key, value in item.items():
+                                if key.endswith("_specs") and isinstance(value, dict):
+                                    tf = key.replace("_specs", "").upper()
+                                    if "volume" in value:
+                                        volume_map[symbol][tf] = float(value["volume"])
+                except Exception as e:
+                    print(f"     ❌ Config Error: {e}")
+                    continue
+
+                # 3. Apply to Order Files
+                limit_files = glob.glob(os.path.join(strategy_folder, "**", "limit_orders.json"), recursive=True)
+                for limit_path in limit_files:
+                    if "risk_reward_" in limit_path: continue
+                    
+                    try:
+                        with open(limit_path, 'r', encoding='utf-8') as f:
+                            orders = json.load(f)
+                    except: continue
+
+                    modified = False
+                    for order in orders:
+                        sym = str(order.get('symbol', '')).upper()
+                        tf = str(order.get('timeframe', '')).upper()
+                        current_vol = order.get('volume')
+
+                        if sym in volume_map and tf in volume_map[sym]:
+                            appointed_volume = volume_map[sym][tf]
+                            
+                            if current_vol == appointed_volume:
+                                print(f"     🔘 {sym} ({tf}): Already set to {appointed_volume}")
+                            else:
+                                order['volume'] = appointed_volume
+                                modified = True
+                                print(f"     ✅ {sym} ({tf}): Updated Volume {current_vol} ➡️  {appointed_volume}")
+                        else:
+                            print(f"     ⚠️  {sym} ({tf}): No volume mapping found in config.")
+
+                    if modified:
+                        with open(limit_path, 'w', encoding='utf-8') as f:
+                            json.dump(orders, f, indent=4)
+
+        print(f"\n{'='*22} SYNC PROCESS COMPLETE {'='*22}\n")
+        return True
+
+    except Exception as e:
+        print(f" [!] Critical System Error: {e}")
+        return False
+        
+def activate_usd_based_risk_on_empty_pricelevels():
+    """
+    Triggered when orders have no exit/target. 
+    Enforces risk strictly within the scope of each 'new_filename' strategy folder.
+    """
+    try:
+        if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
+            print(f" [!] Error: Users file not found or empty: {DEVELOPER_USERS}")
+            return False
+            
+        with open(DEVELOPER_USERS, 'r') as f:
+            users_data = json.load(f)
+        
+        print(f"\n{'='*10} CHECKING EMPTY TARGET AND EXIT TO ENFORCE USD RISK {'='*10}")
+
+        for user_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, user_broker_id)
+            print(f" [{user_broker_id}] 🔍 Checking for targetless orders...")
+
+            # --- Identify Secondary Folders from Account Management ---
+            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
+            strategy_folders = []
+            
             if os.path.exists(acc_mgmt_path):
                 try:
                     with open(acc_mgmt_path, 'r') as f:
                         acc_data = json.load(f)
-                    poi_conditions = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
-                    for app_val in poi_conditions.values():
+                    poi = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
+                    for app_val in poi.values():
                         if isinstance(app_val, dict):
                             for ent_val in app_val.values():
                                 if isinstance(ent_val, dict) and ent_val.get("new_filename"):
-                                    secondary_configs.append(os.path.join(user_folder, ent_val["new_filename"], "allowedsymbolsandvolumes.json"))
-                except: pass
+                                    s_dir = os.path.join(user_folder, ent_val["new_filename"])
+                                    if s_dir not in strategy_folders: strategy_folders.append(s_dir)
+                except: continue
 
-            all_config_files = [os.path.join(user_folder, "allowedsymbolsandvolumes.json")] + secondary_configs
-            total_enforced = 0
-
-            # 4. Process each config and its related limit orders
-            for config_path in all_config_files:
+            # --- Process Each Strategy Folder Independently ---
+            for s_folder in strategy_folders:
+                folder_name = os.path.basename(s_folder)
+                config_path = os.path.join(s_folder, "allowedsymbolsandvolumes.json")
+                
                 if not os.path.exists(config_path): continue
                 
-                # Build Master Lookup (Normalized)
-                risk_lookup = {}
-                with open(config_path, 'r') as f:
-                    config_data = json.load(f)
-                
-                for category in config_data.values():
-                    if not isinstance(category, list): continue
-                    for item in category:
-                        symbol = item.get("symbol")
-                        if not symbol: continue
-                        
-                        # Clean symbol: Remove special characters and set to UPPER
-                        clean_sym = re.sub(r'[^a-zA-Z0-9]', '', symbol).upper()
-                        
-                        specs = {}
-                        for key, value in item.items():
-                            if key.endswith("_specs") and isinstance(value, dict):
-                                tf = key.replace("_specs", "").upper()
-                                specs[tf] = {
-                                    "enforce": str(value.get("enforce_usd_risk", "no")).lower() == "yes",
-                                    "usd_risk": value.get("usd_risk", 0)
-                                }
-                        risk_lookup[clean_sym] = specs
+                # Build Local Lookup (Symbol -> Timeframe -> USD_Risk)
+                local_risk_data = {}
+                try:
+                    with open(config_path, 'r') as f:
+                        c_data = json.load(f)
+                    for cat in c_data.values():
+                        if not isinstance(cat, list): continue
+                        for item in cat:
+                            sym = str(item.get("symbol", "")).upper()
+                            if not sym: continue
+                            if sym not in local_risk_data: local_risk_data[sym] = {}
+                            
+                            for k, v in item.items():
+                                if k.endswith("_specs") and isinstance(v, dict):
+                                    tf = k.replace("_specs", "").upper()
+                                    local_risk_data[sym][tf] = v.get("usd_risk", 0)
+                except: continue
 
-                # 5. Apply to Limit Orders
-                config_dir = os.path.dirname(config_path)
-                limit_files = glob.glob(os.path.join(config_dir, "**", "limit_orders.json"), recursive=True)
+                # Scan Limit Orders in this specific folder
+                limit_files = glob.glob(os.path.join(s_folder, "**", "limit_orders.json"), recursive=True)
+                
+                f_processed = 0
+                f_enforced = 0
                 
                 for limit_path in limit_files:
                     if "risk_reward_" in limit_path: continue
                     try:
                         with open(limit_path, 'r') as f: orders = json.load(f)
                     except: continue
-
+                    
                     modified = False
                     for order in orders:
-                        raw_sym = order.get('symbol', '')
-                        raw_tf = str(order.get('timeframe', '')).upper()
-
-                        # --- Normalization Logic ---
-                        # Step A: Use the norm_map if it exists (e.g., "XAUUSD+" -> "Gold")
-                        target_sym = norm_map.get(raw_sym, raw_sym)
-                        # Step B: Filter out special characters (e.g., "DOW.N" -> "DOWN")
-                        lookup_key = re.sub(r'[^a-zA-Z0-9]', '', target_sym).upper()
+                        sym = str(order.get('symbol', '')).upper()
+                        tf = str(order.get('timeframe', '')).upper()
                         
-                        rule = risk_lookup.get(lookup_key, {}).get(raw_tf)
+                        # TRIGGER: Order has no exit and no target
+                        is_missing = order.get('exit') in [0, "0", None] and \
+                                     order.get('target') in [0, "0", None]
+                        
+                        if is_missing:
+                            f_processed += 1
+                            found_risk = local_risk_data.get(sym, {}).get(tf)
+                            
+                            if found_risk and found_risk > 0:
+                                order['exit'] = 0
+                                order['target'] = 0
+                                order['usd_risk'] = found_risk
+                                order['usd_based_risk_only'] = True
+                                modified = True
+                                f_enforced += 1
+                            else:
+                                print(f"    └─ [{folder_name}] ❌ Missing Config: {sym} {tf} has no exit/target & no risk value found.")
 
-                        # Determine Enforcement
-                        is_missing_targets = order.get('exit') in [0, "0", None] and \
-                                             order.get('target') in [0, "0", None]
-
-                        should_enforce = False
-                        risk_to_apply = 0
-
-                        if rule and rule["enforce"]:
-                            should_enforce = True
-                            risk_to_apply = rule["usd_risk"]
-                        elif is_missing_targets and rule:
-                            should_enforce = True
-                            risk_to_apply = rule["usd_risk"]
-                        elif is_missing_targets and not rule:
-                            # Log detailed error for the user to troubleshoot
-                            print(f"  └─ ❌ Error: {raw_sym} ({raw_tf}) [Key: {lookup_key}] missing config risk.")
-
-                        if should_enforce:
-                            order['exit'] = 0
-                            order['target'] = 0
-                            order['usd_risk'] = risk_to_apply
-                            order['usd_based_risk_only'] = True
-                            modified = True
-                            total_enforced += 1
-                    
                     if modified:
                         with open(limit_path, 'w') as f:
                             json.dump(orders, f, indent=4)
 
-            # Summary per broker
-            if total_enforced > 0:
-                print(f"  └─ ✅ Enforced USD risk rules on {total_enforced} orders")
-            else:
-                print(f"  └─ 🔘 Risk profiles already synchronized")
+                # Final folder-level report
+                if f_processed > 0:
+                    icon = "✅" if f_enforced == f_processed else "⚠️"
+                    print(f"  └─ [{folder_name}] {icon} Found {f_processed} orders | Enforced: {f_enforced}")
 
-        print(f"{'='*10} RISK ENFORCEMENT COMPLETE {'='*10}\n")
+        print(f"\n{'='*10} EMPTY TARGET SYNC COMPLETE {'='*10}\n")
+        return True
+    except Exception as e:
+        print(f" [!] Critical Error: {e}")
+        return False
+
+def enforce_risk_on_option():
+    """
+    Synchronizes USD risk rules from strategy configs.
+    Includes detailed warnings for skipped orders to explain Processed vs Enforced gaps.
+    """
+    activate_usd_based_risk_on_empty_pricelevels()
+    try:
+        # 1. Load User IDs
+        if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
+            print(f" [!] Error: Users file not found or empty: {DEVELOPER_USERS}")
+            return False
+            
+        with open(DEVELOPER_USERS, 'r') as f:
+            users_data = json.load(f)
+        
+        print(f"\n{'='*10} STARTING RISK ENFORCEMENT SYNC {'='*10}")
+
+        for user_broker_id in users_data.keys():
+            user_folder = os.path.join(DEV_PATH, user_broker_id)
+            print(f" [{user_broker_id}] 🛡️  Scanning strategy folders...")
+
+            # --- Identify Secondary Folders ---
+            acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
+            secondary_folder_paths = []
+            
+            if os.path.exists(acc_mgmt_path):
+                try:
+                    with open(acc_mgmt_path, 'r') as f:
+                        acc_data = json.load(f)
+                    poi = acc_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
+                    for app_val in poi.values():
+                        if isinstance(app_val, dict):
+                            for ent_val in app_val.values():
+                                if isinstance(ent_val, dict) and ent_val.get("new_filename"):
+                                    strategy_dir = os.path.join(user_folder, ent_val["new_filename"])
+                                    if strategy_dir not in secondary_folder_paths:
+                                        secondary_folder_paths.append(strategy_dir)
+                except:
+                    print(f"  └─ ❌ Error reading accountmanagement.json")
+                    continue
+
+            for strategy_folder in secondary_folder_paths:
+                folder_name = os.path.basename(strategy_folder)
+                config_path = os.path.join(strategy_folder, "allowedsymbolsandvolumes.json")
+                
+                if not os.path.exists(config_path):
+                    continue
+                
+                try:
+                    with open(config_path, 'r') as f: config_data = json.load(f)
+                except: continue
+                
+                # Build Case-Insensitive Lookup
+                risk_lookup = {}
+                for category in config_data.values():
+                    if not isinstance(category, list): continue
+                    for item in category:
+                        symbol = str(item.get("symbol", "")).upper()
+                        if not symbol: continue
+                        if symbol not in risk_lookup: risk_lookup[symbol] = {}
+                        
+                        for key, value in item.items():
+                            if key.endswith("_specs") and isinstance(value, dict):
+                                tf = key.replace("_specs", "").upper()
+                                risk_lookup[symbol][tf] = {
+                                    "enforce": str(value.get("enforce_usd_risk", "no")).lower() == "yes",
+                                    "usd_risk": value.get("usd_risk", 0)
+                                }
+
+                # Apply to Orders
+                limit_files = glob.glob(os.path.join(strategy_folder, "**", "limit_orders.json"), recursive=True)
+                
+                f_processed = 0
+                f_enforced = 0
+                
+                for limit_path in limit_files:
+                    if "risk_reward_" in limit_path: continue
+                    try:
+                        with open(limit_path, 'r') as f: orders = json.load(f)
+                    except: continue
+                    
+                    modified = False
+                    for order in orders:
+                        f_processed += 1
+                        raw_sym = str(order.get('symbol', '')).upper()
+                        raw_tf = str(order.get('timeframe', '')).upper()
+                        
+                        # LOGIC CHECK
+                        if raw_sym in risk_lookup:
+                            if raw_tf in risk_lookup[raw_sym]:
+                                rule = risk_lookup[raw_sym][raw_tf]
+                                if rule["enforce"]:
+                                    order['exit'] = 0
+                                    order['target'] = 0
+                                    order['usd_risk'] = rule["usd_risk"]
+                                    order['usd_based_risk_only'] = True
+                                    modified = True
+                                    f_enforced += 1
+                                # Note: If rule["enforce"] is False, we do nothing (order remains manual)
+                            else:
+                                print(f"    └─ ⚠️  {raw_sym} found, but timeframe {raw_tf} missing in config.")
+                        else:
+                            print(f"    └─ ⚠️  Symbol {raw_sym} not found in strategy config.")
+                    
+                    if modified:
+                        with open(limit_path, 'w') as f:
+                            json.dump(orders, f, indent=4)
+                
+                if f_processed > 0:
+                    status_icon = "✅" if f_enforced > 0 else "🔘"
+                    print(f"  └─ [{folder_name}] {status_icon} Processed: {f_processed} | Enforced: {f_enforced}")
+
+        print(f"\n{'='*10} RISK ENFORCEMENT COMPLETE {'='*10}\n")
         return True
 
     except Exception as e:
-        print(f" [!] Critical Error in enforce_risk: {e}")
-        return False
+        print(f" [!] Critical Error: {e}")
+        return False     
 
 def preprocess_limit_orders_with_broker_data():
     """
@@ -482,8 +745,9 @@ def preprocess_limit_orders_with_broker_data():
 
 def validate_orders_with_live_volume():
     """
-    Developer Version: Validates and modifies volumes in the INPUT configuration files.
-    Targets 'allowedsymbolsandvolumes.json' so that subsequent calculations use valid data.
+    Developer Version: Validates and fixes volumes in BOTH configuration files AND order files.
+    For orders without volume, assigns the broker's minimum volume for that symbol.
+    For config files, validates and adjusts volumes to meet broker constraints.
     """
     if not os.path.exists(BROKER_DICT_PATH):
         print(f" [!] Error: Broker dictionary not found.")
@@ -504,13 +768,19 @@ def validate_orders_with_live_volume():
         return False
 
     print(f"\n{'='*10} PRE-CALCULATION VOLUME VALIDATION {'='*10}")
-    overall_files_updated = 0
+    overall_configs_updated = 0
+    overall_orders_updated = 0
+    overall_orders_fixed = 0
 
     for dev_broker_id, config in broker_configs.items():
         user_folder = os.path.join(DEV_PATH, dev_broker_id)
-        broker_files_updated = 0
+        broker_configs_updated = 0
+        broker_orders_updated = 0
+        broker_orders_fixed = 0
         symbols_fixed = []
-        
+        symbols_assigned = []
+        orders_fixed_list = []
+
         # 1. MT5 Initialization
         if not mt5.initialize(
             path=config.get("TERMINAL_PATH", ""), 
@@ -525,81 +795,223 @@ def validate_orders_with_live_volume():
         broker_server_name = account_info.server if account_info else config.get("SERVER")
         print(f" [{dev_broker_id}] 🔍 Checking Inputs: {broker_server_name}")
 
-        # 2. TARGET THE INPUT CONFIGURATION FILES
-        # We look for the allowedsymbolsandvolumes.json files
-        search_pattern = os.path.join(user_folder, "**", "allowedsymbolsandvolumes.json")
-        found_files = glob.glob(search_pattern, recursive=True)
+        # Step 1: Process CONFIGURATION FILES (allowedsymbolsandvolumes.json)
+        config_search = os.path.join(user_folder, "**", "allowedsymbolsandvolumes.json")
+        config_files = glob.glob(config_search, recursive=True)
 
-        for target_file_path in found_files:
+        for config_file_path in config_files:
             try:
                 file_changed = False
-                with open(target_file_path, 'r', encoding='utf-8') as f:
+                with open(config_file_path, 'r', encoding='utf-8') as f:
                     config_data = json.load(f)
 
-                # allowedsymbolsandvolumes.json is a dict of lists (Forex, Crypto, etc.)
                 for category, items in config_data.items():
-                    if not isinstance(items, list): continue
+                    if not isinstance(items, list): 
+                        continue
                     
                     for item in items:
                         raw_symbol = item.get("symbol")
+                        if not raw_symbol:
+                            continue
+                            
                         symbol = get_normalized_symbol(raw_symbol, norm_map)
                         
+                        # Select symbol in MT5 to get info
                         mt5.symbol_select(symbol, True)
                         info = mt5.symbol_info(symbol)
-                        if info is None: continue
+                        if info is None:
+                            print(f"     ⚠️ Symbol {raw_symbol} (normalized: {symbol}) not available in broker")
+                            continue
 
-                        # In these files, volumes are usually inside tf_specs (e.g., "1h_specs": {"volume": 0.1})
-                        # We iterate through all keys to find specs dictionaries
+                        found_volume_specs = False
+                        
                         for key, value in item.items():
                             if "_specs" in key and isinstance(value, dict):
-                                current_vol = float(value.get("volume", 0.0))
+                                found_volume_specs = True
                                 
-                                # --- MT5 CONSTRAINT LOGIC ---
-                                new_vol = max(current_vol, info.volume_min)
-                                step = info.volume_step
-                                if step > 0:
-                                    # Floor to nearest step
-                                    new_vol = round(math.floor(new_vol / step + 1e-9) * step, 2)
-                                
-                                if new_vol > info.volume_max:
-                                    new_vol = info.volume_max
-
-                                # Check for change
-                                if abs(new_vol - current_vol) > 1e-7:
-                                    value["volume"] = new_vol
-                                    value["vol_validated"] = datetime.now().strftime("%H:%M")
+                                if "volume" not in value:
+                                    # No volume specified - assign broker minimum
+                                    default_volume = info.volume_min
+                                    value["volume"] = default_volume
+                                    value["vol_assigned"] = datetime.now().strftime("%H:%M")
                                     file_changed = True
-                                    symbols_fixed.append(f"{symbol}({current_vol}->{new_vol})")
+                                    symbols_assigned.append(f"{symbol}(min:{default_volume})")
+                                    print(f"     📝 [CONFIG] Assigned default volume {default_volume} to {symbol} ({key})")
+                                else:
+                                    # Volume exists - validate it
+                                    current_vol = float(value.get("volume", 0.0))
+                                    
+                                    # --- MT5 CONSTRAINT LOGIC ---
+                                    new_vol = max(current_vol, info.volume_min)
+                                    step = info.volume_step
+                                    if step > 0:
+                                        # Floor to nearest step
+                                        new_vol = round(math.floor(new_vol / step + 1e-9) * step, 2)
+                                    
+                                    if new_vol > info.volume_max:
+                                        new_vol = info.volume_max
+
+                                    # Check for change
+                                    if abs(new_vol - current_vol) > 1e-7:
+                                        value["volume"] = new_vol
+                                        value["vol_validated"] = datetime.now().strftime("%H:%M")
+                                        file_changed = True
+                                        symbols_fixed.append(f"{symbol}({current_vol}->{new_vol})")
+                                        print(f"     🔧 [CONFIG] Fixed volume for {symbol} ({key}): {current_vol} -> {new_vol}")
+                        
+                        # If no volume specs found at all for this symbol, create default specs
+                        if not found_volume_specs:
+                            default_tf = "1h_specs"
+                            item[default_tf] = {
+                                "volume": info.volume_min,
+                                "vol_assigned": datetime.now().strftime("%H:%M")
+                            }
+                            file_changed = True
+                            symbols_assigned.append(f"{symbol}(created:{info.volume_min})")
+                            print(f"     📝 [CONFIG] Created default specs for {symbol} with volume {info.volume_min}")
 
                 if file_changed:
-                    with open(target_file_path, 'w', encoding='utf-8') as f:
+                    with open(config_file_path, 'w', encoding='utf-8') as f:
                         json.dump(config_data, f, indent=4)
-                    broker_files_updated += 1
-                    overall_files_updated += 1
+                    broker_configs_updated += 1
+                    overall_configs_updated += 1
 
             except Exception as e:
+                print(f"     ❌ Error processing config {os.path.basename(config_file_path)}: {e}")
                 continue
 
-        # --- Cool Simplified Print ---
-        if broker_files_updated > 0:
-            fix_summary = ", ".join(symbols_fixed[:3])
-            more = f" (+{len(symbols_fixed)-3} more)" if len(symbols_fixed) > 3 else ""
-            print(f"  └─ ✅ Cleaned {broker_files_updated} config files. Fixes: {fix_summary}{more}")
+        # Step 2: Process ORDER FILES (limit_orders.json)
+        order_search = os.path.join(user_folder, "**", "limit_orders.json")
+        order_files = glob.glob(order_search, recursive=True)
+
+        for order_file_path in order_files:
+            if "risk_reward_" in order_file_path:
+                continue
+                
+            try:
+                file_changed = False
+                orders_fixed_in_file = 0
+                
+                with open(order_file_path, 'r', encoding='utf-8') as f:
+                    orders = json.load(f)
+                
+                if not isinstance(orders, list):
+                    continue
+                
+                for order in orders:
+                    if not isinstance(order, dict):
+                        continue
+                    
+                    raw_symbol = order.get('symbol', '')
+                    if not raw_symbol:
+                        continue
+                    
+                    # Check if volume exists
+                    current_vol = order.get('volume')
+                    
+                    # Normalize symbol to get broker info
+                    symbol = get_normalized_symbol(raw_symbol, norm_map)
+                    
+                    # Get symbol info from broker
+                    mt5.symbol_select(symbol, True)
+                    info = mt5.symbol_info(symbol)
+                    
+                    if info is None:
+                        print(f"     ⚠️ [ORDERS] Symbol {raw_symbol} not available in broker, skipping")
+                        continue
+                    
+                    # If no volume or volume is 0, assign minimum
+                    if current_vol is None or current_vol == 0:
+                        min_volume = info.volume_min
+                        order['volume'] = min_volume
+                        order['vol_assigned'] = datetime.now().strftime("%H:%M")
+                        file_changed = True
+                        orders_fixed_in_file += 1
+                        broker_orders_fixed += 1
+                        orders_fixed_list.append(f"{raw_symbol}(0->{min_volume})")
+                        print(f"     📝 [ORDERS] Assigned volume {min_volume} to {raw_symbol}")
+                    else:
+                        # Validate existing volume against broker constraints
+                        try:
+                            current_vol = float(current_vol)
+                        except (ValueError, TypeError):
+                            # Invalid volume, replace with minimum
+                            min_volume = info.volume_min
+                            order['volume'] = min_volume
+                            order['vol_fixed'] = datetime.now().strftime("%H:%M")
+                            file_changed = True
+                            orders_fixed_in_file += 1
+                            broker_orders_fixed += 1
+                            orders_fixed_list.append(f"{raw_symbol}(invalid->{min_volume})")
+                            print(f"     🔧 [ORDERS] Fixed invalid volume for {raw_symbol} -> {min_volume}")
+                            continue
+                        
+                        # Check if volume meets broker constraints
+                        new_vol = max(current_vol, info.volume_min)
+                        step = info.volume_step
+                        if step > 0:
+                            new_vol = round(math.floor(new_vol / step + 1e-9) * step, 2)
+                        
+                        if new_vol > info.volume_max:
+                            new_vol = info.volume_max
+                        
+                        if abs(new_vol - current_vol) > 1e-7:
+                            order['volume'] = new_vol
+                            order['vol_validated'] = datetime.now().strftime("%H:%M")
+                            file_changed = True
+                            orders_fixed_in_file += 1
+                            broker_orders_fixed += 1
+                            orders_fixed_list.append(f"{raw_symbol}({current_vol}->{new_vol})")
+                            print(f"     🔧 [ORDERS] Adjusted volume for {raw_symbol}: {current_vol} -> {new_vol}")
+                
+                if file_changed:
+                    with open(order_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(orders, f, indent=4)
+                    broker_orders_updated += 1
+                    overall_orders_updated += 1
+                    overall_orders_fixed += orders_fixed_in_file
+                    
+            except Exception as e:
+                print(f"     ❌ Error processing orders {os.path.basename(order_file_path)}: {e}")
+                continue
+
+        # --- Summary Print ---
+        summary_parts = []
+        
+        if symbols_fixed or symbols_assigned:
+            config_summary = []
+            if symbols_fixed:
+                fix_summary = ", ".join(symbols_fixed[:2])
+                more_fixes = f" (+{len(symbols_fixed)-2})" if len(symbols_fixed) > 2 else ""
+                config_summary.append(f"Fixed: {fix_summary}{more_fixes}")
+            if symbols_assigned:
+                assign_summary = ", ".join(symbols_assigned[:2])
+                more_assigns = f" (+{len(symbols_assigned)-2})" if len(symbols_assigned) > 2 else ""
+                config_summary.append(f"Assigned: {assign_summary}{more_assigns}")
+            summary_parts.append(f"Configs: {' | '.join(config_summary)}")
+        
+        if orders_fixed_list:
+            orders_summary = ", ".join(orders_fixed_list[:3])
+            more_orders = f" (+{len(orders_fixed_list)-3})" if len(orders_fixed_list) > 3 else ""
+            summary_parts.append(f"Orders: {orders_summary}{more_orders}")
+        
+        if broker_configs_updated > 0 or broker_orders_updated > 0:
+            print(f"  └─ ✅ Updated {broker_configs_updated} config files, {broker_orders_updated} order files ({broker_orders_fixed} orders fixed). {'. '.join(summary_parts)}")
         else:
-            print(f"  └─ 🔘 All input volumes are valid")
+            print(f"  └─ 🔘 All volumes are valid")
 
         mt5.shutdown()
 
-    print(f"\n{'='*10} PRE-CALCULATION CHECK COMPLETE {'='*10}\n")
-    return True 
-    
+    print(f"\n{'='*10} PRE-CALCULATION CHECK COMPLETE {'='*10}")
+    return True
+
 def calculate_symbols_orders():
     """
-    Calculates Exit/Target prices based on Risk:Reward ratios.
-    Processes primary and secondary strategy folders with a clean visual summary.
+    Calculates Exit/Target prices for EVERY order in the limit_orders files.
+    Strictly requires 'volume' to exist in the record; otherwise, skips the order.
     """
     try:
-        # 1. Load Data
+        # 1. Load User Data
         if not os.path.exists(DEVELOPER_USERS) or os.path.getsize(DEVELOPER_USERS) == 0:
             print(f" [!] Error: Users file not found: {DEVELOPER_USERS}")
             return False
@@ -607,15 +1019,14 @@ def calculate_symbols_orders():
         with open(DEVELOPER_USERS, 'r', encoding='utf-8') as f:
             users_data = json.load(f)
 
-        print(f"\n{'='*10} CALCULATING SYMBOL ORDERS {'='*10}")
+        print(f"\n{'='*10} FORCE-CALCULATING ALL ORDERS {'='*10}")
 
         # 2. Iterate through each User
         for dev_broker_id in users_data.keys():
-            print(f" [{dev_broker_id}] 🧮 Processing Risk:Reward scaling...")
+            print(f" [{dev_broker_id}] 🧮 Processing all available orders...")
             
             user_folder = os.path.join(DEV_PATH, dev_broker_id)
             acc_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
-            primary_volumes_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
 
             if not os.path.exists(acc_mgmt_path):
                 print(f"  └─ ⚠️  Account management file missing")
@@ -625,79 +1036,52 @@ def calculate_symbols_orders():
                 acc_mgmt_data = json.load(f)
             
             rr_ratios = acc_mgmt_data.get("risk_reward_ratios", [1.0])
-            poi_conditions = acc_mgmt_data.get("chart", {}).get("define_candles", {}).get("entries_poi_condition", {})
             
-            # --- Auto-generate secondary folders & paths ---
-            secondary_paths = []
-            for apprehend_val in poi_conditions.values():
-                if isinstance(apprehend_val, dict):
-                    for entry_val in apprehend_val.values():
-                        if isinstance(entry_val, dict) and entry_val.get("new_filename"):
-                            target_dir = os.path.join(user_folder, entry_val["new_filename"])
-                            secondary_file = os.path.join(target_dir, "allowedsymbolsandvolumes.json")
-                            if not os.path.exists(secondary_file) and os.path.exists(primary_volumes_path):
-                                os.makedirs(target_dir, exist_ok=True)
-                                shutil.copy2(primary_volumes_path, secondary_file)
-                            secondary_paths.append(secondary_file)
-
-            all_config_files = list(set([primary_volumes_path] + secondary_paths))
+            # Find all limit_orders.json files
+            limit_order_files = glob.glob(os.path.join(user_folder, "**", "limit_orders.json"), recursive=True)
             total_files_updated = 0
 
-            for volumes_path in all_config_files:
-                if not os.path.exists(volumes_path): continue
+            for limit_path in limit_order_files:
+                if "risk_reward_" in limit_path: 
+                    continue
+                
+                try:
+                    with open(limit_path, 'r', encoding='utf-8') as f:
+                        original_orders = json.load(f)
+                except: 
+                    continue
 
-                # Load Config for this specific subfolder
-                user_config = {}
-                with open(volumes_path, 'r', encoding='utf-8') as f:
-                    v_data = json.load(f)
-                    for category in v_data.values():
-                        if isinstance(category, list):
-                            for item in category:
-                                sym_name = str(item.get('symbol', '')).strip().upper()
-                                user_config[sym_name] = {k.lower(): v for k, v in item.items()}
+                base_dir = os.path.dirname(limit_path)
 
-                config_folder = os.path.dirname(volumes_path)
-                limit_order_files = glob.glob(os.path.join(config_folder, "**", "limit_orders.json"), recursive=True)
+                for current_rr in rr_ratios:
+                    orders_copy = copy.deepcopy(original_orders)
+                    updated_any_order = False
+                    final_orders_to_save = []
 
-                for limit_path in limit_order_files:
-                    if "risk_reward_" in limit_path: continue
-                    
-                    try:
-                        with open(limit_path, 'r', encoding='utf-8') as f:
-                            original_orders = json.load(f)
-                    except: continue
+                    for order in orders_copy:
+                        try:
+                            # --- STRICTOR DATA EXTRACTION ---
+                            # Using .get() without a default for volume to check existence
+                            raw_volume = order.get("volume")
+                            if raw_volume is None or float(raw_volume) <= 0:
+                                print(f"  └─ ❌ Skipping {order.get('symbol', 'Unknown')}: No volume found in record.")
+                                continue 
 
-                    base_dir = os.path.dirname(limit_path)
+                            volume = float(raw_volume)
+                            entry = float(order['entry'])
+                            rr_ratio = float(current_rr)
+                            order_type = str(order.get('order_type', '')).upper()
+                            tick_size = float(order.get('tick_size', 0.00001))
+                            tick_value = float(order.get('tick_value', 1.0))
+                            
+                            digits = len(str(tick_size).split('.')[-1]) if tick_size < 1 else 0
 
-                    for current_rr in rr_ratios:
-                        orders_copy = copy.deepcopy(original_orders)
-                        updated_any_order = False
-
-                        for order in orders_copy:
-                            symbol = str(order.get('symbol', '')).strip().upper()
-                            if symbol not in user_config: continue
-
-                            try:
-                                # Data Extraction
-                                entry = float(order['entry'])
-                                rr_ratio = float(current_rr)
-                                order_type = str(order.get('order_type', '')).upper()
-                                tick_size = float(order['tick_size'])
-                                tick_value = float(order['tick_value'])
-                                tf = str(order.get('timeframe', '1h')).lower()
+                            # --- Calculation Logic ---
+                            if order.get("usd_based_risk_only") is True:
+                                risk_val = float(order.get("usd_risk", 0))
                                 
-                                digits = len(str(tick_size).split('.')[-1]) if tick_size < 1 else 0
-                                tf_specs = user_config.get(symbol, {}).get(f"{tf}_specs")
-                                
-                                if not tf_specs or tf_specs.get('volume') is None: continue
-                                volume = float(tf_specs['volume'])
-
-                                # Calculation Logic
-                                if order.get("usd_based_risk_only") is True:
-                                    risk_val = order.get("usd_risk") if order.get("usd_risk") is not None else tf_specs.get("usd_risk")
-                                    if risk_val is None: continue
-                                    
-                                    sl_dist = (float(risk_val) * tick_size) / (tick_value * volume)
+                                if risk_val > 0:
+                                    sl_dist = (risk_val * tick_size) / (tick_value * volume)
                                     tp_dist = sl_dist * rr_ratio
 
                                     if "BUY" in order_type:
@@ -706,38 +1090,39 @@ def calculate_symbols_orders():
                                     else:
                                         order["exit"] = round(entry + sl_dist, digits)
                                         order["target"] = round(entry - tp_dist, digits)
-                                else:
-                                    sl_price = float(order.get('exit', 0))
-                                    tp_price = float(order.get('target', 0))
+                            else:
+                                sl_price = float(order.get('exit', 0))
+                                tp_price = float(order.get('target', 0))
 
-                                    if sl_price == 0 and tp_price > 0:
-                                        risk_dist = abs(tp_price - entry) / rr_ratio
-                                        order['exit'] = round(entry - risk_dist if "BUY" in order_type else entry + risk_dist, digits)
-                                    elif sl_price > 0:
-                                        risk_dist = abs(entry - sl_price)
-                                        order['target'] = round(entry + (risk_dist * rr_ratio) if "BUY" in order_type else entry - (risk_dist * rr_ratio), digits)
+                                if sl_price == 0 and tp_price > 0:
+                                    risk_dist = abs(tp_price - entry) / rr_ratio
+                                    order['exit'] = round(entry - risk_dist if "BUY" in order_type else entry + risk_dist, digits)
+                                elif sl_price > 0:
+                                    risk_dist = abs(entry - sl_price)
+                                    order['target'] = round(entry + (risk_dist * rr_ratio) if "BUY" in order_type else entry - (risk_dist * rr_ratio), digits)
 
-                                # Final Metadata
-                                order.pop("usd_risk", None) 
-                                order[f"{tf}_volume"] = volume
-                                order['risk_reward'] = rr_ratio
-                                order['status'] = "Calculated"
-                                order['calculated_at'] = datetime.now().strftime("%H:%M:%S")
-                                updated_any_order = True
+                            # --- Metadata Updates ---
+                            order['risk_reward'] = rr_ratio
+                            order['status'] = "Calculated"
+                            order['calculated_at'] = datetime.now().strftime("%H:%M:%S")
+                            
+                            final_orders_to_save.append(order)
+                            updated_any_order = True
 
-                            except: continue
+                        except Exception:
+                            continue
 
-                        if updated_any_order:
-                            target_out_dir = os.path.join(base_dir, f"risk_reward_{current_rr}")
-                            os.makedirs(target_out_dir, exist_ok=True)
-                            with open(os.path.join(target_out_dir, "limit_orders.json"), 'w', encoding='utf-8') as f:
-                                json.dump(orders_copy, f, indent=4)
-                            total_files_updated += 1
+                    if updated_any_order:
+                        target_out_dir = os.path.join(base_dir, f"risk_reward_{current_rr}")
+                        os.makedirs(target_out_dir, exist_ok=True)
+                        with open(os.path.join(target_out_dir, "limit_orders.json"), 'w', encoding='utf-8') as f:
+                            json.dump(final_orders_to_save, f, indent=4)
+                        total_files_updated += 1
             
             if total_files_updated > 0:
-                print(f"  └─ ✅ Generated {total_files_updated} R:R specific order files")
+                print(f"  └─ ✅ Generated {total_files_updated} R:R specific files.")
             else:
-                print(f"  └─ 🔘 No new orders required calculation")
+                print(f"  └─ 🔘 No valid orders (with volume) were available to calculate.")
 
         print(f"{'='*10} CALCULATION COMPLETE {'='*10}\n")
         return True
@@ -904,7 +1289,7 @@ def live_risk_reward_amounts_and_volume_scale():
     print(f"{'='*10} RISK SCALING COMPLETE {'='*10}\n")
     return True
 
-def ajdust_order_price_closer_in_99cent_to_next_bucket():
+def ajdust_order_price_closer_in_95cent_to_next_bucket():
     """
     Promotes fractional risk orders (e.g., $1.55) to the next whole bucket (e.g., $2.0).
     Processes folders silently per broker with a clean visual summary.
@@ -970,7 +1355,7 @@ def ajdust_order_price_closer_in_99cent_to_next_bucket():
                         fractional_part = sl_risk - int(sl_risk)
 
                         # Promotion Logic (e.g., 1.51 becomes 2.0)
-                        if fractional_part >= 0.99:
+                        if fractional_part >= 0.95:
                             target_risk = float(math.ceil(sl_risk))
                             if target_risk not in allowed_risks: continue 
 
@@ -1395,7 +1780,7 @@ def sync_dev_investors():
                 if is_reset: inv_acc_data = {"reset_all": False}
                 
                 needs_save = is_reset 
-                keys_to_sync = ["RISKS", "risk_reward_ratios", "symbols_priority", "settings"]
+                keys_to_sync = ["RISKS", "risk_reward_ratios", "symbols_dictionary", "settings"]
                 
                 for key in keys_to_sync:
                     if key not in inv_acc_data or not inv_acc_data[key]:
@@ -1447,7 +1832,9 @@ def calculate_orders():
     purge_unauthorized_symbols()
     clean_risk_folders()
     backup_limit_orders()
-    enforce_risk()
+    purge_unauthorized_symbols()
+    provide_orders_volume()
+    enforce_risk_on_option()
     preprocess_limit_orders_with_broker_data()
     validate_orders_with_live_volume()
     calculate_symbols_orders()
@@ -1460,6 +1847,5 @@ def calculate_orders():
 
 
 if __name__ == "__main__":
-    sync_dev_investors()
-    
+   calculate_orders()
    

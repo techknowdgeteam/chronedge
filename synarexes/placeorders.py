@@ -3,23 +3,17 @@ import MetaTrader5 as mt5
 import pandas as pd
 import mplfinance as mpf
 from datetime import datetime
-import pytz
 import json
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 from pathlib import Path
 from datetime import datetime
-import calculateprices
-import time
-import threading
-import traceback
 from datetime import timedelta
 import traceback
 import shutil
 from datetime import datetime
-import math
+import re
 from pathlib import Path
 
 INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
@@ -55,19 +49,33 @@ def load_investors_dictionary():
         return {}
 usersdictionary = load_investors_dictionary()
 
+
 def sort_orders():
+    """
+    Identifies investor directories and removes risk_reward folders 
+    that are not explicitly allowed in their accountmanagement.json.
+    """
     if not os.path.exists(INV_PATH):
-        print(f"Error: Investor path {INV_PATH} not found.")
+        print(f"\n [!] Error: Investor path {INV_PATH} not found.")
         return False
+
+    print(f"\n{'='*10} 🧹 INVESTOR ORDER FILTRATION STARTING {'='*10}")
 
     # 1. Identify all investor directories
     investor_ids = [f for f in os.listdir(INV_PATH) if os.path.isdir(os.path.join(INV_PATH, f))]
+    
+    if not investor_ids:
+        print(" └─ 🔘 No investor directories found.")
+        return False
 
     for inv_id in investor_ids:
         inv_root = os.path.join(INV_PATH, inv_id)
         acc_mgmt_path = os.path.join(inv_root, "accountmanagement.json")
 
+        print(f" [{inv_id}] 🔍 Scanning configurations...")
+
         if not os.path.exists(acc_mgmt_path):
+            print(f"  └─ ⚠️  Missing accountmanagement.json. Skipping.")
             continue
 
         # 2. Load and potentially update the config for THIS specific investor
@@ -78,35 +86,46 @@ def sort_orders():
                 # Check if field exists; if not, add it with default [3]
                 if "selected_risk_reward" not in data:
                     data["selected_risk_reward"] = [3]
-                    # Move pointer to start and overwrite file with updated data
                     f.seek(0)
                     json.dump(data, f, indent=4)
                     f.truncate()
 
                 # Convert list to set of strings for fast lookup
                 allowed_ratios = {str(r) for r in data.get("selected_risk_reward", [])}
+                print(f"  └─ ✅ Allowed R:R Ratios: {', '.join(allowed_ratios)}")
                 
         except Exception as e:
-            print(f" ! Skip {inv_id}: Error processing config: {e}")
+            print(f"  └─ ❌ Error processing config: {e}")
             continue
 
-        # 3. Deep search using os.walk (Bottom-Up traversal)
-        # topdown=False is preferred when deleting contents to avoid pathing errors
+        # 3. Deep search using os.walk
+        deleted_count = 0
+        kept_count = 0
+
         for root, dirs, files in os.walk(inv_root, topdown=False):
             for dir_name in dirs:
                 if dir_name.startswith("risk_reward_"):
                     # Extract the ratio suffix (the 'X' in 'risk_reward_X')
                     ratio_suffix = dir_name.replace("risk_reward_", "")
 
-                    # 4. If the ratio found in the folder name is NOT allowed, delete it
+                    # 4. Filter logic
+                    full_path = os.path.join(root, dir_name)
                     if ratio_suffix not in allowed_ratios:
-                        full_path = os.path.join(root, dir_name)
                         try:
                             shutil.rmtree(full_path)
+                            deleted_count += 1
                         except Exception as e:
-                            print(f" ! Failed to delete {full_path}: {e}")
+                            print(f"    └─ ❗ Failed to delete {dir_name}: {e}")
+                    else:
+                        kept_count += 1
 
-    print("--- Orders filtration completed ---")
+        # Investor Summary print
+        if deleted_count > 0 or kept_count > 0:
+            print(f"  └─ ✨ Cleanup complete: Kept {kept_count} | Removed {deleted_count} folders")
+        else:
+            print(f"  └─ 🔘 No risk_reward folders found to process.")
+
+    print(f"\n{'='*10} 🏁 FILTRATION COMPLETED {'='*10}\n")
     return True
 
 def debug_print_all_broker_symbols():
@@ -227,22 +246,33 @@ def deduplicate_orders():
     Scans all risk bucket JSON files and removes duplicate orders based on:
     Symbol, Timeframe, Order Type, and Entry Price.
     """
-    print(f"DEDUPLICATING ORDERS.") 
+    print(f"\n{'='*10} 🧹 DEDUPLICATING ORDERS {'='*10}")
+    
     total_files_cleaned = 0
     total_duplicates_removed = 0
-
-    # Path to the base investor directory
     inv_base_path = Path(INV_PATH)
 
+    if not inv_base_path.exists():
+        print(f" [!] Error: Investor path {INV_PATH} does not exist.")
+        return False
+
     # 1. Iterate through all investor folders
-    for inv_folder in inv_base_path.iterdir():
-        if not inv_folder.is_dir():
-            continue
+    investor_folders = [f for f in inv_base_path.iterdir() if f.is_dir()]
+    
+    if not investor_folders:
+        print(" └─ 🔘 No investor directories found for deduplication.")
+        return False
+
+    for inv_folder in investor_folders:
+        inv_id = inv_folder.name
+        print(f" [{inv_id}] 🔍 Checking for duplicate entries...")
 
         # 2. Search for all risk bucket JSON files
-        # Matches: .../risk_reward_3.0/2usd_risk/2usd_risk.json
         search_pattern = "**/risk_reward_*/*usd_risk/*.json"
         order_files = list(inv_folder.rglob(search_pattern))
+        
+        investor_duplicates = 0
+        investor_files_cleaned = 0
 
         for file_path in order_files:
             try:
@@ -257,9 +287,7 @@ def deduplicate_orders():
                 unique_orders = []
 
                 for order in orders:
-                    # Create a unique key based on your requirements
-                    # We use entry price as well to ensure different setups on 
-                    # the same symbol/TF are preserved
+                    # Create a unique key based on Symbol, Timeframe, Type, and Entry
                     unique_key = (
                         str(order.get("symbol")).strip(),
                         str(order.get("timeframe")).strip(),
@@ -277,42 +305,57 @@ def deduplicate_orders():
                     with open(file_path, 'w', encoding='utf-8') as f:
                         json.dump(unique_orders, f, indent=4)
                     
+                    investor_duplicates += removed
+                    investor_files_cleaned += 1
                     total_duplicates_removed += removed
                     total_files_cleaned += 1
 
             except Exception as e:
-                print(f" [✗] Error processing {file_path.name}: {e}")
-    print(f"DEDUPLICATION COMPLETED")
+                print(f"  └─ ❌ Error processing {file_path.name}: {e}")
+
+        # Summary for the current investor
+        if investor_duplicates > 0:
+            print(f"  └─ ✨ Cleaned {investor_files_cleaned} files | Removed {investor_duplicates} duplicates")
+        else:
+            print(f"  └─ ✅ No duplicates found in active risk buckets")
+
+    # Final Global Summary
+    print(f"\n{'='*10} DEDUPLICATION COMPLETE {'='*10}")
+    if total_duplicates_removed > 0:
+        print(f" Total Duplicates Purged: {total_duplicates_removed}")
+        print(f" Total Files Modified:    {total_files_cleaned}")
+    else:
+        print(" Everything was already clean.")
+    print(f"{'='*33}\n")
+    
     return True
 
 def check_limit_orders_risk():
-
     """
     Function 3: Validates live pending orders against the account's current risk bucket.
     Synchronized with the stable initialization logic of place_usd_orders.
     """
-    print("\n" + "="*80)
-    print("STARTING CHECK_LIMIT_ORDERS_RISK (SYNCHRONIZED INIT)")
-    print("="*80)
+    print(f"\n{'='*10} 🛡️  LIVE RISK AUDIT: PENDING ORDERS {'='*10}")
 
     # --- DATA INITIALIZATION ---
     try:
         if not os.path.exists(NORMALIZE_SYMBOLS_PATH):
-            print("CRITICAL ERROR: Normalization map path does not exist.")
+            print(" [!] CRITICAL ERROR: Normalization map path missing.")
             return False
         with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
             norm_map = json.load(f)
     except Exception as e:
-        print(f"CRITICAL ERROR: Could not load normalization map: {e}")
+        print(f" [!] CRITICAL ERROR: Normalization map load failed: {e}")
         return False
 
     for user_brokerid, broker_cfg in usersdictionary.items():
-        print(f"\n{'-'*80}\nAUDITING RISK LIMITS FOR: {user_brokerid}\n{'-'*80}")
+        print(f" [{user_brokerid}] 🔍 Auditing live risk limits...")
+        
         inv_root = Path(INV_PATH) / user_brokerid
         acc_mgmt_path = inv_root / "accountmanagement.json"
 
         if not acc_mgmt_path.exists():
-            print(f"  [SKIP] accountmanagement.json not found for {user_brokerid}")
+            print(f"  └─ ⚠️  Account config missing. Skipping.")
             continue
 
         # --- LOAD RISK CONFIG ---
@@ -321,34 +364,27 @@ def check_limit_orders_risk():
                 config = json.load(f)
             risk_map = config.get("account_balance_default_risk_management", {})
         except Exception as e:
-            print(f"  [ERROR] Failed to read config: {e}")
+            print(f"  └─ ❌ Failed to read config: {e}")
             continue
 
-        # --- START STABLE INIT LOGIC ---
+        # --- MT5 INITIALIZATION ---
         mt5.shutdown() 
         login_id = int(broker_cfg['LOGIN_ID'])
         mt5_path = broker_cfg["TERMINAL_PATH"]
         
-        print(f"  Initializing terminal at: {mt5_path}")
         if not mt5.initialize(path=mt5_path, timeout=180000):
-            print(f"  [ERROR] initialize() failed: {mt5.last_error()}")
+            print(f"  └─ ❌ MT5 Init failed for {login_id}")
             continue
 
-        # Login check
+        if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
+            print(f"  └─ ❌ Login failed for {login_id}")
+            mt5.shutdown()
+            continue
+        
         acc_info = mt5.account_info()
-        if acc_info is None or acc_info.login != login_id:
-            if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
-                print(f"  [ERROR] Login failed: {mt5.last_error()}")
-                continue
-            acc_info = mt5.account_info() # Refresh after login
-            print(f"  [OK] Logged into {login_id}")
-        else:
-            print(f"  [OK] Already logged into {login_id}")
-        # --- END STABLE INIT LOGIC ---
-
         balance = acc_info.balance
 
-        # Determine Primary Risk Value (Current Bucket)
+        # Determine Primary Risk Value
         primary_risk = None
         for range_str, r_val in risk_map.items():
             try:
@@ -360,33 +396,33 @@ def check_limit_orders_risk():
             except: continue
 
         if primary_risk is None:
-            print(f"  [WARN] No risk mapping found for balance {balance}")
+            print(f"  └─ ⚠️  No risk mapping for balance ${balance:,.2f}")
             mt5.shutdown()
             continue
 
-        print(f"  [INFO] Balance: {balance} | Target Risk: {primary_risk} USD")
+        print(f"  └─ 💰 Balance: ${balance:,.2f} | Target Risk: ${primary_risk}")
 
         # Check Live Pending Orders
         pending_orders = mt5.orders_get()
+        orders_checked = 0
+        orders_removed = 0
+
         if pending_orders:
             for order in pending_orders:
-                # Process only Limit Orders
                 if order.type not in [mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT]:
                     continue
 
+                orders_checked += 1
                 calc_type = mt5.ORDER_TYPE_BUY if order.type == mt5.ORDER_TYPE_BUY_LIMIT else mt5.ORDER_TYPE_SELL
-                
-                # Calculate live risk (Entry to SL)
                 sl_profit = mt5.order_calc_profit(calc_type, order.symbol, order.volume_initial, order.price_open, order.sl)
                 
                 if sl_profit is not None:
                     order_risk_usd = round(abs(sl_profit), 2)
                     
-                    # CANCEL if order risk differs significantly from the primary risk bucket
-                    # We allow a 1.0 USD tolerance for spread/fee variations
+                    # 1.0 USD tolerance check
                     if abs(order_risk_usd - primary_risk) > 1.0: 
-                        print(f"  [!] RISK MISMATCH: Order {order.ticket} ({order.symbol}) = {order_risk_usd} USD")
-                        print(f"      Required: {primary_risk} USD. Removing order...")
+                        print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket})")
+                        print(f"       Risk: ${order_risk_usd} vs Allowed: ${primary_risk}")
                         
                         cancel_request = {
                             "action": mt5.TRADE_ACTION_REMOVE,
@@ -394,266 +430,24 @@ def check_limit_orders_risk():
                         }
                         result = mt5.order_send(cancel_request)
                         
-                        if result.retcode != mt5.TRADE_RETCODE_DONE:
-                            print(f"      [X] Cancel failed: {result.comment}")
+                        if result.retcode == mt5.TRADE_RETCODE_DONE:
+                            orders_removed += 1
                         else:
-                            print(f"      [V] Order {order.ticket} successfully removed.")
+                            print(f"       [!] Cancel failed: {result.comment}")
                 else:
-                    print(f"  [WARN] Could not calculate risk for order {order.ticket}")
+                    print(f"    └─ ⚠️  Could not calc risk for #{order.ticket}")
+
+        # Broker final summary
+        if orders_checked > 0:
+            status_msg = f"Clean (Checked {orders_checked})" if orders_removed == 0 else f"Action Taken (Removed {orders_removed})"
+            print(f"  └─ ✅ Audit Complete: {status_msg}")
+        else:
+            print(f"  └─ 🔘 No pending limit orders found.")
 
         mt5.shutdown()
-        print(f"<<< [FINISHED: {user_brokerid}] Audit complete.")
 
-    print("\n" + "="*80)
-    print("FINSHED AND REMOVED ORDERS IN OVER RISK.") 
-    print("="*80)
+    print(f"\n{'='*10} 🏁 RISK AUDIT COMPLETE {'='*10}\n")
     return True
-
-def place_usd_orders():
-    # --- SUB-FUNCTION 1: DATA INITIALIZATION ---
-    def load_normalization_map():
-        try:
-            if not os.path.exists(NORMALIZE_SYMBOLS_PATH):
-                return {}
-            with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Critical Error: Could not load normalization map: {e}")
-            return None
-
-    # --- SUB-FUNCTION 2: RISK & FILE AGGREGATION ---
-    def collect_and_deduplicate_entries(inv_root, risk_map, balance, pull_lower, selected_rr, norm_map):
-        primary_risk = None
-        print(f"  [DEBUG] Determining primary risk for balance: {balance}")
-        for range_str, r_val in risk_map.items():
-            try:
-                raw_range = range_str.split("_")[0]
-                low, high = map(float, raw_range.split("-"))
-                if low <= balance <= high:
-                    primary_risk = int(r_val)
-                    print(f"    [OK] Balance {balance} in range {low}-{high} → Risk Level: {primary_risk}")
-                    break
-            except Exception as e:
-                print(f"    [WARN] Error parsing risk range '{range_str}': {e}")
-                continue
-
-        if primary_risk is None:
-            print(f"  [ERROR] No matching risk range found for balance: {balance}")
-            return None, []
-
-        risk_levels = [primary_risk]
-        if pull_lower:
-            start_lookback = max(1, primary_risk - 9)
-            risk_levels = list(range(start_lookback, primary_risk + 1))
-            print(f"  [INFO] Pull lower enabled, scanning risk levels: {risk_levels}")
-        else:
-            print(f"  [INFO] Scanning only primary risk level: {risk_levels}")
-
-        unique_entries_dict = {}
-        target_rr_folder = f"risk_reward_{selected_rr}"
-        
-        for r_val in reversed(risk_levels):
-            risk_folder_name = f"{r_val}usd_risk"
-            risk_filename = f"{r_val}usd_risk.json"
-            search_pattern = f"**/{target_rr_folder}/{risk_folder_name}/{risk_filename}"
-            
-            found_files = False
-            for path in inv_root.rglob(search_pattern):
-                found_files = True
-                if path.is_file():
-                    try:
-                        print(f"      [FILE] Reading: {path}")
-                        with open(path, 'r') as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                for entry in data:
-                                    symbol = get_normalized_symbol(entry["symbol"], norm_map)
-                                    key = f"{entry.get('timeframe','NA')}|{symbol}|{entry.get('order_type','NA')}|{round(float(entry['entry']), 5)}"
-                                    if key not in unique_entries_dict:
-                                        unique_entries_dict[key] = entry
-                                        print(f"          [ADD] Added entry: {symbol} @ {entry['entry']}")
-                    except Exception as e:
-                        print(f"      [ERROR] Failed to process {path}: {e}")
-                break # Matched this risk level
-        
-        print(f"  [RESULT] Total unique entries collected: {len(unique_entries_dict)}")
-        return risk_levels, list(unique_entries_dict.values())
-
-    # --- SUB-FUNCTION 3: BROKER CLEANUP ---
-    def cleanup_unauthorized_orders(all_entries, norm_map):
-        print("  [CLEANUP] Checking for unauthorized orders...")
-        try:
-            current_orders = mt5.orders_get()
-            if not current_orders:
-                print("  [CLEANUP] No pending orders found")
-                return
-            
-            deleted_count = 0
-            for order in current_orders:
-                is_authorized = False
-                for entry in all_entries:
-                    vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
-                    if not vol_key: continue
-                    
-                    e_vol = round(float(entry[vol_key]), 2)
-                    e_price = round(float(entry["entry"]), 5)
-                    e_symbol = get_normalized_symbol(entry["symbol"], norm_map)
-
-                    if (order.symbol == e_symbol and 
-                        round(order.price_open, 5) == e_price and 
-                        round(order.volume_initial, 2) == e_vol):
-                        is_authorized = True
-                        break
-                
-                if not is_authorized:
-                    print(f"  [DELETE] Unauthorized order - Ticket: {order.ticket}")
-                    res = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket})
-                    if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                        deleted_count += 1
-            print(f"  [CLEANUP] Deleted {deleted_count} unauthorized orders")
-        except Exception as e:
-            print(f"  [ERROR] Cleanup failed: {e}")
-
-    # --- SUB-FUNCTION 4: ORDER EXECUTION ---
-    def execute_missing_orders(all_entries, norm_map, default_magic, selected_rr, trade_allowed):
-        placed = failed = skipped = 0
-        print(f"  [EXECUTION] Processing {len(all_entries)} entries...")
-        
-        for idx, entry in enumerate(all_entries):
-            try:
-                # The normalization function now ensures we get a TRADEABLE symbol
-                symbol = get_normalized_symbol(entry["symbol"], norm_map)
-                
-                if not symbol:
-                    print(f"      [SKIP] {entry['symbol']} - No tradeable symbol found on broker.")
-                    failed += 1
-                    continue
-
-                # Ensure symbol is visible in Market Watch
-                if not mt5.symbol_select(symbol, True):
-                    print(f"      [FAIL] {symbol} - Could not select symbol.")
-                    failed += 1
-                    continue
-
-                symbol_info = mt5.symbol_info(symbol)
-                vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
-                
-                # Check for existing positions or orders
-                existing_orders = mt5.orders_get(symbol=symbol) or []
-                existing_pos = mt5.positions_get(symbol=symbol) or []
-                
-                entry_price = round(float(entry["entry"]), symbol_info.digits)
-                
-                if existing_pos or any(round(o.price_open, symbol_info.digits) == entry_price for o in existing_orders):
-                    skipped += 1
-                    continue
-
-                volume = float(entry[vol_key])
-                if symbol_info.volume_step > 0:
-                    volume = round(volume / symbol_info.volume_step) * symbol_info.volume_step
-                
-                # Clamp volume to broker limits
-                volume = max(symbol_info.volume_min, min(symbol_info.volume_max, volume))
-
-                request = {
-                    "action": mt5.TRADE_ACTION_PENDING,
-                    "symbol": symbol,
-                    "volume": round(volume, 2),
-                    "type": mt5.ORDER_TYPE_BUY_LIMIT if entry["order_type"] == "buy_limit" else mt5.ORDER_TYPE_SELL_LIMIT,
-                    "price": entry_price,
-                    "sl": round(float(entry["exit"]), symbol_info.digits),
-                    "tp": round(float(entry["target"]), symbol_info.digits),
-                    "magic": int(entry.get("magic", default_magic)),
-                    "comment": f"Risk_Agg_RR{selected_rr}",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
-                }
-                
-                res = mt5.order_send(request)
-                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                    print(f"      [SUCCESS] Order placed: {symbol} Ticket: {res.order}")
-                    placed += 1
-                else:
-                    ret_msg = res.comment if res else "No response"
-                    print(f"      [FAIL] {symbol} @ {entry_price} - Error: {ret_msg} (Code: {res.retcode if res else 'N/A'})")
-                    failed += 1
-            except Exception as e:
-                print(f"      [ERROR] Fatal error placing {entry.get('symbol')}: {e}")
-                failed += 1
-                
-        return placed, failed, skipped
-
-    # --- MAIN EXECUTION FLOW ---
-    print("\n" + "="*80)
-    print("STARTING PLACE_USD_ORDERS (VERIFIED STABLE)")
-    print("="*80)
-    
-    norm_map = load_normalization_map()
-    if norm_map is None: return False
-
-    for user_brokerid, broker_cfg in usersdictionary.items():
-        print(f"\n{'-'*80}\nPROCESSING INVESTOR: {user_brokerid}\n{'-'*80}")
-        inv_root = Path(INV_PATH) / user_brokerid
-        acc_mgmt_path = inv_root / "accountmanagement.json"
-        if not acc_mgmt_path.exists(): continue
-
-        try:
-            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            
-            # --- START STABLE INIT LOGIC ---
-            mt5.shutdown() 
-            login_id = int(broker_cfg['LOGIN_ID'])
-            mt5_path = broker_cfg["TERMINAL_PATH"]
-            
-            print(f"  Initializing terminal at: {mt5_path}")
-            if not mt5.initialize(path=mt5_path, timeout=180000):
-                print(f"  [ERROR] initialize() failed: {mt5.last_error()}")
-                continue
-
-            # Login check
-            acc = mt5.account_info()
-            if acc is None or acc.login != login_id:
-                if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
-                    print(f"  [ERROR] Login failed: {mt5.last_error()}")
-                    continue
-                print(f"  [OK] Logged into {login_id}")
-            else:
-                print(f"  [OK] Already logged into {login_id}")
-            # --- END STABLE INIT LOGIC ---
-
-            # Settings Extraction
-            settings = config.get("settings", {})
-            pull_lower = settings.get("pull_orders_from_lower", False)
-            selected_rr = config.get("selected_risk_reward", [None])[0]
-            risk_map = config.get("account_balance_default_risk_management", {})
-            default_magic = config.get("magic_number", 123456)
-            
-            acc_info = mt5.account_info()
-            term_info = mt5.terminal_info()
-            
-            # AutoTrading Check
-            print(f"  [INFO] Terminal AutoTrading Allowed: {term_info.trade_allowed}")
-
-            print(f"\n  [STAGE 1] Risk determination and file loading")
-            risk_lvls, all_entries = collect_and_deduplicate_entries(inv_root, risk_map, acc_info.balance, pull_lower, selected_rr, norm_map)
-            
-            if all_entries:
-                print(f"\n  [STAGE 2] Cleaning up unauthorized orders")
-                cleanup_unauthorized_orders(all_entries, norm_map)
-                
-                print(f"\n  [STAGE 3] Executing missing orders")
-                p, f, s = execute_missing_orders(all_entries, norm_map, default_magic, selected_rr, term_info.trade_allowed)
-                print(f"\n  [SUMMARY] {user_brokerid}: Placed:{p}, Failed:{f}, Skipped:{s}")
-            else:
-                print(f"  [INFO] No entries to process for {user_brokerid}")
-
-        except Exception as e:
-            print(f"  [ERROR] System Error for {user_brokerid}: {e}")
-        
-    mt5.shutdown()
-    print("\n" + "="*80 + "\nCOMPLETED\n" + "="*80)
-    return True  
 
 def default_price_repair():
     """
@@ -661,45 +455,46 @@ def default_price_repair():
     to all active risk bucket files ONLY if 'default_price' is set to true 
     in accountmanagement.json.
     """
-    print("--- STARTING DEFAULT-PRICE MODIFICATION---")
+    print(f"\n{'='*10} 🛠️  DEFAULT PRICE SYNCHRONIZATION {'='*10}")
     
     if not os.path.exists(INV_PATH):
-        print(f"Error: Investor path {INV_PATH} not found.")
+        print(f" [!] Error: Investor path {INV_PATH} not found.")
         return False
 
     investor_ids = [f for f in os.listdir(INV_PATH) if os.path.isdir(os.path.join(INV_PATH, f))]
 
     for inv_id in investor_ids:
+        print(f" [{inv_id}] 🔍 Checking authorization...")
         inv_root = Path(INV_PATH) / inv_id
         acc_mgmt_path = inv_root / "accountmanagement.json"
         
         # --- 1. PERMISSION CHECK ---
         if not acc_mgmt_path.exists():
-            print(f" > Skipping {inv_id}: accountmanagement.json missing.")
+            print(f"  └─ ⚠️  Missing accountmanagement.json. Skipping.")
             continue
 
         try:
             with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
-            # Check the nested setting: settings -> default_price
             settings = config.get("settings", {})
             is_allowed = settings.get("default_price", False)
             
             if not is_allowed:
+                print(f"  └─ 🔘 Default price repair disabled in settings.")
                 continue
         except Exception as e:
-            print(f" ! Error reading config for {inv_id}: {e}")
+            print(f"  └─ ❌ Config Read Error: {e}")
             continue
 
         # --- 2. BACKUP LOCATION ---
         backup_files = list(inv_root.rglob("limit_orders_backup.json"))
         if not backup_files:
-            print(f" > Skipping {inv_id}: No limit_orders_backup.json found.")
+            print(f"  └─ ⚠️  No limit_orders_backup.json found.")
             continue
             
         backup_path = backup_files[0]
-        print(f"{inv_id} [AUTHORIZED] default price")
+        print(f"  └─ ✅ Authorized. Loading master data from backup...")
 
         # --- 3. LOAD MASTER DATA ---
         try:
@@ -712,16 +507,15 @@ def default_price_repair():
                 master_map[key] = b_entry
                 
         except Exception as e:
-            print(f" ! Error loading backup data for {inv_id}: {e}")
+            print(f"  └─ ❌ Error loading master data: {e}")
             continue
 
         # --- 4. APPLY UPDATES TO RISK BUCKETS ---
         risk_files = list(inv_root.rglob("*usd_risk.json"))
-        investor_updates = 0
         total_orders_patched = 0
+        files_modified = 0
 
         for target_file in risk_files:
-            # Avoid self-referencing if backup uses the same naming convention
             if target_file.name == "limit_orders_backup.json":
                 continue
 
@@ -739,14 +533,14 @@ def default_price_repair():
                     if key in master_map:
                         backup_ref = master_map[key]
                         
-                        # Apply Exit repair (if not 0)
+                        # Apply Exit repair
                         b_exit = backup_ref.get("exit", 0)
                         if b_exit != 0 and active_entry.get("exit") != b_exit:
                             active_entry["exit"] = b_exit
                             file_changed = True
                             total_orders_patched += 1
                         
-                        # Apply Target repair (if not 0)
+                        # Apply Target repair
                         b_target = backup_ref.get("target", 0)
                         if b_target != 0 and active_entry.get("target") != b_target:
                             active_entry["target"] = b_target
@@ -756,16 +550,555 @@ def default_price_repair():
                 if file_changed:
                     with open(target_file, 'w', encoding='utf-8') as f:
                         json.dump(active_entries, f, indent=4)
-                    investor_updates += 1
+                    files_modified += 1
 
             except Exception as e:
-                print(f" ! Error processing {target_file.name}: {e}")
+                print(f"    └─ ❌ Error patching {target_file.name}: {e}")
 
-        print(f" [✓] {inv_id}: Successfully repaired {total_orders_patched} prices.")
+        # Summary per investor
+        if total_orders_patched > 0:
+            print(f"  └─ ✨ Successfully repaired {total_orders_patched} prices across {files_modified} files.")
+        else:
+            print(f"  └─ ✅ All risk bucket prices are already synchronized.")
 
-    print("--- Default Price Repair Completed ---")
+    print(f"\n{'='*10} 🏁 REPAIR COMPLETED {'='*10}\n")
     return True
 
+def filter_unauthorized_symbols():
+    """
+    Verifies and filters risk entries based on allowed symbols defined in accountmanagement.json.
+    Matches sanitized versions of symbols to handle broker suffixes (e.g., EURUSDm vs EURUSD).
+    """
+    print(f"\n{'='*10} 🛡️  SYMBOL AUTHORIZATION FILTER {'='*10}")
+
+    def sanitize(sym):
+        if not sym: return ""
+        # Remove non-alphanumeric, uppercase, and strip trailing M/PRO suffixes
+        clean = re.sub(r'[^a-zA-Z0-9]', '', str(sym)).upper()
+        return re.sub(r'(PRO|M)$', '', clean)
+
+    if not os.path.exists(INV_PATH):
+        print(f" [!] Error: Investor path {INV_PATH} not found.")
+        return False
+
+    investor_ids = [f for f in os.listdir(INV_PATH) if os.path.isdir(os.path.join(INV_PATH, f))]
+
+    for inv_id in investor_ids:
+        print(f" [{inv_id}] 🔍 Verifying symbol permissions...")
+        inv_folder = Path(INV_PATH) / inv_id
+        acc_mgmt_path = inv_folder / "accountmanagement.json"
+        
+        if not acc_mgmt_path.exists():
+            print(f"  └─ ⚠️  Account config missing. Skipping.")
+            continue
+
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Extract and sanitize the list of allowed symbols
+            sym_dict = config.get("symbols_dictionary", {})
+            allowed_sanitized = {sanitize(s) for sublist in sym_dict.values() for s in sublist}
+            
+            if not allowed_sanitized:
+                print(f"  └─ 🔘 No symbols defined in dictionary. Skipping filter.")
+                continue
+
+            risk_files = list(inv_folder.rglob("*usd_risk.json"))
+            total_removed = 0
+            files_affected = 0
+
+            for target_file in risk_files:
+                try:
+                    with open(target_file, 'r', encoding='utf-8') as f:
+                        entries = json.load(f)
+                    
+                    if not isinstance(entries, list): continue
+
+                    initial_count = len(entries)
+                    # Filter: Keep only if the sanitized symbol exists in our allowed set
+                    filtered = [e for e in entries if sanitize(e.get("symbol")) in allowed_sanitized]
+                    
+                    if len(filtered) != initial_count:
+                        removed_here = initial_count - len(filtered)
+                        total_removed += removed_here
+                        files_affected += 1
+                        with open(target_file, 'w', encoding='utf-8') as f:
+                            json.dump(filtered, f, indent=4)
+                except:
+                    continue
+
+            # Summary per investor
+            if total_removed > 0:
+                print(f"  └─ 🗑️  Purged {total_removed} unauthorized orders across {files_affected} buckets.")
+            else:
+                print(f"  └─ ✅ All {len(allowed_sanitized)} symbols are authorized.")
+
+        except Exception as e:
+            print(f"  └─ ❌ Error processing {inv_id}: {e}")
+
+    print(f"\n{'='*10} 🏁 FILTERING COMPLETE {'='*10}\n")
+    return True
+
+def place_usd_orders():
+    # --- SUB-FUNCTION 1: DATA INITIALIZATION ---
+    def load_normalization_map():
+        try:
+            if not os.path.exists(NORMALIZE_SYMBOLS_PATH):
+                return {}
+            with open(NORMALIZE_SYMBOLS_PATH, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"❌ CRITICAL ERROR: Could not load normalization map: {e}")
+            return None
+
+    # --- SUB-FUNCTION 2: RISK & FILE AGGREGATION ---
+    def collect_and_deduplicate_entries(inv_root, risk_map, balance, pull_lower, selected_rr, norm_map):
+        primary_risk = None
+        print(f"  ⚙️  Determining primary risk for balance: ${balance:,.2f}")
+        
+        for range_str, r_val in risk_map.items():
+            try:
+                raw_range = range_str.split("_")[0]
+                low, high = map(float, raw_range.split("-"))
+                if low <= balance <= high:
+                    primary_risk = int(r_val)
+                    print(f"  ✅ Balance ${balance:,.2f} in range ${low:,.0f}-${high:,.0f} → Risk Level: {primary_risk}")
+                    break
+            except Exception as e:
+                print(f"  ⚠️  Error parsing risk range '{range_str}': {e}")
+                continue
+
+        if primary_risk is None:
+            print(f"  ❌ No matching risk range found for balance: ${balance:,.2f}")
+            return None, []
+
+        risk_levels = [primary_risk]
+        if pull_lower:
+            start_lookback = max(1, primary_risk - 9)
+            risk_levels = list(range(start_lookback, primary_risk + 1))
+            print(f"  📊 Pull lower enabled, scanning risk levels: {risk_levels}")
+        else:
+            print(f"  📊 Scanning only primary risk level: {risk_levels}")
+
+        unique_entries_dict = {}
+        target_rr_folder = f"risk_reward_{selected_rr}"
+        
+        for r_val in reversed(risk_levels):
+            risk_folder_name = f"{r_val}usd_risk"
+            risk_filename = f"{r_val}usd_risk.json"
+            search_pattern = f"**/{target_rr_folder}/{risk_folder_name}/{risk_filename}"
+            
+            entries_found = 0
+            for path in inv_root.rglob(search_pattern):
+                if path.is_file():
+                    try:
+                        with open(path, 'r') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                entries_found += len(data)
+                                for entry in data:
+                                    symbol = get_normalized_symbol(entry["symbol"], norm_map)
+                                    key = f"{entry.get('timeframe','NA')}|{symbol}|{entry.get('order_type','NA')}|{round(float(entry['entry']), 5)}"
+                                    if key not in unique_entries_dict:
+                                        unique_entries_dict[key] = entry
+                    except json.JSONDecodeError as e:
+                        print(f"      ❌ Risk Level {r_val}: Invalid JSON format - {e}")
+                    except Exception as e:
+                        print(f"      ❌ Risk Level {r_val}: Failed to read file - {e}")
+            
+            if entries_found > 0:
+                print(f"    📁 Risk Level {r_val}: Found {entries_found} entries, {len([k for k in unique_entries_dict.keys() if k.startswith(f'{r_val}')])} unique after dedup")
+            else:
+                print(f"    📁 Risk Level {r_val}: No entries found")
+                
+        print(f"  📈 TOTAL: {len(unique_entries_dict)} unique trading opportunities collected")
+        return risk_levels, list(unique_entries_dict.values())
+
+    # --- SUB-FUNCTION 3: BROKER CLEANUP ---
+    def cleanup_unauthorized_orders(all_entries, norm_map):
+        print("  🧹 Checking for unauthorized orders...")
+        try:
+            current_orders = mt5.orders_get()
+            if not current_orders:
+                print("  ✅ No pending orders found")
+                return
+            
+            authorized_tickets = set()
+            for entry in all_entries:
+                vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
+                if not vol_key: continue
+                
+                e_symbol = get_normalized_symbol(entry["symbol"], norm_map)
+                e_price = round(float(entry["entry"]), 5)
+                e_vol = round(float(entry[vol_key]), 2)
+                
+                for order in current_orders:
+                    if (order.symbol == e_symbol and 
+                        round(order.price_open, 5) == e_price and 
+                        round(order.volume_initial, 2) == e_vol):
+                        authorized_tickets.add(order.ticket)
+            
+            deleted_count = 0
+            for order in current_orders:
+                if order.ticket not in authorized_tickets:
+                    print(f"    🗑️  Removing unauthorized order - Ticket: {order.ticket} | Symbol: {order.symbol} | Price: {order.price_open}")
+                    res = mt5.order_send({
+                        "action": mt5.TRADE_ACTION_REMOVE,
+                        "order": order.ticket
+                    })
+                    if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                        deleted_count += 1
+                    else:
+                        error_msg = res.comment if res else "No response"
+                        error_code = res.retcode if res else "N/A"
+                        print(f"      ❌ Failed to remove order {order.ticket}: {error_msg} (Code: {error_code})")
+            
+            if deleted_count > 0:
+                print(f"  ✅ Removed {deleted_count} unauthorized order(s)")
+            else:
+                print(f"  ✅ All orders are authorized")
+                
+        except Exception as e:
+            print(f"  ❌ Cleanup failed: {e}")
+
+    # --- SUB-FUNCTION 4: ORDER EXECUTION ---
+    def execute_missing_orders(all_entries, norm_map, default_magic, selected_rr, trade_allowed):
+        if not trade_allowed:
+            print("  ⚠️  AutoTrading is DISABLED - Orders will not be executed")
+            return 0, 0, 0
+            
+        placed = failed = skipped = 0
+        total = len(all_entries)
+        
+        print(f"  🚀 Executing {total} order(s)...")
+        
+        for idx, entry in enumerate(all_entries, 1):
+            try:
+                # Progress indicator with symbol
+                symbol_orig = entry["symbol"]
+                print(f"\n    [{idx}/{total}] Processing {symbol_orig}...")
+                
+                # Step 1: Symbol normalization
+                symbol = get_normalized_symbol(symbol_orig, norm_map)
+                if not symbol:
+                    print(f"      ❌ FAIL: {symbol_orig} - Symbol not found in normalization map or not available on broker")
+                    failed += 1
+                    continue
+
+                # Step 2: Select symbol in Market Watch
+                if not mt5.symbol_select(symbol, True):
+                    last_error = mt5.last_error()
+                    print(f"      ❌ FAIL: {symbol} - Could not select symbol in Market Watch. Error: {last_error}")
+                    failed += 1
+                    continue
+
+                # Step 3: Get symbol info
+                symbol_info = mt5.symbol_info(symbol)
+                if not symbol_info:
+                    last_error = mt5.last_error()
+                    print(f"      ❌ FAIL: {symbol} - Symbol info not available. Error: {last_error}")
+                    failed += 1
+                    continue
+                
+                # Step 4: Check symbol trade mode
+                if symbol_info.trade_mode == mt5.SYMBOL_TRADE_MODE_DISABLED:
+                    print(f"      ❌ FAIL: {symbol} - Trading is disabled for this symbol")
+                    failed += 1
+                    continue
+                elif symbol_info.trade_mode == mt5.SYMBOL_TRADE_MODE_CLOSEONLY:
+                    print(f"      ❌ FAIL: {symbol} - Only closing positions allowed (close-only mode)")
+                    failed += 1
+                    continue
+                
+                # Step 5: Get volume key
+                vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
+                if not vol_key:
+                    print(f"      ❌ FAIL: {symbol_orig} - No volume field found in entry data")
+                    failed += 1
+                    continue
+                
+                # Step 6: Check for existing positions
+                existing_pos = mt5.positions_get(symbol=symbol) or []
+                if existing_pos:
+                    pos_type = "BUY" if existing_pos[0].type == mt5.POSITION_TYPE_BUY else "SELL"
+                    print(f"      ⏭️  SKIP: {symbol} - Existing {pos_type} position detected (Volume: {existing_pos[0].volume})")
+                    skipped += 1
+                    continue
+                
+                # Step 7: Check for existing orders
+                existing_orders = mt5.orders_get(symbol=symbol) or []
+                entry_price = round(float(entry["entry"]), symbol_info.digits)
+                
+                order_exists = False
+                for order in existing_orders:
+                    if round(order.price_open, symbol_info.digits) == entry_price:
+                        order_type = "BUY LIMIT" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL LIMIT"
+                        print(f"      ⏭️  SKIP: {symbol} - {order_type} already exists at {entry_price} (Ticket: {order.ticket})")
+                        order_exists = True
+                        break
+                
+                if order_exists:
+                    skipped += 1
+                    continue
+
+                # Step 8: Calculate and validate volume
+                try:
+                    volume = float(entry[vol_key])
+                except (ValueError, TypeError) as e:
+                    print(f"      ❌ FAIL: {symbol} - Invalid volume value '{entry[vol_key]}': {e}")
+                    failed += 1
+                    continue
+                
+                # Check minimum volume
+                if volume < symbol_info.volume_min:
+                    print(f"      ❌ FAIL: {symbol} - Volume {volume:.2f} below minimum {symbol_info.volume_min:.2f}")
+                    failed += 1
+                    continue
+                
+                # Check maximum volume
+                if volume > symbol_info.volume_max:
+                    print(f"      ❌ FAIL: {symbol} - Volume {volume:.2f} above maximum {symbol_info.volume_max:.2f}")
+                    failed += 1
+                    continue
+                
+                # Adjust volume step
+                original_volume = volume
+                if symbol_info.volume_step > 0:
+                    volume = round(volume / symbol_info.volume_step) * symbol_info.volume_step
+                    if volume != original_volume:
+                        print(f"      📊 Volume adjusted: {original_volume:.2f} → {volume:.2f} (to match volume step {symbol_info.volume_step})")
+                
+                # Step 9: Validate prices
+                try:
+                    entry_price = round(float(entry["entry"]), symbol_info.digits)
+                    sl_price = round(float(entry["exit"]), symbol_info.digits)
+                    tp_price = round(float(entry["target"]), symbol_info.digits)
+                except (ValueError, TypeError, KeyError) as e:
+                    missing_field = str(e).split("'")[1] if "'" in str(e) else "unknown"
+                    print(f"      ❌ FAIL: {symbol} - Missing or invalid price field: {missing_field}")
+                    failed += 1
+                    continue
+                
+                # Check price validity
+                if entry_price <= 0 or sl_price <= 0 or tp_price <= 0:
+                    print(f"      ❌ FAIL: {symbol} - Invalid prices (Entry: {entry_price}, SL: {sl_price}, TP: {tp_price})")
+                    failed += 1
+                    continue
+                
+                # Step 10: Determine order type
+                order_type = entry.get("order_type", "").lower()
+                if order_type == "buy_limit":
+                    mt5_order_type = mt5.ORDER_TYPE_BUY_LIMIT
+                    direction = "BUY LIMIT"
+                elif order_type == "sell_limit":
+                    mt5_order_type = mt5.ORDER_TYPE_SELL_LIMIT
+                    direction = "SELL LIMIT"
+                else:
+                    print(f"      ❌ FAIL: {symbol} - Invalid order type '{order_type}' (expected 'buy_limit' or 'sell_limit')")
+                    failed += 1
+                    continue
+
+                # Step 11: Prepare and send order
+                request = {
+                    "action": mt5.TRADE_ACTION_PENDING,
+                    "symbol": symbol,
+                    "volume": round(volume, 2),
+                    "type": mt5_order_type,
+                    "price": entry_price,
+                    "sl": sl_price,
+                    "tp": tp_price,
+                    "magic": int(entry.get("magic", default_magic)),
+                    "comment": f"RR{selected_rr}",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                
+                # Send order
+                res = mt5.order_send(request)
+                
+                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                    print(f"      ✅ SUCCESS: {direction} {symbol} @ {entry_price} | Vol: {volume:.2f} | Ticket: {res.order}")
+                    placed += 1
+                else:
+                    # Detailed error mapping
+                    error_code = res.retcode if res else "N/A"
+                    error_msg = res.comment if res and res.comment else "No response"
+                    
+                    # Map common MT5 error codes to human-readable messages
+                    error_map = {
+                        10004: "Trade disabled",
+                        10006: "No connection",
+                        10007: "Too many requests",
+                        10008: "Invalid price",
+                        10009: "Invalid volume",
+                        10010: "Market closed",
+                        10011: "Insufficient money",
+                        10012: "Price changed",
+                        10013: "Off quotes",
+                        10014: "Broker busy",
+                        10015: "Requote",
+                        10016: "Order locked",
+                        10017: "Long positions only allowed",
+                        10018: "Too many orders",
+                        10019: "Pending orders limit reached",
+                        10020: "Hedging prohibited",
+                        10021: "Close-only mode",
+                        10022: "FIFO rule violated",
+                        10023: "Hedged position exists",
+                        130: "Invalid stops",
+                        134: "Insufficient funds",
+                        135: "Price changed",
+                        136: "Off quotes",
+                        137: "Broker busy",
+                        138: "Requote",
+                        139: "Order locked",
+                        140: "Invalid volume",
+                        145: "Modification denied",
+                        146: "No connection",
+                        148: "Too many orders",
+                        149: "Invalid order type",
+                    }
+                    
+                    human_error = error_map.get(error_code, f"Unknown error ({error_code})")
+                    print(f"      ❌ FAIL: {direction} {symbol} @ {entry_price} | Error: {human_error} | Details: {error_msg}")
+                    failed += 1
+                    
+            except Exception as e:
+                print(f"      💥 UNEXPECTED ERROR: {entry.get('symbol', 'Unknown')} - {str(e)}")
+                import traceback
+                traceback.print_exc()  # This will show the full stack trace for debugging
+                failed += 1
+                
+        # Summary
+        if total > 0:
+            success_rate = (placed / total) * 100 if total > 0 else 0
+            print(f"\n    📊 Execution Summary: ✅ {placed} placed | ❌ {failed} failed | ⏭️  {skipped} skipped | Success Rate: {success_rate:.1f}%")
+        return placed, failed, skipped
+
+    # --- MAIN EXECUTION FLOW ---
+    print("\n" + "="*80)
+    print("🚀 STARTING USD ORDER PLACEMENT ENGINE")
+    print("="*80)
+    
+    norm_map = load_normalization_map()
+    if norm_map is None: return False
+
+    total_investors = len(usersdictionary)
+    processed = 0
+    successful = 0
+
+    for user_brokerid, broker_cfg in usersdictionary.items():
+        processed += 1
+        print(f"\n{'-'*80}")
+        print(f"📋 INVESTOR [{processed}/{total_investors}]: {user_brokerid}")
+        print(f"{'-'*80}")
+        
+        inv_root = Path(INV_PATH) / user_brokerid
+        acc_mgmt_path = inv_root / "accountmanagement.json"
+        
+        if not acc_mgmt_path.exists():
+            print(f"  ⚠️  Account management file not found - skipping")
+            continue
+
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Initialize MT5 connection
+            print(f"  🔌 Connecting to MT5 terminal...")
+            mt5.shutdown() 
+            login_id = int(broker_cfg['LOGIN_ID'])
+            mt5_path = broker_cfg["TERMINAL_PATH"]
+            
+            if not mt5.initialize(path=mt5_path, timeout=180000):
+                error = mt5.last_error()
+                print(f"  ❌ Failed to initialize MT5: {error}")
+                continue
+
+            # Login check
+            acc = mt5.account_info()
+            if acc is None or acc.login != login_id:
+                print(f"  🔑 Logging into account {login_id}...")
+                if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
+                    error = mt5.last_error()
+                    print(f"  ❌ Login failed: {error}")
+                    continue
+                print(f"  ✅ Successfully logged in")
+            else:
+                print(f"  ✅ Already logged in")
+
+            # Extract settings
+            settings = config.get("settings", {})
+            pull_lower = settings.get("pull_orders_from_lower", False)
+            selected_rr = config.get("selected_risk_reward", [None])[0]
+            risk_map = config.get("account_balance_default_risk_management", {})
+            default_magic = config.get("magic_number", 123456)
+            
+            # Account info
+            acc_info = mt5.account_info()
+            term_info = mt5.terminal_info()
+            
+            if not acc_info:
+                print(f"  ❌ Failed to get account info")
+                continue
+                
+            print(f"\n  📊 Account Details:")
+            print(f"    • Balance: ${acc_info.balance:,.2f}")
+            print(f"    • Equity: ${acc_info.equity:,.2f}")
+            print(f"    • Free Margin: ${acc_info.margin_free:,.2f}")
+            print(f"    • Margin Level: {acc_info.margin_level:.2f}%" if acc_info.margin_level else "    • Margin Level: N/A")
+            print(f"    • AutoTrading: {'✅ ENABLED' if term_info.trade_allowed else '❌ DISABLED'}")
+            print(f"    • Risk/Reward: {selected_rr}")
+
+            # Stage 1: Risk determination and file loading
+            print(f"\n  📁 STAGE 1: Scanning for trading opportunities")
+            risk_lvls, all_entries = collect_and_deduplicate_entries(
+                inv_root, risk_map, acc_info.balance, pull_lower, selected_rr, norm_map
+            )
+            
+            if all_entries:
+                # Stage 2: Cleanup
+                print(f"\n  🧹 STAGE 2: Order cleanup")
+                cleanup_unauthorized_orders(all_entries, norm_map)
+                
+                # Stage 3: Execution
+                print(f"\n  🚀 STAGE 3: Order placement")
+                p, f, s = execute_missing_orders(
+                    all_entries, norm_map, default_magic, selected_rr, term_info.trade_allowed
+                )
+                
+                if p > 0 or f > 0 or s > 0:
+                    successful += 1
+                    
+                print(f"\n  📈 INVESTOR SUMMARY: {user_brokerid}")
+                print(f"    • Orders Placed: {p}")
+                print(f"    • Orders Failed: {f}")
+                print(f"    • Orders Skipped: {s}")
+                print(f"    • Total Processed: {len(all_entries)}")
+            else:
+                print(f"  ℹ️  No trading opportunities found")
+
+        except json.JSONDecodeError as e:
+            print(f"  ❌ Invalid JSON in account management file: {e}")
+        except KeyError as e:
+            print(f"  ❌ Missing required configuration key: {e}")
+        except Exception as e:
+            print(f"  💥 SYSTEM ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            continue
+        
+    mt5.shutdown()
+    
+    print("\n" + "="*80)
+    print("✅ ORDER PLACEMENT COMPLETED")
+    print(f"   Processed: {processed}/{total_investors} investors")
+    print(f"   Successful: {successful} investors")
+    print("="*80)
+    
+    return True
+    
 def place_orders():
     sort_orders()
     deduplicate_orders()
@@ -775,5 +1108,5 @@ def place_orders():
 
 
 if __name__ == "__main__":
-   place_orders()
+   place_usd_orders()
 
