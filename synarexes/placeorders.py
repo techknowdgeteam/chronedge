@@ -334,6 +334,7 @@ def check_limit_orders_risk():
     """
     Function 3: Validates live pending orders against the account's current risk bucket.
     Synchronized with the stable initialization logic of place_usd_orders.
+    Only removes orders with risk HIGHER than allowed (lower risk orders are kept).
     """
     print(f"\n{'='*10} 🛡️  LIVE RISK AUDIT: PENDING ORDERS {'='*10}")
 
@@ -406,6 +407,8 @@ def check_limit_orders_risk():
         pending_orders = mt5.orders_get()
         orders_checked = 0
         orders_removed = 0
+        orders_kept_lower = 0
+        orders_kept_in_range = 0
 
         if pending_orders:
             for order in pending_orders:
@@ -419,10 +422,10 @@ def check_limit_orders_risk():
                 if sl_profit is not None:
                     order_risk_usd = round(abs(sl_profit), 2)
                     
-                    # 1.0 USD tolerance check
-                    if abs(order_risk_usd - primary_risk) > 1.0: 
-                        print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket})")
-                        print(f"       Risk: ${order_risk_usd} vs Allowed: ${primary_risk}")
+                    # Only remove if risk is significantly higher than allowed
+                    if order_risk_usd - primary_risk > 1.0: 
+                        print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket}) - Risk too high")
+                        print(f"       Risk: ${order_risk_usd} > Allowed: ${primary_risk}")
                         
                         cancel_request = {
                             "action": mt5.TRADE_ACTION_REMOVE,
@@ -434,13 +437,33 @@ def check_limit_orders_risk():
                             orders_removed += 1
                         else:
                             print(f"       [!] Cancel failed: {result.comment}")
+                    
+                    elif order_risk_usd < primary_risk - 1.0:
+                        # Lower risk - keep it (good for the account)
+                        orders_kept_lower += 1
+                        print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Lower risk than allowed")
+                        print(f"       Risk: ${order_risk_usd} < Allowed: ${primary_risk}")
+                    
+                    else:
+                        # Within tolerance - keep it
+                        orders_kept_in_range += 1
+                        print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Risk within tolerance")
+                        print(f"       Risk: ${order_risk_usd} vs Allowed: ${primary_risk}")
                 else:
                     print(f"    └─ ⚠️  Could not calc risk for #{order.ticket}")
 
         # Broker final summary
         if orders_checked > 0:
-            status_msg = f"Clean (Checked {orders_checked})" if orders_removed == 0 else f"Action Taken (Removed {orders_removed})"
-            print(f"  └─ ✅ Audit Complete: {status_msg}")
+            print(f"  └─ 📊 Audit Results:")
+            print(f"       • Orders checked: {orders_checked}")
+            if orders_kept_lower > 0:
+                print(f"       • Kept (lower risk): {orders_kept_lower}")
+            if orders_kept_in_range > 0:
+                print(f"       • Kept (in tolerance): {orders_kept_in_range}")
+            if orders_removed > 0:
+                print(f"       • Removed (too high): {orders_removed}")
+            else:
+                print(f"       ✅ No orders needed removal")
         else:
             print(f"  └─ 🔘 No pending limit orders found.")
 
@@ -726,7 +749,7 @@ def place_usd_orders():
             
             authorized_tickets = set()
             for entry in all_entries:
-                vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
+                vol_key = next((k for k in entry.keys() if k.endswith("volume")), None)
                 if not vol_key: continue
                 
                 e_symbol = get_normalized_symbol(entry["symbol"], norm_map)
@@ -812,7 +835,7 @@ def place_usd_orders():
                     continue
                 
                 # Step 5: Get volume key
-                vol_key = next((k for k in entry.keys() if k.endswith("_volume")), None)
+                vol_key = next((k for k in entry.keys() if k.endswith("volume")), None)
                 if not vol_key:
                     print(f"      ❌ FAIL: {symbol_orig} - No volume field found in entry data")
                     failed += 1
@@ -1102,11 +1125,11 @@ def place_usd_orders():
 def place_orders():
     sort_orders()
     deduplicate_orders()
+    default_price_repair()
     place_usd_orders()
     check_limit_orders_risk()
-    default_price_repair()
 
 
 if __name__ == "__main__":
-   place_usd_orders()
+   check_limit_orders_risk()
 

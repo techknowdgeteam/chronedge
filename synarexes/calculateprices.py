@@ -28,6 +28,7 @@ def get_normalized_symbol(record_symbol, norm_map):
     2. Cleans it to "USOIL".
     3. Finds the list in Normalization JSON.
     4. Checks broker for any name in that list.
+    5. Handles special suffixes like m, pro, +, \, . etc.
     """
     if not record_symbol:
         return None
@@ -36,8 +37,17 @@ def get_normalized_symbol(record_symbol, norm_map):
     # "US Oil" -> "USOIL" | "US_OIL" -> "USOIL"
     search_term = record_symbol.replace(" ", "").replace("_", "").replace(".", "").upper()
     
+    # Also create a base version without any special suffixes for matching
+    # Remove common suffixes like m, pro, +, \, etc.
+    import re
+    
+    # Pattern to remove common suffixes (m, pro, +, \, etc.) at the end
+    # This handles cases like CHFJPY+ -> CHFJPY
+    base_search_term = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', search_term)
+    
     norm_data = norm_map.get("NORMALIZATION", {})
     target_synonyms = []
+    base_target_synonyms = []  # Store base versions without suffixes
 
     # Step 2: Go to Normalization straight
     for standard_key, synonyms in norm_data.items():
@@ -45,28 +55,83 @@ def get_normalized_symbol(record_symbol, norm_map):
         clean_key = standard_key.replace("_", "").upper()
         clean_syns = [s.replace(" ", "").replace("_", "").replace("/", "").upper() for s in synonyms]
         
-        if search_term == clean_key or search_term in clean_syns:
+        # Also create base versions without suffixes
+        base_clean_key = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', clean_key)
+        base_clean_syns = [re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', s) for s in clean_syns]
+        
+        # Check both the full term and base term
+        if (search_term == clean_key or search_term in clean_syns or 
+            base_search_term == base_clean_key or base_search_term in base_clean_syns):
             target_synonyms = synonyms
+            # Also store base versions for suffix matching
+            base_target_synonyms = [re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', s.replace(" ", "").replace("_", "").replace("/", "").upper()) 
+                                   for s in synonyms]
             break
 
-    # If the record symbol isn't in our map, at least try the cleaned version
+    # If the record symbol isn't in our map, at least try the cleaned versions
     if not target_synonyms:
-        target_synonyms = [record_symbol, search_term]
+        target_synonyms = [record_symbol, search_term, base_search_term]
+        base_target_synonyms = [base_search_term]
 
     # Step 3: Check Broker for any of these possibilities
     # Fetch all available names once to save time
     available_symbols = [s.name for s in mt5.symbols_get()]
     
+    # Create a map of base symbol names to their actual broker names
+    # This helps with suffix matching
+    base_to_actual = {}
+    for broker_name in available_symbols:
+        # Remove common suffixes for base matching
+        base_name = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', broker_name.upper())
+        base_name = base_name.replace(".", "")
+        if base_name not in base_to_actual:
+            base_to_actual[base_name] = []
+        base_to_actual[base_name].append(broker_name)
+    
+    # First try exact matches
     for option in target_synonyms:
         # Check for Exact Match (e.g., "USOUSD")
         if option in available_symbols:
             return option
             
-        # Check for Suffix Match (e.g., "USOUSD+")
-        # We check if any broker symbol starts with our synonym
-        clean_opt = option.replace("/", "").upper()
+        # Check with different case variations
         for broker_name in available_symbols:
-            if broker_name.upper().startswith(clean_opt):
+            if broker_name.upper() == option.upper():
+                return broker_name
+    
+    # Then try matching with suffixes - using base versions
+    for option in base_target_synonyms:
+        # Clean the option for matching
+        clean_option = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', option.upper())
+        if clean_option in base_to_actual:
+            # Return the first actual broker name (preferring standard format)
+            actual_symbols = base_to_actual[clean_option]
+            # Prefer symbols without special suffixes first
+            for sym in actual_symbols:
+                if not re.search(r'[+\\]|\.PRO|\.M|M$|PRO$', sym.upper()):
+                    return sym
+            # If all have suffixes, return the first one
+            return actual_symbols[0]
+    
+    # Finally try partial matching with any remaining options
+    for option in target_synonyms:
+        # Clean the option for suffix matching
+        clean_opt = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', option.replace("/", "").upper())
+        
+        # Check for Suffix Match in our pre-built map
+        if clean_opt in base_to_actual:
+            actual_symbols = base_to_actual[clean_opt]
+            # Prefer symbols without special suffixes first
+            for sym in actual_symbols:
+                if not re.search(r'[+\\]|\.PRO|\.M|M$|PRO$', sym.upper()):
+                    return sym
+            return actual_symbols[0]
+        
+        # Legacy check: try if any broker symbol starts with our cleaned option
+        for broker_name in available_symbols:
+            broker_upper = broker_name.upper()
+            broker_base = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', broker_upper)
+            if broker_upper.startswith(clean_opt) or broker_base.startswith(clean_opt):
                 return broker_name
 
     print(f"[!] No broker match found for {record_symbol} even after normalization check.")
@@ -117,6 +182,7 @@ def purge_unauthorized_symbols():
     Iterates through users and their specific strategy folders (new_filename).
     Validates symbols in limit_orders.json against the local strategy config.
     Removes unauthorized orders from BOTH 'limit_orders.json' and 'limit_orders_backup.json'.
+    If allowedsymbolsandvolumes.json is missing in strategy folder, copies from user root.
     """
     print(f"\n{'='*10} PURGING UNAUTHORIZED SYMBOLS BY STRATEGY {'='*10}")
     
@@ -143,6 +209,7 @@ def purge_unauthorized_symbols():
 
             # 2. Identify Strategy Folders (new_filename) from accountmanagement.json
             strategy_folders = []
+            strategy_names = []  # Track names for logging
             try:
                 with open(acc_mgmt_path, 'r') as f:
                     acc_data = json.load(f)
@@ -154,36 +221,74 @@ def purge_unauthorized_symbols():
                         for ent_val in app_val.values():
                             if isinstance(ent_val, dict) and ent_val.get("new_filename"):
                                 strategy_dir = os.path.join(user_folder, ent_val["new_filename"])
+                                strategy_name = ent_val["new_filename"]
                                 if strategy_dir not in strategy_folders:
                                     strategy_folders.append(strategy_dir)
+                                    strategy_names.append(strategy_name)
+                                    print(f"  └─ 📁 Found strategy folder: {strategy_name}")
             except Exception as e:
                 print(f"  └─ ❌ Error parsing strategy folders: {e}")
                 continue
 
+            if not strategy_folders:
+                print(f"  └─ ℹ️  No strategy folders found for user {dev_broker_id}")
+                continue
+
             # 3. Process each Strategy Folder independently
-            for strategy_folder in strategy_folders:
+            for idx, strategy_folder in enumerate(strategy_folders):
                 folder_name = os.path.basename(strategy_folder)
-                volumes_path = os.path.join(strategy_folder, "allowedsymbolsandvolumes.json")
+                print(f"\n    📂 Processing strategy: {strategy_names[idx] if idx < len(strategy_names) else folder_name}")
                 
-                if not os.path.exists(volumes_path):
-                    continue
+                # Define source and destination paths for allowedsymbolsandvolumes.json
+                user_root_symbols_path = os.path.join(user_folder, "allowedsymbolsandvolumes.json")
+                strategy_symbols_path = os.path.join(strategy_folder, "allowedsymbolsandvolumes.json")
+                
+                # Check if strategy folder has allowedsymbolsandvolumes.json
+                if not os.path.exists(strategy_symbols_path):
+                    print(f"      └─ ⚠️  allowedsymbolsandvolumes.json missing in strategy folder")
+                    
+                    # Check if source file exists in user root
+                    if os.path.exists(user_root_symbols_path):
+                        try:
+                            # Create strategy folder if it doesn't exist (though it should)
+                            os.makedirs(strategy_folder, exist_ok=True)
+                            
+                            # Copy the file
+                            import shutil
+                            shutil.copy2(user_root_symbols_path, strategy_symbols_path)
+                            print(f"      └─ ✅ Copied allowedsymbolsandvolumes.json from user root to strategy folder")
+                        except Exception as e:
+                            print(f"      └─ ❌ Failed to copy symbols file: {e}")
+                            continue
+                    else:
+                        print(f"      └─ ❌ No source allowedsymbolsandvolumes.json found in user root - skipping strategy")
+                        continue
 
                 # Load allowed symbols for THIS specific strategy
                 allowed_symbols = set()
+                allowed_base_symbols = set()  # Store base versions without suffixes
                 try:
-                    with open(volumes_path, 'r') as f:
+                    with open(strategy_symbols_path, 'r') as f:
                         v_data = json.load(f)
                         for category in v_data.values():
                             if isinstance(category, list):
                                 for item in category:
                                     if 'symbol' in item:
-                                        allowed_symbols.add(item['symbol'].upper())
-                except:
+                                        symbol = item['symbol'].upper()
+                                        allowed_symbols.add(symbol)
+                                        # Also store base version without suffixes
+                                        import re
+                                        base_symbol = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', symbol)
+                                        allowed_base_symbols.add(base_symbol)
+                    print(f"      └─ ✅ Loaded {len(allowed_symbols)} allowed symbols from {os.path.basename(strategy_symbols_path)}")
+                except Exception as e:
+                    print(f"      └─ ❌ Failed to load symbols: {e}")
                     continue
 
                 # 4. Audit limit_orders and limit_orders_backup in this folder
                 target_patterns = ["limit_orders.json", "limit_orders_backup.json"]
                 strategy_purged_count = 0
+                files_processed = 0
 
                 for pattern in target_patterns:
                     # Look only within this specific strategy directory
@@ -204,32 +309,62 @@ def purge_unauthorized_symbols():
                                 continue
 
                             original_count = len(orders)
+                            filename = os.path.basename(file_path)
+                            files_processed += 1
                             
                             # Filter logic: Keep only symbols authorized in THIS strategy's config
-                            purged_orders = [
-                                order for order in orders 
-                                if order.get('symbol', '').upper() in allowed_symbols
-                            ]
+                            # Check both exact match and base symbol match (without suffixes)
+                            purged_orders = []
+                            for order in orders:
+                                order_symbol = order.get('symbol', '').upper()
+                                
+                                # Check if symbol is directly allowed
+                                if order_symbol in allowed_symbols:
+                                    purged_orders.append(order)
+                                    continue
+                                
+                                # Check if base symbol (without suffixes) is allowed
+                                import re
+                                base_order_symbol = re.sub(r'[+\\]|\.PRO|\.M|M$|PRO$', '', order_symbol)
+                                if base_order_symbol in allowed_base_symbols:
+                                    purged_orders.append(order)
+                                    print(f"        └─ 🔍 Matched {order_symbol} to base symbol {base_order_symbol}")
+                                    continue
+                                
+                                # If we get here, symbol is not authorized
+                                #print(f"        └─ ❌ Unauthorized symbol: {order_symbol}")
 
                             diff = original_count - len(purged_orders)
                             if diff > 0:
                                 with open(file_path, 'w') as f:
                                     json.dump(purged_orders, f, indent=4)
                                 strategy_purged_count += diff
+                                print(f"      └─ 🔄 {filename}: Purged {diff}/{original_count} orders")
+                            else:
+                                if original_count > 0:
+                                    print(f"      └─ ✓ {filename}: All {original_count} orders authorized")
                                 
                         except Exception as e:
-                            print(f"    └─ ❌ Failed to process {folder_name}/{os.path.basename(file_path)}: {e}")
+                            print(f"      └─ ❌ Failed to process {filename}: {e}")
+
+                if files_processed == 0:
+                    print(f"      └─ ℹ️  No order files found to process")
 
                 if strategy_purged_count > 0:
-                    print(f"  └─ [{folder_name}] ✅ Purged {strategy_purged_count} unauthorized entries")
+                    print(f"    ✅ [{folder_name}] Total purged: {strategy_purged_count} unauthorized entries")
                     total_purged_overall += strategy_purged_count
+                else:
+                    if files_processed > 0:
+                        print(f"    ℹ️ [{folder_name}] No unauthorized entries found")
+                    else:
+                        print(f"    ℹ️ [{folder_name}] No order files to check")
 
         print(f"\n{'='*10} PURGE COMPLETE: {total_purged_overall} TOTAL REMOVED {'='*10}\n")
         return True
 
     except Exception as e:
         print(f" [!] Critical Error during symbol purge: {e}")
-        return False
+        return False      
 
 def backup_limit_orders():
     """
@@ -1279,8 +1414,8 @@ def live_risk_reward_amounts_and_volume_scale():
 
         # Broker-level summary
         if total_orders_calculated > 0:
-            bucket_str = ", ".join([f"${b}" for b in sorted(list(buckets_found))])
-            print(f"  └─ ✅ Scaled {total_orders_calculated} orders into: {bucket_str}")
+            bucket_str = ", ".join([f"{b}" for b in sorted(list(buckets_found))])
+            print(f"  └─ ✅ Scaled {total_orders_calculated} orders into: {bucket_str} usd risks")
         else:
             print(f"  └─ 🔘 No pending orders found for scaling")
 
@@ -1522,110 +1657,6 @@ def fix_risk_buckets_according_to_orders_risk():
         broker_stats.append({"id": dev_broker_id, "moved": investor_moved})
     return True
 
-def enrich_orphanage_buckets():
-    """
-    Developer Version: Enrichment & Scaling.
-    Takes the orders repaired in Function 1 and creates copies for all other risk buckets.
-    Announces each broker in real-time and skips the final summary table.
-    """
-    print(f"\n{'='*15} 🚀 BUCKET ENRICHMENT (DEV MODE) {'='*15}")
-    print(f" >>> Scaling Orders across Developer Path: {DEV_PATH}")
-
-    overall_generated = 0
-
-    try:
-        with open(BROKER_DICT_PATH, 'r') as f:
-            broker_configs = json.load(f)
-    except Exception as e:
-        print(f" [!] Critical: Could not load broker configs: {e}")
-        return False
-
-    for dev_broker_id in broker_configs.keys():
-        # Immediate notification of current work
-        print(f" ⚙️  Enriching Developer Broker: {dev_broker_id}...")
-        
-        user_folder = os.path.join(DEV_PATH, dev_broker_id)
-        
-        # Load available risks for this specific developer setup
-        account_mgmt_path = os.path.join(user_folder, "accountmanagement.json")
-        try:
-            with open(account_mgmt_path, 'r') as f:
-                account_data = json.load(f)
-                available_risks = sorted([float(r) for r in account_data.get("RISKS", [])])
-        except:
-            print(f"    [!] Skipping {dev_broker_id}: No accountmanagement.json found.")
-            continue
-
-        broker_copies_count = 0
-        search_pattern = os.path.join(user_folder, "**", "*usd_risk", "*.json")
-        found_files = glob.glob(search_pattern, recursive=True)
-
-        for source_file_path in found_files:
-            try:
-                filename = os.path.basename(source_file_path)
-                current_bucket_base = float(filename.replace('usd_risk.json', ''))
-
-                with open(source_file_path, 'r', encoding='utf-8') as f:
-                    entries = json.load(f)
-
-                for entry in entries:
-                    if entry.get("is_volume_copy"): continue
-
-                    current_risk = float(entry.get("live_sl_risk_amount", 0))
-                    current_vol = float(entry.get("volume", 0))
-                    
-                    if current_risk <= 0 or current_vol <= 0: continue
-
-                    # Scaling Ratio (Linear)
-                    vol_per_dollar = current_vol / current_risk
-                    parent_rr_dir = os.path.dirname(os.path.dirname(source_file_path))
-                    
-                    for target_risk in available_risks:
-                        if math.isclose(target_risk, current_bucket_base): continue
-
-                        new_vol = round(vol_per_dollar * target_risk, 2)
-                        new_bucket_name = "0.5usd_risk" if target_risk == 0.5 else f"{int(target_risk)}usd_risk"
-                        
-                        order_copy = entry.copy()
-                        order_copy.update({
-                            "volume": new_vol,
-                            "live_sl_risk_amount": target_risk,
-                            "is_volume_copy": True,
-                            "parent_source_bucket": f"{current_bucket_base}usd",
-                            "enriched_at": datetime.now().strftime("%H:%M:%S")
-                        })
-
-                        target_dir = os.path.join(parent_rr_dir, new_bucket_name)
-                        os.makedirs(target_dir, exist_ok=True)
-                        target_file = os.path.join(target_dir, f"{new_bucket_name}.json")
-
-                        dest_data = []
-                        if os.path.exists(target_file):
-                            with open(target_file, 'r', encoding='utf-8') as nf:
-                                try: dest_data = json.load(nf)
-                                except: dest_data = []
-
-                        if not any(d.get('symbol') == order_copy['symbol'] and 
-                                   d.get('volume') == order_copy['volume'] for d in dest_data):
-                            dest_data.append(order_copy)
-                            with open(target_file, 'w', encoding='utf-8') as nf:
-                                json.dump(dest_data, nf, indent=4)
-                            
-                            broker_copies_count += 1
-                            overall_generated += 1
-
-            except Exception:
-                continue
-
-        # Status update for the broker just finished
-        status_icon = "🧬" if broker_copies_count > 0 else "✨"
-        print(f"  └─ {status_icon} Finished {dev_broker_id}: {broker_copies_count} variations generated.")
-
-    print(f"\n ✅ DEV ENRICHMENT COMPLETE: {overall_generated} New Orders Created")
-    print(f"{'='*45}\n")
-
-    return True
-
 def deduplicate_risk_bucket_orders():
     """
     Cleans up risk buckets by keeping only the most efficient order 
@@ -1839,8 +1870,9 @@ def calculate_orders():
     validate_orders_with_live_volume()
     calculate_symbols_orders()
     live_risk_reward_amounts_and_volume_scale()
+    ajdust_order_price_closer_in_95cent_to_next_bucket()
     fix_risk_buckets_according_to_orders_risk()
-    enrich_orphanage_buckets()
+    deduplicate_risk_bucket_orders()
     deduplicate_risk_bucket_orders()
     sync_dev_investors()
     print(f"✅ Symbols order price levels calculation completed.")
