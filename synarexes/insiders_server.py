@@ -8,7 +8,7 @@ from colorama import Fore, Style, init
 # Initialize colorama for cross-platform terminal colors
 init()
 
-OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdictionary.json"
+OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
 MT5_TEMPLATE_SOURCE_DIR = r"C:\xampp\htdocs\chronedge\mt5\MetaTrader 5"
 BROKERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\developersdictionary.json"
 
@@ -84,16 +84,16 @@ def update_history_string(current_history, new_value):
 
 def cleanup_stale_records_in_updatedusers():
     """
-    Removes any record from updatedusersdictionary.json
-    that no longer exists in the main usersdictionary.json (fresh DB export).
+    Removes any record from updatedusers.json
+    that no longer exists in the main users.json (fresh DB export).
     
-    This ensures updatedusersdictionary.json only contains accounts
+    This ensures updatedusers.json only contains accounts
     that are known to the system (past or present).
     """
-    USERSDICTIONARY_JSON = r"C:\xampp\htdocs\chronedge\synarex\usersdictionary.json"
-    UPDATEDUSERS_JSON    = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
+    USERSDICTIONARY_JSON = r"C:\xampp\htdocs\chronedge\synarex\users.json"
+    UPDATEDUSERS_JSON    = r"C:\xampp\htdocs\chronedge\synarex\updatedusers.json"
 
-    # --- Load fresh usersdictionary.json (source of truth) ---
+    # --- Load fresh users.json (source of truth) ---
     if not os.path.exists(USERSDICTIONARY_JSON):
         print(f"ERROR: {USERSDICTIONARY_JSON} not found! Cannot perform cleanup.", "CRITICAL")
         return
@@ -102,24 +102,24 @@ def cleanup_stale_records_in_updatedusers():
         with open(USERSDICTIONARY_JSON, "r", encoding="utf-8") as f:
             users_dict = json.load(f)
         valid_keys = set(users_dict.keys())
-        print(f"Loaded {len(valid_keys)} valid records from usersdictionary.json", "INFO")
+        print(f"Loaded {len(valid_keys)} valid records from users.json", "INFO")
     except Exception as e:
-        print(f"Failed to load usersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load users.json: {e}", "CRITICAL")
         return
 
-    # --- Load updatedusersdictionary.json (the one we clean) ---
+    # --- Load updatedusers.json (the one we clean) ---
     if not os.path.exists(UPDATEDUSERS_JSON):
-        print(f"No updatedusersdictionary.json found. Nothing to clean.", "INFO")
+        print(f"No updatedusers.json found. Nothing to clean.", "INFO")
         return
 
     try:
         with open(UPDATEDUSERS_JSON, "r", encoding="utf-8") as f:
             updated_users = json.load(f)
         if not isinstance(updated_users, dict):
-            print("Invalid data in updatedusersdictionary.json", "ERROR")
+            print("Invalid data in updatedusers.json", "ERROR")
             return
     except Exception as e:
-        print(f"Failed to load updatedusersdictionary.json: {e}", "CRITICAL")
+        print(f"Failed to load updatedusers.json: {e}", "CRITICAL")
         return
 
     initial_count = len(updated_users)
@@ -133,7 +133,7 @@ def cleanup_stale_records_in_updatedusers():
     for key in keys_to_remove:
         stale_record = updated_users.pop(key, None)
         display_name = stale_record.get("BROKER", key) if isinstance(stale_record, dict) else key
-        print(f"DELETED STALE: {key} ({display_name}) → Not in current usersdictionary.json", "WARNING")
+        print(f"DELETED STALE: {key} ({display_name}) → Not in current users.json", "WARNING")
         removed += 1
 
     # --- Save cleaned file ---
@@ -141,18 +141,18 @@ def cleanup_stale_records_in_updatedusers():
         with open(UPDATEDUSERS_JSON, "w", encoding="utf-8") as f:
             json.dump(updated_users, f, indent=4, ensure_ascii=False)
             f.write("\n")
-        print(f"CLEANUP DONE: Removed {removed}/{initial_count} stale records from updatedusersdictionary.json", "SUCCESS")
+        print(f"CLEANUP DONE: Removed {removed}/{initial_count} stale records from updatedusers.json", "SUCCESS")
     except Exception as e:
         print(f"Failed to save cleaned file: {e}", "CRITICAL")
 
 def update_table_fromupdatedusers():
     cleanup_stale_records_in_updatedusers()
     """
-    Reads updatedusersdictionary.json and pushes ALL relevant fields BACK to insiders_server table.
+    Reads updatedusers.json and pushes ALL relevant fields BACK to insiders_server table.
     Now 100% reliable key matching + proper escaping + full field sync.
     FIX: Ensures CONTRACT_DAYS_LEFT is updated in its own column and not concatenated to 'loyalties'.
     """
-    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
+    USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\updatedusers.json"
     insiders_server_TABLE = "insiders_server"
 
     if not os.path.exists(USERS_JSON_PATH):
@@ -163,13 +163,13 @@ def update_table_fromupdatedusers():
         with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
             users_dict = json.load(f)
         if not isinstance(users_dict, dict) or not users_dict:
-            log_and_print("updatedusersdictionary.json is empty or invalid.", "ERROR")
+            log_and_print("updatedusers.json is empty or invalid.", "ERROR")
             return
     except Exception as e:
         log_and_print(f"Failed to read JSON: {e}", "CRITICAL")
         return
 
-    log_and_print("=== Syncing updatedusersdictionary.json → Database ===", "TITLE")
+    log_and_print("=== Syncing updatedusers.json → Database ===", "TITLE")
 
     # Fetch all valid broker + id rows
     query = f"""
@@ -351,7 +351,7 @@ def fetch_insiders_server_rows():
             json_key = f"{broker_key}{user_id}"
             
             # Paths
-            base_folder = rf"C:\xampp\htdocs\chronedge\synarex\chart\{broker_clean} {user_id}"
+            base_folder = rf"C:\xampp\htdocs\chronedge\synarex\usersdata\{broker_clean} {user_id}"
             terminal_folder = rf"C:\xampp\htdocs\chronedge\synarex\mt5\MetaTrader 5 {broker_clean} {user_id}"
             terminal_path = os.path.join(terminal_folder, "terminal64.exe")
             os.makedirs(base_folder, exist_ok=True)
@@ -495,20 +495,20 @@ def move_verifiedusers_to_developersdictionary():
     def validdetails_verified():
         """
         Synchronizes 'ACCOUNT_VERIFICATION' and 'DB_APPLICATION_STATUS' fields
-        from usersdictionary.json into both developersdictionary.json and updatedusersdictionary.json.
+        from users.json into both developersdictionary.json and updatedusers.json.
         
         The 'ACCOUNT_VERIFICATION' value in the source dictionary now determines 
-        the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including usersdictionary.json itself.
+        the 'DB_APPLICATION_STATUS' value in ALL dictionaries, including users.json itself.
         - 'invalid' -> 'declined'
         - 'verified' -> 'approved'
         - 'waiting' -> 'pending'
         
         This function ONLY updates the status fields, preserving all other data in the target files.
         """
-        UPDATED_USERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\updatedusersdictionary.json"
+        UPDATED_USERS_OUTPUT_FILE_PATH = r"C:\xampp\htdocs\chronedge\synarex\updatedusers.json"
         log_and_print("--- Starting Status Sync: usersdictionary → brokers & updatedusers ---", "TITLE")
 
-        # 1. Load Source Dictionary (usersdictionary.json)
+        # 1. Load Source Dictionary (users.json)
         if not os.path.exists(OUTPUT_FILE_PATH):
             log_and_print(f"Source file not found: {OUTPUT_FILE_PATH}. Cannot sync.", "CRITICAL")
             return
@@ -519,7 +519,7 @@ def move_verifiedusers_to_developersdictionary():
             log_and_print(f"Failed to read source JSON ({OUTPUT_FILE_PATH}): {e}", "ERROR")
             return
 
-        # 2. Load Target Dictionaries (developersdictionary.json & updatedusersdictionary.json)
+        # 2. Load Target Dictionaries (developersdictionary.json & updatedusers.json)
         
         # Load Brokers Dictionary
         brokers_dict = {}
@@ -560,7 +560,7 @@ def move_verifiedusers_to_developersdictionary():
             else:
                 app_status = "pending"
 
-            # **NEW LOGIC: Update Source Dictionary (usersdictionary.json) in memory**
+            # **NEW LOGIC: Update Source Dictionary (users.json) in memory**
             current_app_status = str(data.get("DB_APPLICATION_STATUS")).strip().lower()
             if current_app_status != app_status:
                 source_dict[key]["DB_APPLICATION_STATUS"] = app_status
@@ -585,15 +585,15 @@ def move_verifiedusers_to_developersdictionary():
 
         # 4. Save Target Files (Including the updated Source Dictionary)
         
-        # Save Source Dictionary (usersdictionary.json)
+        # Save Source Dictionary (users.json)
         if source_updated_count > 0:
             try:
                 os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
                 with open(OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
                     json.dump(source_dict, f, indent=4, ensure_ascii=False)
-                log_and_print(f"Saved usersdictionary.json. Updated {source_updated_count} records.", "SUCCESS")
+                log_and_print(f"Saved users.json. Updated {source_updated_count} records.", "SUCCESS")
             except Exception as e:
-                log_and_print(f"FAILED to save usersdictionary.json: {e}", "CRITICAL")
+                log_and_print(f"FAILED to save users.json: {e}", "CRITICAL")
                 
         # Save Brokers Dictionary
         try:
@@ -609,9 +609,9 @@ def move_verifiedusers_to_developersdictionary():
             os.makedirs(os.path.dirname(UPDATED_USERS_OUTPUT_FILE_PATH), exist_ok=True)
             with open(UPDATED_USERS_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
                 json.dump(updated_users_dict, f, indent=4, ensure_ascii=False)
-            log_and_print(f"Saved updatedusersdictionary.json. Updated {updated_users_updated_count} records.", "SUCCESS")
+            log_and_print(f"Saved updatedusers.json. Updated {updated_users_updated_count} records.", "SUCCESS")
         except Exception as e:
-            log_and_print(f"FAILED to save updatedusersdictionary.json: {e}", "CRITICAL")
+            log_and_print(f"FAILED to save updatedusers.json: {e}", "CRITICAL")
         
         log_and_print("--- Status Sync Complete ---", "TITLE")
 
@@ -673,7 +673,7 @@ def move_verifiedusers_to_developersdictionary():
         log_and_print("--- Finished Copy Verified Users to Brokers Dictionary ---", "TITLE")
 
     def update_application_status_in_database():
-        USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdictionary.json"
+        USERS_JSON_PATH = r"C:\xampp\htdocs\chronedge\synarex\users.json"
         insiders_server_TABLE = "insiders_server"
 
         if not os.path.exists(USERS_JSON_PATH):
@@ -684,13 +684,13 @@ def move_verifiedusers_to_developersdictionary():
             with open(USERS_JSON_PATH, "r", encoding="utf-8") as f:
                 users_dict = json.load(f)
             if not isinstance(users_dict, dict) or not users_dict:
-                log_and_print("usersdictionary.json is empty or invalid.", "ERROR")
+                log_and_print("users.json is empty or invalid.", "ERROR")
                 return
         except Exception as e:
-            log_and_print(f"Failed to read usersdictionary.json: {e}", "CRITICAL")
+            log_and_print(f"Failed to read users.json: {e}", "CRITICAL")
             return
 
-        log_and_print("=== Updating Application Status from usersdictionary.json ===", "TITLE")
+        log_and_print("=== Updating Application Status from users.json ===", "TITLE")
 
         # Build broker + id → db_id map (same logic as original function)
         query = f"""

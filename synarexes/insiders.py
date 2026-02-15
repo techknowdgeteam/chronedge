@@ -371,7 +371,7 @@ def fetch_insiders_rows():
             json_key = f"{broker_key}{user_id}"
             
             # Paths
-            base_folder = rf"C:\xampp\htdocs\chronedge\synarex\chart\{broker_clean} {user_id}"
+            base_folder = rf"C:\xampp\htdocs\chronedge\synarex\usersdata\{broker_clean} {user_id}"
             terminal_folder = rf"C:\xampp\htdocs\chronedge\synarex\mt5\MetaTrader 5 {broker_clean} {user_id}"
             terminal_path = os.path.join(terminal_folder, "terminal64.exe")
             os.makedirs(base_folder, exist_ok=True)

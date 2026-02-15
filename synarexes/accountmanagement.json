@@ -13,7 +13,15 @@
         "xxxbasket": ["AUD_BASKET", "EUR_BASKET", "GBP_BASKET", "USD_BASKET", "JPY_BASKET"],
         "indices": ["NAS100", "US30", "SP500", "GER40", "FRA40", "UK100", "AUS200", "EUSTX50", "JPN225"],
         "metals": ["XAUUSD"],
-        "energies": ["USOIL", "UKOIL", "XNGUSD"]
+        "energies": ["USOIL", "UKOIL", "XNGUSD"],
+        "synthetics": [
+            "VOLATILITY 10 INDEX", "VOLATILITY 25 INDEX", "VOLATILITY 50 INDEX", 
+            "VOLATILITY 75 INDEX", "VOLATILITY 100 INDEX", "VOLATILITY 10 (1S) INDEX", 
+            "VOLATILITY 25 (1S) INDEX", "VOLATILITY 50 (1S) INDEX", "VOLATILITY 75 (1S) INDEX", 
+            "VOLATILITY 100 (1S) INDEX", "DEX 600 UP INDEX", "DEX 600 DOWN INDEX", 
+            "DEX 1500 UP INDEX", "DEX 1500 DOWN INDEX", "BOOM 300 INDEX", "BOOM 500 INDEX", 
+            "BOOM 1000 INDEX", "CRASH 300 INDEX", "CRASH 500 INDEX", "CRASH 1000 INDEX"
+        ]
     },
     "settings":{
         "restrict_order_from_timeframe":"",
