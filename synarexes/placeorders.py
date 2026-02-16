@@ -385,23 +385,27 @@ def check_limit_orders_risk():
         acc_info = mt5.account_info()
         balance = acc_info.balance
 
-        # Determine Primary Risk Value
+        # Determine Primary Risk Value - FIXED: Keep as float
         primary_risk = None
+        primary_risk_original = None
         for range_str, r_val in risk_map.items():
             try:
                 raw_range = range_str.split("_")[0]
                 low, high = map(float, raw_range.split("-"))
                 if low <= balance <= high:
-                    primary_risk = int(r_val)
+                    primary_risk_original = float(r_val)  # Store as float
+                    primary_risk = float(r_val)  # Keep as float, don't convert to int
                     break
-            except: continue
+            except Exception as e:
+                print(f"  └─ ⚠️  Error parsing range '{range_str}': {e}")
+                continue
 
         if primary_risk is None:
             print(f"  └─ ⚠️  No risk mapping for balance ${balance:,.2f}")
             mt5.shutdown()
             continue
 
-        print(f"  └─ 💰 Balance: ${balance:,.2f} | Target Risk: ${primary_risk}")
+        print(f"  └─ 💰 Balance: ${balance:,.2f} | Target Risk: ${primary_risk:.2f}")
 
         # Check Live Pending Orders
         pending_orders = mt5.orders_get()
@@ -422,10 +426,18 @@ def check_limit_orders_risk():
                 if sl_profit is not None:
                     order_risk_usd = round(abs(sl_profit), 2)
                     
+                    # Use a percentage-based threshold instead of absolute dollar difference
+                    # For small balances, absolute differences can be misleading
+                    risk_difference = order_risk_usd - primary_risk
+                    
+                    # For very small balances (like $2), a difference of $0.50 is significant
+                    # Use a relative threshold: 20% of primary risk or $0.50, whichever is smaller
+                    relative_threshold = max(0.50, primary_risk * 0.2)
+                    
                     # Only remove if risk is significantly higher than allowed
-                    if order_risk_usd - primary_risk > 1.0: 
+                    if risk_difference > relative_threshold: 
                         print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket}) - Risk too high")
-                        print(f"       Risk: ${order_risk_usd} > Allowed: ${primary_risk}")
+                        print(f"       Risk: ${order_risk_usd:.2f} > Allowed: ${primary_risk:.2f} (Δ: ${risk_difference:.2f})")
                         
                         cancel_request = {
                             "action": mt5.TRADE_ACTION_REMOVE,
@@ -433,22 +445,23 @@ def check_limit_orders_risk():
                         }
                         result = mt5.order_send(cancel_request)
                         
-                        if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
                             orders_removed += 1
                         else:
-                            print(f"       [!] Cancel failed: {result.comment}")
+                            error_msg = result.comment if result else "No response"
+                            print(f"       [!] Cancel failed: {error_msg}")
                     
-                    elif order_risk_usd < primary_risk - 1.0:
+                    elif order_risk_usd < primary_risk - relative_threshold:
                         # Lower risk - keep it (good for the account)
                         orders_kept_lower += 1
                         print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Lower risk than allowed")
-                        print(f"       Risk: ${order_risk_usd} < Allowed: ${primary_risk}")
+                        print(f"       Risk: ${order_risk_usd:.2f} < Allowed: ${primary_risk:.2f} (Δ: ${primary_risk - order_risk_usd:.2f})")
                     
                     else:
                         # Within tolerance - keep it
                         orders_kept_in_range += 1
                         print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Risk within tolerance")
-                        print(f"       Risk: ${order_risk_usd} vs Allowed: ${primary_risk}")
+                        print(f"       Risk: ${order_risk_usd:.2f} vs Allowed: ${primary_risk:.2f} (Δ: ${abs(risk_difference):.2f})")
                 else:
                     print(f"    └─ ⚠️  Could not calc risk for #{order.ticket}")
 
@@ -471,7 +484,7 @@ def check_limit_orders_risk():
 
     print(f"\n{'='*10} 🏁 RISK AUDIT COMPLETE {'='*10}\n")
     return True
-
+   
 def default_price_repair():
     """
     Synchronizes 'exit' and 'target' prices from limit_orders_backup.json 
@@ -678,6 +691,7 @@ def place_usd_orders():
     # --- SUB-FUNCTION 2: RISK & FILE AGGREGATION ---
     def collect_and_deduplicate_entries(inv_root, risk_map, balance, pull_lower, selected_rr, norm_map):
         primary_risk = None
+        primary_risk_original = None  # Store original float value
         print(f"  ⚙️  Determining primary risk for balance: ${balance:,.2f}")
         
         for range_str, r_val in risk_map.items():
@@ -685,8 +699,14 @@ def place_usd_orders():
                 raw_range = range_str.split("_")[0]
                 low, high = map(float, raw_range.split("-"))
                 if low <= balance <= high:
-                    primary_risk = int(r_val)
-                    print(f"  ✅ Balance ${balance:,.2f} in range ${low:,.0f}-${high:,.0f} → Risk Level: {primary_risk}")
+                    primary_risk_original = float(r_val)  # Store as float
+                    # For folder structure, use the original decimal format
+                    # If it's a whole number, use integer format, otherwise keep as decimal string
+                    if primary_risk_original.is_integer():
+                        primary_risk = str(int(primary_risk_original))
+                    else:
+                        primary_risk = str(primary_risk_original)  # Keep as "0.5" not "0_5"
+                    print(f"  ✅ Balance ${balance:,.2f} in range ${low:,.2f}-${high:,.2f} → Risk Level: {primary_risk_original} (Folder: {primary_risk})")
                     break
             except Exception as e:
                 print(f"  ⚠️  Error parsing risk range '{range_str}': {e}")
@@ -696,24 +716,53 @@ def place_usd_orders():
             print(f"  ❌ No matching risk range found for balance: ${balance:,.2f}")
             return None, []
 
-        risk_levels = [primary_risk]
+        # Build list of risk levels to scan
+        risk_levels = []
+        
         if pull_lower:
-            start_lookback = max(1, primary_risk - 9)
-            risk_levels = list(range(start_lookback, primary_risk + 1))
-            print(f"  📊 Pull lower enabled, scanning risk levels: {risk_levels}")
+            # Get all risk values from the risk map that are <= primary_risk_original
+            all_risk_values = []
+            for range_str, r_val in risk_map.items():
+                try:
+                    val = float(r_val)
+                    all_risk_values.append(val)
+                except:
+                    continue
+            
+            # Sort and filter risk values <= primary_risk_original
+            all_risk_values.sort()
+            risk_levels_float = [v for v in all_risk_values if v <= primary_risk_original]
+            
+            # Convert to folder name format (keep decimals, don't replace with underscores)
+            for rv in risk_levels_float:
+                if rv.is_integer():
+                    risk_levels.append(str(int(rv)))
+                else:
+                    risk_levels.append(str(rv))  # Keep as "0.5", not "0_5"
+            
+            print(f"  📊 Pull lower enabled, scanning risk levels: {risk_levels_float} → Folders: {risk_levels}")
         else:
-            print(f"  📊 Scanning only primary risk level: {risk_levels}")
+            # Just use the primary risk level
+            risk_levels = [primary_risk]
+            print(f"  📊 Scanning only primary risk level: {primary_risk_original} → Folder: {primary_risk}")
 
         unique_entries_dict = {}
         target_rr_folder = f"risk_reward_{selected_rr}"
         
-        for r_val in reversed(risk_levels):
+        for r_val in risk_levels:
+            # Use the risk value directly for folder name
             risk_folder_name = f"{r_val}usd_risk"
             risk_filename = f"{r_val}usd_risk.json"
             search_pattern = f"**/{target_rr_folder}/{risk_folder_name}/{risk_filename}"
             
             entries_found = 0
-            for path in inv_root.rglob(search_pattern):
+            files_found = list(inv_root.rglob(search_pattern))
+            
+            if files_found:
+                print(f"    📁 Searching: {search_pattern}")
+                print(f"    📁 Found {len(files_found)} file(s)")
+                
+            for path in files_found:
                 if path.is_file():
                     try:
                         with open(path, 'r') as f:
@@ -722,22 +771,26 @@ def place_usd_orders():
                                 entries_found += len(data)
                                 for entry in data:
                                     symbol = get_normalized_symbol(entry["symbol"], norm_map)
-                                    key = f"{entry.get('timeframe','NA')}|{symbol}|{entry.get('order_type','NA')}|{round(float(entry['entry']), 5)}"
-                                    if key not in unique_entries_dict:
-                                        unique_entries_dict[key] = entry
+                                    if symbol:  # Only add if symbol normalization succeeded
+                                        key = f"{entry.get('timeframe','NA')}|{symbol}|{entry.get('order_type','NA')}|{round(float(entry['entry']), 5)}"
+                                        if key not in unique_entries_dict:
+                                            unique_entries_dict[key] = entry
                     except json.JSONDecodeError as e:
-                        print(f"      ❌ Risk Level {r_val}: Invalid JSON format - {e}")
+                        print(f"      ❌ Risk Level {r_val}: Invalid JSON format in {path.name} - {e}")
                     except Exception as e:
-                        print(f"      ❌ Risk Level {r_val}: Failed to read file - {e}")
+                        print(f"      ❌ Risk Level {r_val}: Failed to read file {path.name} - {e}")
             
             if entries_found > 0:
-                print(f"    📁 Risk Level {r_val}: Found {entries_found} entries, {len([k for k in unique_entries_dict.keys() if k.startswith(f'{r_val}')])} unique after dedup")
+                print(f"    📁 Risk Level {r_val}: Found {entries_found} entries in {len(files_found)} file(s), {len(unique_entries_dict)} unique after dedup")
             else:
-                print(f"    📁 Risk Level {r_val}: No entries found")
+                if files_found:
+                    print(f"    📁 Risk Level {r_val}: No valid entries found in {len(files_found)} file(s)")
+                else:
+                    print(f"    📁 Risk Level {r_val}: No files found matching pattern")
                 
         print(f"  📈 TOTAL: {len(unique_entries_dict)} unique trading opportunities collected")
         return risk_levels, list(unique_entries_dict.values())
-
+    
     # --- SUB-FUNCTION 3: BROKER CLEANUP ---
     def cleanup_unauthorized_orders(all_entries, norm_map):
         print("  🧹 Checking for unauthorized orders...")
@@ -753,6 +806,8 @@ def place_usd_orders():
                 if not vol_key: continue
                 
                 e_symbol = get_normalized_symbol(entry["symbol"], norm_map)
+                if not e_symbol: continue
+                
                 e_price = round(float(entry["entry"]), 5)
                 e_vol = round(float(entry[vol_key]), 2)
                 
@@ -990,7 +1045,7 @@ def place_usd_orders():
             except Exception as e:
                 print(f"      💥 UNEXPECTED ERROR: {entry.get('symbol', 'Unknown')} - {str(e)}")
                 import traceback
-                traceback.print_exc()  # This will show the full stack trace for debugging
+                traceback.print_exc()
                 failed += 1
                 
         # Summary
@@ -1120,8 +1175,9 @@ def place_usd_orders():
     print(f"   Successful: {successful} investors")
     print("="*80)
     
-    return True
-    
+    return True 
+ 
+
 def place_orders():
     sort_orders()
     deduplicate_orders()
@@ -1131,5 +1187,5 @@ def place_orders():
 
 
 if __name__ == "__main__":
-   check_limit_orders_risk()
+   place_orders()
 
