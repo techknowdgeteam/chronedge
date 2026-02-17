@@ -46,6 +46,7 @@ def run_trade():
     place_orders()
     time.sleep(3200)
     run_trade()
+    
 if __name__ == "__main__":
    run_trade()
 
