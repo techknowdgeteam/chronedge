@@ -1403,8 +1403,8 @@ def place_orders_hedging():
 def check_limit_orders_risk():
     """
     Function 3: Validates live pending orders against the account's current risk bucket.
-    Synchronized with the stable initialization logic of place_usd_orders.
-    Only removes orders with risk HIGHER than allowed (lower risk orders are kept).
+    Tolerance: Allows any order risk up to (Target Risk + $0.99).
+    Works for small risks (0.10) and large risks (1.00+) identically.
     """
     print(f"\n{'='*10} 🛡️  LIVE RISK AUDIT: PENDING ORDERS {'='*10}")
 
@@ -1455,16 +1455,14 @@ def check_limit_orders_risk():
         acc_info = mt5.account_info()
         balance = acc_info.balance
 
-        # Determine Primary Risk Value - FIXED: Keep as float
+        # Determine Primary Risk Value
         primary_risk = None
-        primary_risk_original = None
         for range_str, r_val in risk_map.items():
             try:
                 raw_range = range_str.split("_")[0]
                 low, high = map(float, raw_range.split("-"))
                 if low <= balance <= high:
-                    primary_risk_original = float(r_val)  # Store as float
-                    primary_risk = float(r_val)  # Keep as float, don't convert to int
+                    primary_risk = float(r_val)
                     break
             except Exception as e:
                 print(f"  └─ ⚠️  Error parsing range '{range_str}': {e}")
@@ -1475,39 +1473,36 @@ def check_limit_orders_risk():
             mt5.shutdown()
             continue
 
-        print(f"  └─ 💰 Balance: ${balance:,.2f} | Target Risk: ${primary_risk:.2f}")
+        # Calculate the absolute ceiling
+        max_allowed_risk = round(primary_risk + 0.99, 2)
+        print(f"  └─ 💰 Balance: ${balance:,.2f} | Target: ${primary_risk:.2f} | Max Allowed: ${max_allowed_risk:.2f}")
 
         # Check Live Pending Orders
         pending_orders = mt5.orders_get()
         orders_checked = 0
         orders_removed = 0
-        orders_kept_lower = 0
-        orders_kept_in_range = 0
+        orders_kept = 0
 
         if pending_orders:
             for order in pending_orders:
+                # Only check Limit Orders
                 if order.type not in [mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT]:
                     continue
 
                 orders_checked += 1
                 calc_type = mt5.ORDER_TYPE_BUY if order.type == mt5.ORDER_TYPE_BUY_LIMIT else mt5.ORDER_TYPE_SELL
+                
+                # Calculate the potential loss (risk) at Stop Loss
                 sl_profit = mt5.order_calc_profit(calc_type, order.symbol, order.volume_initial, order.price_open, order.sl)
                 
                 if sl_profit is not None:
                     order_risk_usd = round(abs(sl_profit), 2)
                     
-                    # Use a percentage-based threshold instead of absolute dollar difference
-                    # For small balances, absolute differences can be misleading
-                    risk_difference = order_risk_usd - primary_risk
-                    
-                    # For very small balances (like $2), a difference of $0.50 is significant
-                    # Use a relative threshold: 20% of primary risk or $0.50, whichever is smaller
-                    relative_threshold = max(0.50, primary_risk * 0.2)
-                    
-                    # Only remove if risk is significantly higher than allowed
-                    if risk_difference > relative_threshold: 
-                        print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket}) - Risk too high")
-                        print(f"       Risk: ${order_risk_usd:.2f} > Allowed: ${primary_risk:.2f} (Δ: ${risk_difference:.2f})")
+                    # LOGIC: If order risk > Target + 0.99, remove it.
+                    # Use a tiny epsilon (0.0001) to avoid float precision errors
+                    if order_risk_usd > (max_allowed_risk + 0.0001): 
+                        print(f"    └─ 🗑️  PURGING: {order.symbol} (#{order.ticket})")
+                        print(f"       Risk: ${order_risk_usd:.2f} > Max: ${max_allowed_risk:.2f}")
                         
                         cancel_request = {
                             "action": mt5.TRADE_ACTION_REMOVE,
@@ -1521,40 +1516,20 @@ def check_limit_orders_risk():
                             error_msg = result.comment if result else "No response"
                             print(f"       [!] Cancel failed: {error_msg}")
                     
-                    elif order_risk_usd < primary_risk - relative_threshold:
-                        # Lower risk - keep it (good for the account)
-                        orders_kept_lower += 1
-                        print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Lower risk than allowed")
-                        print(f"       Risk: ${order_risk_usd:.2f} < Allowed: ${primary_risk:.2f} (Δ: ${primary_risk - order_risk_usd:.2f})")
-                    
                     else:
-                        # Within tolerance - keep it
-                        orders_kept_in_range += 1
-                        print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Risk within tolerance")
-                        print(f"       Risk: ${order_risk_usd:.2f} vs Allowed: ${primary_risk:.2f} (Δ: ${abs(risk_difference):.2f})")
+                        # Within tolerance (even if target is 0.10 and risk is 1.09)
+                        orders_kept += 1
+                        print(f"    └─ ✅ KEEPING: {order.symbol} (#{order.ticket}) - Risk: ${order_risk_usd:.2f} (Under ${max_allowed_risk:.2f})")
                 else:
                     print(f"    └─ ⚠️  Could not calc risk for #{order.ticket}")
 
-        # Broker final summary
-        if orders_checked > 0:
-            print(f"  └─ 📊 Audit Results:")
-            print(f"       • Orders checked: {orders_checked}")
-            if orders_kept_lower > 0:
-                print(f"       • Kept (lower risk): {orders_kept_lower}")
-            if orders_kept_in_range > 0:
-                print(f"       • Kept (in tolerance): {orders_kept_in_range}")
-            if orders_removed > 0:
-                print(f"       • Removed (too high): {orders_removed}")
-            else:
-                print(f"       ✅ No orders needed removal")
-        else:
-            print(f"  └─ 🔘 No pending limit orders found.")
-
+        # Final terminal summary
+        print(f"  └─ 📊 Audit Results: Checked {orders_checked} | Kept {orders_kept} | Removed {orders_removed}")
         mt5.shutdown()
 
     print(f"\n{'='*10} 🏁 RISK AUDIT COMPLETE {'='*10}\n")
     return True
-   
+
 def cleanup_history_duplicates():
     """
     Scans history for the last 48 hours. If a position was closed, 
@@ -1935,5 +1910,5 @@ def place_orders():
     limit_orders_reward_correction()
 
 if __name__ == "__main__":
-   place_orders()
+   check_limit_orders_risk()
 

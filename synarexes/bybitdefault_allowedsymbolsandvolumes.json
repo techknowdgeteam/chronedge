@@ -837,7 +837,7 @@
   "equities": [],
   "energies": [
     {
-      "symbol": "usousd",
+      "symbol": "us oil",
       "5m_specs": {
         "volume": 0.01,
         "enforce_usd_risk": "no",
