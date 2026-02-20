@@ -1348,74 +1348,136 @@ def live_risk_reward_amounts_and_volume_scale():
                     continue
 
                 try:
-                    with open(limit_path, 'r') as f: orders = json.load(f)
-                except: continue
+                    with open(limit_path, 'r') as f: 
+                        orders = json.load(f)
+                except: 
+                    continue
 
                 risk_buckets = {}
+                
                 for order in orders:
-                    if order.get('status') != "Calculated": continue
+                    if order.get('status') != "Calculated": 
+                        continue
 
                     symbol = get_normalized_symbol(order.get('symbol'), norm_map)
-                    if not symbol or not mt5.symbol_select(symbol, True): continue
+                    if not symbol or not mt5.symbol_select(symbol, True): 
+                        continue
                     
                     info = mt5.symbol_info(symbol)
-                    if info is None: continue
+                    if info is None: 
+                        continue
 
-                    entry, exit_p, target_p = float(order['entry']), float(order['exit']), float(order['target'])
-                    current_volume = info.volume_min
-                    filled_buckets = set()
-
-                    # Volume loop
-                    for _ in range(5000):
-                        action = mt5.ORDER_TYPE_BUY if "BUY" in order['order_type'].upper() else mt5.ORDER_TYPE_SELL
-                        sl_risk = mt5.order_calc_profit(action, symbol, current_volume, entry, exit_p)
+                    entry = float(order['entry'])
+                    exit_p = float(order['exit'])
+                    
+                    # Calculate price risk (distance in price)
+                    price_risk = abs(entry - exit_p)
+                    
+                    # Calculate risk per unit (1 standard lot/contract)
+                    # Formula: (price_risk / tick_size) * tick_value = risk per unit volume
+                    risk_per_unit = (price_risk / info.trade_tick_size) * info.trade_tick_value
+                    
+                    if risk_per_unit <= 0:
+                        continue
+                    
+                    # For each allowed risk bucket, calculate required volume
+                    for target_risk in allowed_risks:
+                        # Skip if we already have this risk bucket assigned for this order
+                        if any(existing_order.get('target_risk') == target_risk for existing_order in risk_buckets.get(target_risk, [])):
+                            continue
                         
-                        if sl_risk is None: # Fallback
-                            sl_risk = -(abs(entry - exit_p) / info.trade_tick_size * info.trade_tick_value * current_volume)
+                        # Calculate volume needed for this risk target
+                        # Volume = Target Risk / Risk per Unit
+                        target_volume = target_risk / risk_per_unit
                         
-                        abs_risk = round(abs(sl_risk), 2)
-                        if abs_risk > max_allowed_risk: break
+                        # Round to nearest valid volume step
+                        volume_step = info.volume_step
+                        min_volume = info.volume_min
+                        max_volume = info.volume_max
                         
-                        assigned_risk = None
-                        if abs_risk < 1.00 and 0.5 in allowed_risks: assigned_risk = 0.5
-                        elif int(math.floor(abs_risk)) in allowed_risks: assigned_risk = int(math.floor(abs_risk))
+                        # Round to valid volume (ensure it's a multiple of volume_step)
+                        if volume_step > 0:
+                            # Calculate number of steps and round
+                            steps = round(target_volume / volume_step)
+                            valid_volume = steps * volume_step
+                        else:
+                            valid_volume = target_volume
                         
-                        if assigned_risk and assigned_risk not in filled_buckets:
-                            risk_buckets.setdefault(assigned_risk, []).append({
+                        # Clamp to min/max volume
+                        valid_volume = max(min_volume, min(valid_volume, max_volume))
+                        
+                        # Calculate actual risk with this rounded volume
+                        actual_risk = risk_per_unit * valid_volume
+                        
+                        # Check if actual risk is within acceptable tolerance (e.g., 20% of target)
+                        # This allows for some deviation due to volume step limitations
+                        risk_tolerance = target_risk * 0.2
+                        risk_diff_percent = abs(actual_risk - target_risk) / target_risk * 100
+                        
+                        # Accept if within tolerance OR if we're at min/max volume limits
+                        volume_at_limit = (valid_volume == min_volume or valid_volume == max_volume)
+                        
+                        if actual_risk <= target_risk + risk_tolerance or volume_at_limit:
+                            # Create the order with calculated volume
+                            scaled_order = {
                                 **order,
                                 'symbol': symbol,
+                                'volume': round(valid_volume, 2),  # Add the calculated volume
                                 f"{broker_server_name}_tick_size": info.trade_tick_size,
                                 f"{broker_server_name}_tick_value": info.trade_tick_value,
-                                'live_sl_risk_amount': abs_risk,
+                                'live_sl_risk_amount': round(actual_risk, 2),
+                                'target_risk': target_risk,
+                                'risk_tolerance_used': round(risk_diff_percent, 2) if risk_diff_percent > 0 else 0,
                                 'calculated_at': datetime.now().strftime("%H:%M:%S")
-                            })
-                            filled_buckets.add(assigned_risk)
-                            buckets_found.add(assigned_risk)
+                            }
+                            
+                            # Initialize list for this risk bucket if needed
+                            if target_risk not in risk_buckets:
+                                risk_buckets[target_risk] = []
+                            
+                            risk_buckets[target_risk].append(scaled_order)
+                            buckets_found.add(target_risk)
                             total_orders_calculated += 1
-                        
-                        current_volume += info.volume_step
+                            
+                            # Print debug info for significant deviations
+                            if risk_diff_percent > 10:
+                                print(f"    └─ ⚠️  {symbol}: Target ${target_risk} risk, "
+                                      f"actual ${round(actual_risk,2)} ({round(risk_diff_percent,1)}% diff) "
+                                      f"with volume {round(valid_volume,2)}")
 
                 # Save Results
                 if risk_buckets:
                     base_dir = os.path.dirname(limit_path)
+                    
+                    # First, clear existing risk bucket files to avoid duplicates
+                    for r_val in allowed_risks:
+                        out_dir = os.path.join(base_dir, f"{r_val}usd_risk")
+                        out_file = os.path.join(out_dir, f"{r_val}usd_risk.json")
+                        if os.path.exists(out_file):
+                            try:
+                                os.remove(out_file)
+                                # Also remove empty directory if needed
+                                if os.path.exists(out_dir) and not os.listdir(out_dir):
+                                    os.rmdir(out_dir)
+                            except:
+                                pass
+                    
+                    # Save new scaled orders
                     for r_val, grouped in risk_buckets.items():
                         out_dir = os.path.join(base_dir, f"{r_val}usd_risk")
                         os.makedirs(out_dir, exist_ok=True)
                         out_file = os.path.join(out_dir, f"{r_val}usd_risk.json")
                         
-                        existing = []
-                        if os.path.exists(out_file):
-                            try:
-                                with open(out_file, 'r') as f: existing = json.load(f)
-                            except: pass
-                            
+                        # Save with pretty formatting
                         with open(out_file, 'w') as f:
-                            json.dump(existing + grouped, f, indent=4)
+                            json.dump(grouped, f, indent=4)
+                        
+                        print(f"    └─ 📁 Saved {len(grouped)} orders to {r_val}usd_risk/")
 
         # Broker-level summary
         if total_orders_calculated > 0:
-            bucket_str = ", ".join([f"{b}" for b in sorted(list(buckets_found))])
-            print(f"  └─ ✅ Scaled {total_orders_calculated} orders into: {bucket_str} usd risks")
+            bucket_str = ", ".join([f"${b}" for b in sorted(list(buckets_found))])
+            print(f"  └─ ✅ Scaled {total_orders_calculated} orders into risk buckets: {bucket_str}")
         else:
             print(f"  └─ 🔘 No pending orders found for scaling")
 

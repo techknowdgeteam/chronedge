@@ -2413,17 +2413,24 @@ def entry_point_of_interest(broker_name):
         print(f"[{ts}] {msg}")
 
     def get_max_candle_count(dev_base_path, timeframe):
-        """Helper to find candle count based on maximum_holding_days config."""
+        """Helper to find candle count. Returns 0 if config is null or missing."""
         config_path = os.path.join(dev_base_path, "accountmanagement.json")
-        max_days = 2  # Default fallback
+        max_days = 0  # Default to 0 so missing file/error clears records
         
         try:
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    max_days = config.get("chart", {}).get("maximum_holding_days", 2)
+                    # .get("chart", {}) returns empty dict if "chart" is missing
+                    # .get("maximum_holding_days") returns None if key is missing or null
+                    val = config.get("chart", {}).get("maximum_holding_days")
+                    
+                    if val is not None:
+                        max_days = val
+                    else:
+                        max_days = 0 # Handle explicit null or missing key
         except Exception:
-            pass
+            max_days = 0 # Fallback on error to ensure clearing logic triggers
 
         # Conversion map
         tf_map = {
@@ -2446,7 +2453,7 @@ def entry_point_of_interest(broker_name):
             with open(paused_file, 'r', encoding='utf-8') as f:
                 paused_records = json.load(f)
         except Exception as e:
-            log(f"Error reading paused symbols: {e}")
+            print(f"Error reading paused symbols: {e}")
             return
 
         updated_paused_records = []
@@ -2459,10 +2466,19 @@ def entry_point_of_interest(broker_name):
                 markers_map.setdefault((sym, tf), []).append(record)
 
         for (sym, tf), records in markers_map.items():
-            # Fetch the dynamic threshold for this timeframe
+            # Get threshold first
             max_allowed_count = get_max_candle_count(dev_base_path, tf)
             
+            # FIX: If the threshold is 0 (set by null config), we remove all records for this sym/tf
+            # regardless of whether the candle file exists or not.
+            if max_allowed_count <= 0:
+                records_removed = True
+                # We simply don't add them to updated_paused_records
+                continue
+
             full_candle_path = os.path.join(dev_base_path, new_folder_name, sym, f"{tf}_full_candles_data.json")
+            
+            # If threshold > 0 but no file exists, we keep them (legacy behavior)
             if not os.path.exists(full_candle_path):
                 updated_paused_records.extend(records)
                 continue
@@ -2477,7 +2493,6 @@ def entry_point_of_interest(broker_name):
 
                 candles = data[1:] if (len(data) > 0 and "summary" in data[0]) else data
                 total_candles = len(candles)
-                
                 summary = {}
                 current_tf_records_to_keep = []
 
@@ -2492,13 +2507,11 @@ def entry_point_of_interest(broker_name):
                     clean_after = after_time.replace(':', '-').replace(' ', '_') if after_time else "N/A"
                     
                     should_remove_this_record = False
-                    # Tracking variables for the summary
                     final_count_ahead = 0
                     final_remaining = 0
 
                     for idx, candle in enumerate(candles):
                         c_time = candle.get("time")
-
                         if c_time == from_time:
                             candle[f"from_{clean_from}"] = True
                             candle["entry"] = entry_val
@@ -2507,7 +2520,6 @@ def entry_point_of_interest(broker_name):
                         if after_time and c_time == after_time:
                             count_ahead = total_candles - (idx + 1)
                             remaining = max_allowed_count - count_ahead
-                            
                             final_count_ahead = count_ahead
                             final_remaining = remaining
 
@@ -2531,7 +2543,7 @@ def entry_point_of_interest(broker_name):
                             "remaining_candles_to_threshold": final_remaining
                         }
 
-                # Save the updated candles and summary
+                # Update candle markers
                 final_output = [{"summary": summary}] + candles
                 with open(full_candle_path, 'w', encoding='utf-8') as f:
                     json.dump(final_output, f, indent=4)
@@ -2539,13 +2551,14 @@ def entry_point_of_interest(broker_name):
                 updated_paused_records.extend(current_tf_records_to_keep)
 
             except Exception as e:
-                log(f"Error processing {sym} {tf}: {e}")
+                print(f"Error processing {sym} {tf}: {e}")
                 updated_paused_records.extend(records)
 
+        # FINAL SAVE: If records_removed is True, this will save the shortened/empty list
         if records_removed:
             with open(paused_file, 'w', encoding='utf-8') as f:
                 json.dump(updated_paused_records, f, indent=4)
-    
+
     def cleanup_non_paused_symbols(dev_base_path, new_folder_name):
         """
         Deletes all symbol folders in the new_folder_name directory that are 

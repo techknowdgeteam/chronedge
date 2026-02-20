@@ -521,6 +521,96 @@ def filter_unauthorized_symbols():
     print(f"\n{'='*10} 🏁 FILTERING COMPLETE {'='*10}\n")
     return True
 
+def filter_unauthorized_timeframes():
+    """
+    Verifies and filters risk entries based on restricted timeframes defined in accountmanagement.json.
+    Matches the 'timeframe' key in risk files against the 'restrict_order_from_timeframe' setting.
+    """
+    print(f"\n{'='*10} 🛡️  TIMEFRAME AUTHORIZATION FILTER {'='*10}")
+
+    def sanitize_tf(tf):
+        if not tf: return ""
+        # Ensure uniform comparison (lowercase, stripped)
+        return str(tf).strip().lower()
+
+    if not os.path.exists(INV_PATH):
+        print(f" [!] Error: Investor path {INV_PATH} not found.")
+        return False
+
+    investor_ids = [f for f in os.listdir(INV_PATH) if os.path.isdir(os.path.join(INV_PATH, f))]
+
+    for inv_id in investor_ids:
+        print(f" [{inv_id}] 🔍 Checking timeframe restrictions...")
+        inv_folder = Path(INV_PATH) / inv_id
+        acc_mgmt_path = inv_folder / "accountmanagement.json"
+        
+        if not acc_mgmt_path.exists():
+            print(f"  └─ ⚠️  Account config missing. Skipping.")
+            continue
+
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Extract restriction setting
+            # Supports: "5m" OR ["1m", "5m"]
+            raw_restrictions = config.get("settings", {}).get("restrict_order_from_timeframe", [])
+            
+            if isinstance(raw_restrictions, str):
+                # Handle comma separated strings or single strings
+                restricted_list = [s.strip() for s in raw_restrictions.split(',')]
+            elif isinstance(raw_restrictions, list):
+                restricted_list = raw_restrictions
+            else:
+                restricted_list = []
+
+            restricted_set = {sanitize_tf(t) for t in restricted_list if t}
+
+            if not restricted_set:
+                print(f"  └─ ✅ No timeframe restrictions active.")
+                continue
+
+            risk_files = list(inv_folder.rglob("*usd_risk.json"))
+            total_removed = 0
+            files_affected = 0
+
+            for target_file in risk_files:
+                try:
+                    with open(target_file, 'r', encoding='utf-8') as f:
+                        entries = json.load(f)
+                    
+                    if not isinstance(entries, list): continue
+
+                    initial_count = len(entries)
+                    
+                    # Filter: Keep only if the entry's timeframe is NOT in the restricted set
+                    filtered = [
+                        e for e in entries 
+                        if sanitize_tf(e.get("timeframe")) not in restricted_set
+                    ]
+                    
+                    if len(filtered) != initial_count:
+                        removed_here = initial_count - len(filtered)
+                        total_removed += removed_here
+                        files_affected += 1
+                        with open(target_file, 'w', encoding='utf-8') as f:
+                            json.dump(filtered, f, indent=4)
+                except Exception:
+                    continue
+
+            # Summary per investor
+            if total_removed > 0:
+                print(f"  └─ 🗑️  Purged {total_removed} restricted TF orders across {files_affected} buckets.")
+                print(f"     (Blocked: {', '.join(restricted_set)})")
+            else:
+                print(f"  └─ ✅ All timeframes authorized.")
+
+        except Exception as e:
+            print(f"  └─ ❌ Error processing {inv_id}: {e}")
+
+    print(f"\n{'='*10} 🏁 TF FILTERING COMPLETE {'='*10}\n")
+    return True
+
 def place_usd_orders():
     # --- SUB-FUNCTION 1: DATA INITIALIZATION ---
     def load_normalization_map():
@@ -1507,7 +1597,7 @@ def cleanup_history_duplicates():
             if deal.entry in [mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT]:
                 # Extract first 3 significant digits of the price
                 # We remove the decimal to handle 0.856 and 1901 uniformly
-                clean_price = str(deal.price).replace('.', '')[:3]
+                clean_price = str(deal.price).replace('.', '')[:4]
                 used_entries.add((deal.symbol, clean_price))
 
         if not used_entries:
@@ -1840,7 +1930,6 @@ def place_orders():
     default_price_repair()
     filter_unauthorized_symbols()
     place_usd_orders()
-    place_orders_hedging()
     check_limit_orders_risk()
     cleanup_history_duplicates()
     limit_orders_reward_correction()
