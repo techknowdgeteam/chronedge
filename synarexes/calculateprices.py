@@ -12,12 +12,12 @@ import re
 
 # --- GLOBALS ---
 BROKER_DICT_PATH = r"C:\xampp\htdocs\chronedge\synarex\brokers.json"
-DEVELOPER_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.json"
-INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
 SYMBOL_CATEGORY_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 DEV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers"
 INV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors"
 DEFAULT_ACCOUNTMANAGEMENT = r"C:\xampp\htdocs\chronedge\synarex\default_accountmanagement.json"
+INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
+DEVELOPER_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.json"
 NORMALIZE_SYMBOLS_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbols_normalization.json"
 
 
@@ -2128,10 +2128,12 @@ def sync_dev_investors(dev_broker_id):
             return True
 
         total_synced = 0
+        synced_investors = []  # List to track successfully synced investors
 
         # 3. Process each linked investor
         for inv_broker_id, inv_info in linked_investors:
-            print(f" [{dev_broker_id}] 🔄 Processing Investor: {inv_broker_id}...")
+            inv_name = inv_info.get("NAME", inv_broker_id)  # Get investor name, fallback to ID if not found
+            print(f" [{dev_broker_id}] 🔄 Processing Investor: {inv_name} ({inv_broker_id})...")
 
             invested_string = inv_info.get("INVESTED_WITH", "")
             inv_server = inv_info.get("SERVER", "")
@@ -2181,38 +2183,67 @@ def sync_dev_investors(dev_broker_id):
                 if needs_save:
                     with open(inv_acc_path, 'w', encoding='utf-8') as f:
                         f.write(compact_json_format(inv_acc_data))
-                    print(f"  └─ ✅ accountmanagement.json synced")
+                    print(f"  └─ ✅ accountmanagement.json synced for {inv_name}")
             else:
                 print(f"  └─ ⚠️  Dev accountmanagement.json missing")
                 continue
 
-            # 5. Clone Strategy Folder
+            # 5. Clone Strategy Folder - Only copy pending_orders folder and limit orders JSON files
             dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
             inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
 
             if os.path.exists(dev_strat_path):
                 try:
+                    # Create the investor strategy folder if it doesn't exist
+                    os.makedirs(inv_strat_path, exist_ok=True)
+                    
+                    # Remove existing content in investor strategy folder (except we'll recreate selectively)
                     if os.path.exists(inv_strat_path):
-                        shutil.rmtree(inv_strat_path)
+                        for item in os.listdir(inv_strat_path):
+                            item_path = os.path.join(inv_strat_path, item)
+                            if os.path.isdir(item_path):
+                                shutil.rmtree(item_path)
+                            else:
+                                os.remove(item_path)
                     
-                    # Selective copy/clean logic
-                    shutil.copytree(dev_strat_path, inv_strat_path, dirs_exist_ok=True)
-                    for item in os.listdir(inv_strat_path):
-                        item_path = os.path.join(inv_strat_path, item)
-                        if item == "pending_orders": continue
-                        if os.path.isdir(item_path): shutil.rmtree(item_path)
-                        else: os.remove(item_path)
+                    # Copy pending_orders folder if it exists
+                    dev_pending_orders_path = os.path.join(dev_strat_path, "pending_orders")
+                    if os.path.exists(dev_pending_orders_path) and os.path.isdir(dev_pending_orders_path):
+                        inv_pending_orders_path = os.path.join(inv_strat_path, "pending_orders")
+                        shutil.copytree(dev_pending_orders_path, inv_pending_orders_path)
+                        print(f"  └─ 📁 Pending orders folder copied for {inv_name}")
                     
-                    print(f"  └─ 📁 Strategy Cloned: {target_strat_name}")
+                    # Copy limit_orders.json if it exists
+                    dev_limit_orders_path = os.path.join(dev_strat_path, "limit_orders.json")
+                    if os.path.exists(dev_limit_orders_path) and os.path.isfile(dev_limit_orders_path):
+                        inv_limit_orders_path = os.path.join(inv_strat_path, "limit_orders.json")
+                        shutil.copy2(dev_limit_orders_path, inv_limit_orders_path)
+                        print(f"  └─ 📄 limit_orders.json copied for {inv_name}")
+                    
+                    # Copy limit_orders_backup.json if it exists
+                    dev_limit_orders_backup_path = os.path.join(dev_strat_path, "limit_orders_backup.json")
+                    if os.path.exists(dev_limit_orders_backup_path) and os.path.isfile(dev_limit_orders_backup_path):
+                        inv_limit_orders_backup_path = os.path.join(inv_strat_path, "limit_orders_backup.json")
+                        shutil.copy2(dev_limit_orders_backup_path, inv_limit_orders_backup_path)
+                        print(f"  └─ 📄 limit_orders_backup.json copied for {inv_name}")
+                    
+                    # Note: All risk reward x folders and other files are automatically excluded
+                    # because we only copy specific items
+                    
+                    print(f"  └─ 📁 Strategy Synced for {inv_name}: {target_strat_name}")
                     total_synced += 1
+                    synced_investors.append(inv_name)  # Add to synced investors list
+                    
                 except Exception as e:
-                    print(f"  └─ ❌ Folder Sync Error: {e}")
+                    print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
             else:
-                print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing")
+                print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing for {inv_name}")
 
         # Summary for this developer
         if total_synced > 0:
-            print(f"  └─ ✅ Synced {total_synced} investor accounts")
+            print(f"  └─ ✅ Synced {total_synced} investor account(s):")
+            for investor_name in synced_investors:
+                print(f"      • {investor_name}")
         else:
             print(f"  └─ 🔘 No investors synced")
 
@@ -2222,7 +2253,7 @@ def sync_dev_investors(dev_broker_id):
     except Exception as e:
         print(f" [!] Enrichment Error for {dev_broker_id}: {e}")
         return False
-    
+
 def run_accounts():
     """
     Orchestrator: Handles broker connections and triggers 
@@ -2230,7 +2261,6 @@ def run_accounts():
     """
     #cleanups
     purge_unauthorized_symbols()
-    clean_risk_folders()
     backup_limit_orders()
     #--------
     if not os.path.exists(BROKER_DICT_PATH):

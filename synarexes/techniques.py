@@ -20,6 +20,10 @@ from collections import defaultdict
 
 DEV_PATH = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers'
 DEV_USERS = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.json'
+DEFAULT_ACCOUNTMANAGEMENT = r"C:\xampp\htdocs\chronedge\synarex\default_accountmanagement.json"
+INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
+INV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors"
+
 
 def load_developers_dictionary():
     # Corrected os.path.exists logic
@@ -4225,6 +4229,147 @@ def clear_unathorized_entries_folders(broker_name):
         return False
     return 
 
+def sync_dev_investors(dev_broker_id):
+    """
+    Worker: Synchronizes investor accounts with developer strategy data for a single developer.
+    Logs each investor process clearly with a status summary.
+    """
+    def compact_json_format(data):
+        """Custom formatter to keep lists on one line while indenting dictionaries."""
+        res = json.dumps(data, indent=4)
+        res = re.sub(r'\[\s+([^\[\]]+?)\s+\]', 
+                    lambda m: "[" + ", ".join([line.strip() for line in m.group(1).splitlines()]).replace('"', '"') + "]", 
+                    res)
+        res = res.replace(",,", ",")
+        return res
+
+    try:
+        # 1. Load Data
+        if not all(os.path.exists(f) for f in [INVESTOR_USERS, DEV_USERS, DEFAULT_ACCOUNTMANAGEMENT]):
+            return f" [{dev_broker_id}] ❌ Error: Configuration files missing."
+
+        with open(DEFAULT_ACCOUNTMANAGEMENT, 'r', encoding='utf-8') as f:
+            default_acc_data = json.load(f)
+            default_risk_mgmt = default_acc_data.get("account_balance_default_risk_management", {})
+
+        with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
+            investors_data = json.load(f)
+        
+        with open(DEV_USERS, 'r', encoding='utf-8') as f:
+            developers_data = json.load(f)
+
+        print(f"\n{'='*10} SYNCING INVESTOR ACCOUNTS FOR DEVELOPER: {dev_broker_id} {'='*10}")
+
+        # 2. Find investors linked to this developer
+        linked_investors = []
+        for inv_broker_id, inv_info in investors_data.items():
+            invested_string = inv_info.get("INVESTED_WITH", "")
+            if "_" in invested_string:
+                parts = invested_string.split("_", 1)
+                if parts[0] == dev_broker_id:
+                    linked_investors.append((inv_broker_id, inv_info))
+
+        if not linked_investors:
+            return f" [{dev_broker_id}] 🔘 No linked investors found."
+
+        total_synced = 0
+        synced_investors = [] 
+
+        # 3. Process each linked investor
+        for inv_broker_id, inv_info in linked_investors:
+            inv_name = inv_info.get("NAME", inv_broker_id)
+            print(f" [{dev_broker_id}] 🔄 Processing Investor: {inv_name} ({inv_broker_id})...")
+
+            invested_string = inv_info.get("INVESTED_WITH", "")
+            inv_server = inv_info.get("SERVER", "")
+            
+            parts = invested_string.split("_", 1)
+            target_strat_name = parts[1]
+
+            # Broker Matching Logic
+            dev_broker_name = developers_data[dev_broker_id].get("BROKER", "").lower()
+            if dev_broker_name not in inv_server.lower():
+                print(f"  └─ ❌ Broker Mismatch: Dev requires {dev_broker_name.upper()}")
+                continue
+
+            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
+            inv_user_folder = os.path.join(INV_PATH, inv_broker_id)
+            dev_acc_path = os.path.join(dev_user_folder, "accountmanagement.json")
+            inv_acc_path = os.path.join(inv_user_folder, "accountmanagement.json")
+
+            # 4. Sync Account Management
+            if os.path.exists(dev_acc_path):
+                with open(dev_acc_path, 'r', encoding='utf-8') as f:
+                    dev_acc_data = json.load(f)
+                
+                os.makedirs(inv_user_folder, exist_ok=True)
+                inv_acc_data = {}
+                if os.path.exists(inv_acc_path):
+                    try:
+                        with open(inv_acc_path, 'r', encoding='utf-8') as f:
+                            inv_acc_data = json.load(f)
+                    except: pass
+
+                is_reset = inv_acc_data.get("reset_all", False)
+                if is_reset: inv_acc_data = {"reset_all": False}
+                
+                needs_save = is_reset 
+                keys_to_sync = ["RISKS", "risk_reward_ratios", "symbols_dictionary", "settings"]
+                
+                for key in keys_to_sync:
+                    if key not in inv_acc_data or not inv_acc_data[key]:
+                        inv_acc_data[key] = dev_acc_data.get(key, []) if key != "settings" else dev_acc_data.get(key, {})
+                        needs_save = True
+
+                if "account_balance_default_risk_management" not in inv_acc_data:
+                    inv_acc_data["account_balance_default_risk_management"] = default_risk_mgmt
+                    needs_save = True
+                
+                if needs_save:
+                    with open(inv_acc_path, 'w', encoding='utf-8') as f:
+                        f.write(compact_json_format(inv_acc_data))
+                    print(f"  └─ ✅ accountmanagement.json synced for {inv_name}")
+            else:
+                print(f"  └─ ⚠️  Dev accountmanagement.json missing")
+                continue
+
+            # 5. Clone Strategy Folder
+            dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
+            inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
+
+            if os.path.exists(dev_strat_path):
+                try:
+                    os.makedirs(inv_strat_path, exist_ok=True)
+                    
+                    # Clean old strategy content
+                    for item in os.listdir(inv_strat_path):
+                        item_path = os.path.join(inv_strat_path, item)
+                        if os.path.isdir(item_path): shutil.rmtree(item_path)
+                        else: os.remove(item_path)
+                    
+                    # Copy specific items
+                    dev_pending_orders_path = os.path.join(dev_strat_path, "pending_orders")
+                    if os.path.exists(dev_pending_orders_path):
+                        shutil.copytree(dev_pending_orders_path, os.path.join(inv_strat_path, "pending_orders"))
+                    
+                    for json_file in ["limit_orders.json", "limit_orders_backup.json"]:
+                        src = os.path.join(dev_strat_path, json_file)
+                        if os.path.exists(src):
+                            shutil.copy2(src, os.path.join(inv_strat_path, json_file))
+                    
+                    total_synced += 1
+                    synced_investors.append(inv_name)
+                    
+                except Exception as e:
+                    print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
+            else:
+                print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing")
+
+        return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} investors updated: {', '.join(synced_investors)}"
+
+    except Exception as e:
+        return f" [{dev_broker_id}] ❌ Enrichment Error: {e}"
+
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -4238,10 +4383,44 @@ def single():
 
     with Pool(processes=cores) as pool:
 
-        # STEP 2: Higher Highs & lower lows
-        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
-        for r in hh_ll_results: print(r)
+        print("\n[STEP 6] Synchronizing Investor Accounts...")
+        sync_results = pool.map(sync_dev_investors, broker_names)
+        for r in sync_results: print(r)
 
+def process_single_developer_pipeline(broker_name):
+    """
+    Orchestrator: Runs the full suite of tasks for one developer sequentially.
+    This allows multiprocessing to happen at the 'Account Level'.
+    """
+    results = []
+    try:
+        # Step 1: Data Sync
+        res_ticks = sync_ticks_data(broker_name)
+        res_candles = copy_full_candle_data(broker_name)
+        
+        # Step 2: HH/LL Analysis
+        res_hhll = higher_highs_lower_lows(broker_name)
+        
+        # Step 3: Liquidity
+        res_liq = liquidity_candles(broker_name)
+        
+        # Step 4: POI
+        res_poi = entry_point_of_interest(broker_name)
+        
+        # Step 5: Cleanup
+        res_clean = clear_unathorized_entries_folders(broker_name)
+        
+        # Step 6: Investor Sync
+        res_sync = sync_dev_investors(broker_name)
+        
+        return (f"--- [{broker_name}] PIPELINE COMPLETE ---\n"
+                f"  Ticks: {res_ticks}\n"
+                f"  HHLL: {res_hhll}\n"
+                f"  POI: {res_poi}\n"
+                f"  Investor Sync: {res_sync}")
+    except Exception as e:
+        return f"--- [{broker_name}] PIPELINE FAILED: {e} ---"
+    
 def main():
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -4250,38 +4429,20 @@ def main():
 
     broker_names = sorted(dev_dict.keys())
     cores = cpu_count()
-    print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
+    
+    print(f"--- STARTING ACCOUNT-LEVEL MULTIPROCESSING ---")
+    print(f"Cores: {cores} | Total Developers: {len(broker_names)}")
 
+    # We use the pool to map the 'orchestrator' instead of individual steps
     with Pool(processes=cores) as pool:
-        print("\n[STEP 1] Syncing Symbol Ticks Data...")
-        tick_results = pool.map(sync_ticks_data, broker_names)
-        for r in tick_results: print(r)
-
-        tick_results = pool.map(copy_full_candle_data, broker_names)
-        for r in tick_results: print(r)
-
-        print("\n[STEP 2] Running Higher Highs & lower lows Analysis...")
-        hh_ll_results = pool.map(higher_highs_lower_lows, broker_names)
-        for r in hh_ll_results: print(r)
-
-        print("\n[STEP 6] Running liquidity sweeps...")
-        hh_ll_results = pool.map(liquidity_candles, broker_names)
-        for r in hh_ll_results: print(r)
-
-        hh_ll_results = pool.map(entry_point_of_interest, broker_names)
-        for r in hh_ll_results: print(r)
-
-        hh_ll_results = pool.map(clear_unathorized_entries_folders, broker_names)
-        for r in hh_ll_results: print(r)
-
-
-
-
-
-
+        final_results = pool.map(process_single_developer_pipeline, broker_names)
         
+        # Print summaries as they finish
+        for report in final_results:
+            print(report)
 
-    print("\n[SUCCESS] All tasks completed.")
+    print("\n[SUCCESS] All developer pipelines completed.")
+    
 
 if __name__ == "__main__":
    main()

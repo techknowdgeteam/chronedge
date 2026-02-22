@@ -1,13 +1,14 @@
 {
   "indices": [
     "US TECH 100",
+    "US SMALL CAP 2000",
+    "US SP 500",
     "Wall Street 30"
   ],
   "commodities": [],
   "synthetics": [ ],
   "crypto": [
-    "BTCUSD",
-    "ETHUSD"
+    "BTCUSD"
   ],
   "forex": [
     "AUDNZD",
