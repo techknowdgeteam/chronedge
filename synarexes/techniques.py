@@ -4244,9 +4244,20 @@ def sync_dev_investors(dev_broker_id):
         return res
 
     try:
-        # 1. Load Data
-        if not all(os.path.exists(f) for f in [INVESTOR_USERS, DEV_USERS, DEFAULT_ACCOUNTMANAGEMENT]):
-            return f" [{dev_broker_id}] ❌ Error: Configuration files missing."
+        # 1. Load Data - Check each file individually
+        missing_files = []
+        
+        if not os.path.exists(INVESTOR_USERS):
+            missing_files.append(f"INVESTOR_USES: {INVESTOR_USERS}")
+        
+        if not os.path.exists(DEV_USERS):
+            missing_files.append(f"DEV_USERS: {DEV_USERS}")
+            
+        if not os.path.exists(DEFAULT_ACCOUNTMANAGEMENT):
+            missing_files.append(f"DEFAULT_ACCOUNTMANAGEMENT: {DEFAULT_ACCOUNTMANAGEMENT}")
+        
+        if missing_files:
+            return f" [{dev_broker_id}] ❌ Error: The following configuration files are missing:\n" + "\n".join([f"  - {f}" for f in missing_files])
 
         with open(DEFAULT_ACCOUNTMANAGEMENT, 'r', encoding='utf-8') as f:
             default_acc_data = json.load(f)
@@ -4369,7 +4380,7 @@ def sync_dev_investors(dev_broker_id):
 
     except Exception as e:
         return f" [{dev_broker_id}] ❌ Enrichment Error: {e}"
-
+        
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -4445,6 +4456,6 @@ def main():
     
 
 if __name__ == "__main__":
-   main()
+   single()
 
 

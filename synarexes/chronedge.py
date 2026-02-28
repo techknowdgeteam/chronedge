@@ -19,15 +19,9 @@ def technical_analysis():
     except Exception as e:
         print(f"Error in techniques: {e}")
 
-def calculate_prices():
-    try:
-        calculateprices.calculate_orders()
-    except Exception as e:
-        print(f"Error in calculateprices: {e}")
-
 def place_orders():
     try:
-        placeorders.place_orders()
+        placeorders.place_demo_orders_parallel()
         print("Placing real account orders completed.")
     except Exception as e:
         print(f"Error in placeorders: {e}")
@@ -42,7 +36,6 @@ def place_demo_orders():
 def run_trade():
     fetch_ohlc()
     technical_analysis()
-    calculate_prices()
     place_orders()
     time.sleep(3200)
     run_trade()
