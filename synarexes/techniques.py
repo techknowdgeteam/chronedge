@@ -4231,37 +4231,19 @@ def clear_unathorized_entries_folders(broker_name):
 
 def sync_dev_investors(dev_broker_id):
     """
-    Worker: Synchronizes investor accounts with developer strategy data for a single developer.
-    Logs each investor process clearly with a status summary.
+    Worker: Synchronizes investor strategy folders with developer data for a single developer.
+    Focuses exclusively on strategy folders and order files.
     """
-    def compact_json_format(data):
-        """Custom formatter to keep lists on one line while indenting dictionaries."""
-        res = json.dumps(data, indent=4)
-        res = re.sub(r'\[\s+([^\[\]]+?)\s+\]', 
-                    lambda m: "[" + ", ".join([line.strip() for line in m.group(1).splitlines()]).replace('"', '"') + "]", 
-                    res)
-        res = res.replace(",,", ",")
-        return res
-
     try:
-        # 1. Load Data - Check each file individually
+        # 1. Load Data - Check required files
         missing_files = []
-        
         if not os.path.exists(INVESTOR_USERS):
-            missing_files.append(f"INVESTOR_USES: {INVESTOR_USERS}")
-        
+            missing_files.append(f"INVESTOR_USERS: {INVESTOR_USERS}")
         if not os.path.exists(DEV_USERS):
             missing_files.append(f"DEV_USERS: {DEV_USERS}")
-            
-        if not os.path.exists(DEFAULT_ACCOUNTMANAGEMENT):
-            missing_files.append(f"DEFAULT_ACCOUNTMANAGEMENT: {DEFAULT_ACCOUNTMANAGEMENT}")
         
         if missing_files:
-            return f" [{dev_broker_id}] ❌ Error: The following configuration files are missing:\n" + "\n".join([f"  - {f}" for f in missing_files])
-
-        with open(DEFAULT_ACCOUNTMANAGEMENT, 'r', encoding='utf-8') as f:
-            default_acc_data = json.load(f)
-            default_risk_mgmt = default_acc_data.get("account_balance_default_risk_management", {})
+            return f" [{dev_broker_id}] ❌ Error: Missing config files:\n" + "\n".join([f"  - {f}" for f in missing_files])
 
         with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
             investors_data = json.load(f)
@@ -4269,7 +4251,7 @@ def sync_dev_investors(dev_broker_id):
         with open(DEV_USERS, 'r', encoding='utf-8') as f:
             developers_data = json.load(f)
 
-        print(f"\n{'='*10} SYNCING INVESTOR ACCOUNTS FOR DEVELOPER: {dev_broker_id} {'='*10}")
+        print(f"\n{'='*10} SYNCING STRATEGY DATA FOR DEVELOPER: {dev_broker_id} {'='*10}")
 
         # 2. Find investors linked to this developer
         linked_investors = []
@@ -4289,7 +4271,7 @@ def sync_dev_investors(dev_broker_id):
         # 3. Process each linked investor
         for inv_broker_id, inv_info in linked_investors:
             inv_name = inv_info.get("NAME", inv_broker_id)
-            print(f" [{dev_broker_id}] 🔄 Processing Investor: {inv_name} ({inv_broker_id})...")
+            print(f" [{dev_broker_id}] 🔄 Syncing Strategy for: {inv_name} ({inv_broker_id})...")
 
             invested_string = inv_info.get("INVESTED_WITH", "")
             inv_server = inv_info.get("SERVER", "")
@@ -4305,46 +4287,8 @@ def sync_dev_investors(dev_broker_id):
 
             dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
             inv_user_folder = os.path.join(INV_PATH, inv_broker_id)
-            dev_acc_path = os.path.join(dev_user_folder, "accountmanagement.json")
-            inv_acc_path = os.path.join(inv_user_folder, "accountmanagement.json")
-
-            # 4. Sync Account Management
-            if os.path.exists(dev_acc_path):
-                with open(dev_acc_path, 'r', encoding='utf-8') as f:
-                    dev_acc_data = json.load(f)
-                
-                os.makedirs(inv_user_folder, exist_ok=True)
-                inv_acc_data = {}
-                if os.path.exists(inv_acc_path):
-                    try:
-                        with open(inv_acc_path, 'r', encoding='utf-8') as f:
-                            inv_acc_data = json.load(f)
-                    except: pass
-
-                is_reset = inv_acc_data.get("reset_all", False)
-                if is_reset: inv_acc_data = {"reset_all": False}
-                
-                needs_save = is_reset 
-                keys_to_sync = ["RISKS", "risk_reward_ratios", "symbols_dictionary", "settings"]
-                
-                for key in keys_to_sync:
-                    if key not in inv_acc_data or not inv_acc_data[key]:
-                        inv_acc_data[key] = dev_acc_data.get(key, []) if key != "settings" else dev_acc_data.get(key, {})
-                        needs_save = True
-
-                if "account_balance_default_risk_management" not in inv_acc_data:
-                    inv_acc_data["account_balance_default_risk_management"] = default_risk_mgmt
-                    needs_save = True
-                
-                if needs_save:
-                    with open(inv_acc_path, 'w', encoding='utf-8') as f:
-                        f.write(compact_json_format(inv_acc_data))
-                    print(f"  └─ ✅ accountmanagement.json synced for {inv_name}")
-            else:
-                print(f"  └─ ⚠️  Dev accountmanagement.json missing")
-                continue
-
-            # 5. Clone Strategy Folder
+            
+            # 4. Clone Strategy Folder and Files
             dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
             inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
 
@@ -4352,17 +4296,20 @@ def sync_dev_investors(dev_broker_id):
                 try:
                     os.makedirs(inv_strat_path, exist_ok=True)
                     
-                    # Clean old strategy content
+                    # Clean old strategy content to ensure a fresh sync
                     for item in os.listdir(inv_strat_path):
                         item_path = os.path.join(inv_strat_path, item)
-                        if os.path.isdir(item_path): shutil.rmtree(item_path)
-                        else: os.remove(item_path)
+                        if os.path.isdir(item_path): 
+                            shutil.rmtree(item_path)
+                        else: 
+                            os.remove(item_path)
                     
-                    # Copy specific items
+                    # Copy 'pending_orders' directory if it exists
                     dev_pending_orders_path = os.path.join(dev_strat_path, "pending_orders")
                     if os.path.exists(dev_pending_orders_path):
                         shutil.copytree(dev_pending_orders_path, os.path.join(inv_strat_path, "pending_orders"))
                     
+                    # Copy specific JSON order files
                     for json_file in ["limit_orders.json", "limit_orders_backup.json"]:
                         src = os.path.join(dev_strat_path, json_file)
                         if os.path.exists(src):
@@ -4370,6 +4317,7 @@ def sync_dev_investors(dev_broker_id):
                     
                     total_synced += 1
                     synced_investors.append(inv_name)
+                    print(f"  └─ ✅ Strategy '{target_strat_name}' synced")
                     
                 except Exception as e:
                     print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
@@ -4379,8 +4327,8 @@ def sync_dev_investors(dev_broker_id):
         return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} investors updated: {', '.join(synced_investors)}"
 
     except Exception as e:
-        return f" [{dev_broker_id}] ❌ Enrichment Error: {e}"
-        
+        return f" [{dev_broker_id}] ❌ Sync Error: {e}"      
+
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:

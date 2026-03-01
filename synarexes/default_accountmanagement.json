@@ -18,9 +18,7 @@
     },
     "settings": {
         "maximum_breakeven_amount": 0.50,
-        "enable_auto_trading": true,
         "strategy_timeframe": "15m",
-        "pull_orders_from_lower": true,
         "default_price": true,
         "risk_reward_correction": true,
         "place_grid_trades": true,
