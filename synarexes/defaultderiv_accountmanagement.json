@@ -1,6 +1,9 @@
 {
     "selected_risk_reward": [3],
     "symbols_dictionary": {
+        "newfilenamevalue":{
+          "specific_symbols": ["XAUUSD"]
+        },
         "xxxjpy": ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY"],
         "xxxusd": [ "EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "BTCUSD", "XAUUSD"],
         "xxxaud": ["EURAUD", "GBPAUD"],
@@ -14,6 +17,7 @@
         "energies": ["US OIL","USOIL", "UKOIL", "XNGUSD"]
     },
     "settings": {
+        "minimum_balance": 50,
         "enable_breakeven": true,
         "breakeven_dictionary": [{"reward": 1, "breakeven_at_reward": 0.5},{"reward": 2, "breakeven_at_reward": 1},{"reward": 3, "breakeven_at_reward": 1.5}],
         "enable_auto_trading": true,

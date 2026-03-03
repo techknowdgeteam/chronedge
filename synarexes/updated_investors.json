@@ -1,0 +1,202 @@
+{
+    "1": {
+        "id": "1",
+        "server": "deriv-demo",
+        "login": "32092095",
+        "password": "@Techknowdge12#",
+        "application_status": "approved",
+        "broker_balance": 7549.75,
+        "profitandloss": -313.53,
+        "contract_days_left": "30",
+        "execution_start_date": "March 03, 2026",
+        "trades": {
+            "summary": {
+                "total_trades": 8,
+                "won": 2,
+                "lost": 2,
+                "symbols_that_lost": {
+                    "XAUUSD": -412.38
+                },
+                "symbols_that_won": {
+                    "XAUUSD": 98.85
+                }
+            },
+            "authorized_closed_trades": [
+                {
+                    "ticket": 8464966267,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.03,
+                    "profit": 0.0,
+                    "time": "2026-03-03 12:08:58"
+                },
+                {
+                    "ticket": 8464967366,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.11,
+                    "profit": 0.0,
+                    "time": "2026-03-03 12:09:15"
+                },
+                {
+                    "ticket": 8464967818,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.16,
+                    "profit": 0.0,
+                    "time": "2026-03-03 12:09:24"
+                },
+                {
+                    "ticket": 8464977143,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.16,
+                    "profit": 48.8,
+                    "time": "2026-03-03 12:17:33"
+                },
+                {
+                    "ticket": 8464983627,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.11,
+                    "profit": 50.05,
+                    "time": "2026-03-03 12:25:02"
+                },
+                {
+                    "ticket": 8464987417,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.06,
+                    "profit": 0.0,
+                    "time": "2026-03-03 12:28:48"
+                },
+                {
+                    "ticket": 8464989539,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.06,
+                    "profit": -217.44,
+                    "time": "2026-03-03 12:29:38"
+                },
+                {
+                    "ticket": 8464989541,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.03,
+                    "profit": -194.94,
+                    "time": "2026-03-03 12:29:38"
+                }
+            ]
+        },
+        "unauthorized_actions": {
+            "detected": true,
+            "bypass_active": true,
+            "autotrading_active": true,
+            "type": [
+                "trades"
+            ],
+            "unauthorized_trades": [
+                {
+                    "ticket": 8464578670,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": -50.23,
+                    "time": "2026-03-03 00:35:34",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464578670)"
+                },
+                {
+                    "ticket": 8464578671,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": 0.0,
+                    "time": "2026-03-03 00:35:34",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464578671)"
+                },
+                {
+                    "ticket": 8464603844,
+                    "symbol": "BTCUSD",
+                    "type": "BUY",
+                    "volume": 0.2,
+                    "profit": -51.32,
+                    "time": "2026-03-03 01:36:38",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464603844)"
+                },
+                {
+                    "ticket": 8464641589,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": 0.0,
+                    "time": "2026-03-03 03:02:15",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464641589)"
+                },
+                {
+                    "ticket": 8464650109,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": 0.0,
+                    "time": "2026-03-03 03:21:35",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464650109)"
+                },
+                {
+                    "ticket": 8464653847,
+                    "symbol": "BTCUSD",
+                    "type": "BUY",
+                    "volume": 0.2,
+                    "profit": -52.2,
+                    "time": "2026-03-03 03:31:09",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464653847)"
+                },
+                {
+                    "ticket": 8464710900,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": 0.0,
+                    "time": "2026-03-03 06:05:36",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464710900)"
+                },
+                {
+                    "ticket": 8464711796,
+                    "symbol": "BTCUSD",
+                    "type": "BUY",
+                    "volume": 0.2,
+                    "profit": -50.34,
+                    "time": "2026-03-03 06:07:31",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464711796)"
+                },
+                {
+                    "ticket": 8464771619,
+                    "symbol": "BTCUSD",
+                    "type": "SELL",
+                    "volume": 0.2,
+                    "profit": 0.0,
+                    "time": "2026-03-03 07:49:12",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464771619)"
+                },
+                {
+                    "ticket": 8464775403,
+                    "symbol": "BTCUSD",
+                    "type": "BUY",
+                    "volume": 0.2,
+                    "profit": -50.46,
+                    "time": "2026-03-03 07:55:02",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464775403)"
+                },
+                {
+                    "ticket": 8464779911,
+                    "symbol": "BTCUSD",
+                    "type": "BUY",
+                    "volume": 0.2,
+                    "profit": 87.47,
+                    "time": "2026-03-03 08:02:01",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8464779911)"
+                }
+            ],
+            "unauthorized_withdrawals": []
+        }
+    }
+}

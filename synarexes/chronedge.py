@@ -593,7 +593,7 @@ def background_breakeven_process():
             print(f" ✅ Breakeven complete: {successful}/{len(results)} successful")
         
         print(f"⏰ Next breakeven check in x seconds...")
-        time.sleep(10)
+        time.sleep(300)
 
 def run_trade():
     """
@@ -622,10 +622,10 @@ def run_trade():
             technical_analysis()
             
             print("📤 Placing orders...")
-            place_orders()
+            place_demo_orders()
             
-            print(f"✅ Cycle #{cycle_count} complete. Sleeping 3200s...")
-            time.sleep(3200)
+            print(f"✅ Cycle #{cycle_count} complete. Sleeping 300s...")
+            time.sleep(300)
             
         except Exception as e:
             print(f"❌ Error in trading cycle: {e}")
@@ -661,5 +661,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

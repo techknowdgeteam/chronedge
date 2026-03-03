@@ -1,5 +1,5 @@
-{
-        "chart":{
+{   "chart":{
+        "maximum_holding_days": 0,
         "define_candles": {
             "entries_poi_condition": {
                 "apprehend_higherhighsandlowerlows":{

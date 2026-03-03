@@ -203,10 +203,7 @@ def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
 
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     """
-    Fetch OHLCV data for a given symbol and timeframe with detailed diagnostics.
-    
-    Returns:
-        df (pd.DataFrame or None), error_log (list of dicts)
+    Fetch OHLCV data including the currently forming candle (index 0).
     """
     error_log = []
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -214,88 +211,46 @@ def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
 
     broker_name = mt5.terminal_info().name if mt5.terminal_info() else "unknown"
 
-    # --- Step 1: Ensure symbol is selected (with retry) ---
+    # --- Step 1: Ensure symbol is selected ---
     selected = False
     for attempt in range(3):
         if mt5.symbol_select(symbol, True):
             selected = True
             break
-        time.sleep(0.5)  # small delay before retry
+        time.sleep(0.5)
 
     if not selected:
         last_err = mt5.last_error()
-        err_msg = f"FAILED symbol_select('{symbol}') after 3 attempts: {last_err}"
+        err_msg = f"FAILED symbol_select('{symbol}'): {last_err}"
         log_and_print(err_msg, "ERROR")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "error": err_msg,
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
+        return None, [{"error": err_msg, "timestamp": timestamp}]
 
-    # --- Step 2: Try to copy rates ---
+    # --- Step 2: Fetch rates ---
+    # Position 0 is the current forming candle. 
+    # This fetches 'bars' number of candles ending at the current live one.
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, bars)
 
-    if rates is None:
+    if rates is None or len(rates) == 0:
         last_err = mt5.last_error()
-        err_msg = f"copy_rates_from_pos returned None for {symbol} (TF: {mt5_timeframe}): {last_err}"
+        err_msg = f"No data for {symbol}: {last_err}"
         log_and_print(err_msg, "ERROR")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "error": err_msg,
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
+        return None, [{"error": err_msg, "timestamp": timestamp}]
 
     available_bars = len(rates)
-    if available_bars == 0:
-        err_msg = f"NO historical data available for {symbol} on this timeframe (requested {bars} bars, got 0)"
-        log_and_print(err_msg, "WARNING")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "available_bars": 0,
-            "error": "No bars returned (likely broker limitation on higher timeframes)",
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
-
-    # --- Success path ---
-    if available_bars < bars:
-        log_msg = (f"Partial data: {symbol} → requested {bars} bars, "
-                   f"but only {available_bars} available (common on higher TFs like 1h/4h)")
-        log_and_print(log_msg, "WARNING")
-    else:
-        log_and_print(f"Fetched {available_bars} bars for {symbol}", "INFO")
-
+    
     # Convert to DataFrame
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s")
     df = df.set_index("time")
 
-    # Clean and standardize dtypes
+    # Standardize dtypes
     df = df.astype({
-        "open": float,
-        "high": float,
-        "low": float,
-        "close": float,
-        "tick_volume": float,
-        "spread": int,
-        "real_volume": float
+        "open": float, "high": float, "low": float, "close": float,
+        "tick_volume": float, "spread": int, "real_volume": float
     })
     df.rename(columns={"tick_volume": "volume"}, inplace=True)
 
+    log_and_print(f"Fetched {available_bars} bars (including live candle) for {symbol}", "INFO")
     return df, error_log
 
 def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
@@ -333,8 +288,8 @@ def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # Latest completed candle: second from end (-2)
-        previous_latest_candle = all_candles[-2].copy()
+        # Latest completed candle: second from end (-1)
+        previous_latest_candle = all_candles[-1].copy()
         candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
@@ -521,9 +476,9 @@ def save_sliced_newest_oldest_json(symbol, timeframe_str, timeframe_folder, slic
             with open(slice_json_path, 'w', encoding='utf-8') as f:
                 json.dump(reordered, f, indent=4)
 
-            # Latest completed candle in this slice: second from end (-2)
+            # Latest completed candle in this slice: second from end (-1)
             if len(reordered) >= 2:
-                prev_candle = reordered[-2].copy()
+                prev_candle = reordered[-1].copy()
                 candle_time = lagos_tz.localize(datetime.strptime(prev_candle["time"], '%Y-%m-%d %H:%M:%S'))
                 delta = now - candle_time
                 total_hours = delta.total_seconds() / 3600
@@ -997,7 +952,7 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
 
 def fetch_charts_all_brokers(bars):
     backup_developers_dictionary()
-    category_path = r"C:\xampp\htdocs\synapse\synarex\symbolscategory.json"
+    category_path = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 
     log_and_print("\n" + "="*60, "INFO")
     log_and_print("🚀 SYNCHRONIZING MULTI-ACCOUNT ENGINE", "INFO")

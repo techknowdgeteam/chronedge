@@ -1,12 +1,14 @@
 {
   "indices": [
-    "US TECH 100",
+    "SP500",
+    "SPI200",
     "US SMALL CAP 2000",
     "US SP 500",
+    "DJ30",
+    "NAS100",
+    "US TECH 100",
     "Wall Street 30"
   ],
-  "commodities": [],
-  "synthetics": [ ],
   "crypto": [
     "BTCUSD"
   ],
@@ -40,9 +42,11 @@
     "GBPAUD"
   ],
   "energies": [
-    "US Oil"
+    "USOIL",
+    "US Oil",
+    "US_Oil",
+    "USOUSD"
   ],
-  "basket_indices": [],
   "metals": [
     "XAUUSD"
   ]
