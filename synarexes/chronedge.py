@@ -1,8 +1,7 @@
 import ohlc
 import techniques
-import calculateprices
 import placeorders
-import demo_placeorders
+import insiders
 import time
 import MetaTrader5 as mt5
 from pathlib import Path
@@ -421,6 +420,21 @@ def apply_dynamic_breakeven(inv_id=None):
     print(f"\n{'='*10} 🏁 DYNAMIC BREAKEVEN MONITORING COMPLETE {'='*10}\n")
     return stats
 
+def fetch_insiders():
+    try:
+        insiders.fetch_insiders_rows()
+    except Exception as e:
+        print(f"Error in fetching insiders{e}")
+
+def update_insiders():
+    try:
+        insiders.update_insiders_from_json()
+    except Exception as e:
+        print(f"Error in updating insiders{e}")
+
+
+
+
 # real account 
 def process_single_investor(inv_folder):
     """
@@ -630,8 +644,7 @@ def run_trade():
         except Exception as e:
             print(f"❌ Error in trading cycle: {e}")
             # Continue running despite errors
-        
-        
+           
 def main():
     """
     Main entry point with proper setup and cleanup

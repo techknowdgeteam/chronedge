@@ -16,6 +16,7 @@ from datetime import datetime
 import pytz
 import shutil
 from collections import defaultdict
+from pathlib import Path
 
 
 DEV_PATH = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers'
@@ -23,6 +24,7 @@ DEV_USERS = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers\developers.
 DEFAULT_ACCOUNTMANAGEMENT = r"C:\xampp\htdocs\chronedge\synarex\default_accountmanagement.json"
 INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
 INV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors"
+VERIFIED_INVESTORS = r"C:\xampp\htdocs\chronedge\synarex\verified_investors.json"
 
 
 def load_developers_dictionary():
@@ -3027,6 +3029,97 @@ def entry_point_of_interest(broker_name):
             
         return sanitized_patterns
 
+    def add_liquidity_sweepers_to_patterns(target_data_tf, new_key, original_candles):
+        """
+        Adds sweeper candle details to victim candles in patterns.
+        For each candle marked with 'swept_by_liquidity': True, find the sweeper candle
+        (by swept_by_candle_number) from original_candles and append its details.
+        Sanitizes sweeper candles to only include essential fields.
+        """
+        if not isinstance(target_data_tf, dict):
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        # Create a map of candle_number to candle for quick lookup
+        candle_map = {
+            c.get("candle_number"): c 
+            for c in original_candles 
+            if isinstance(c, dict) and "candle_number" in c
+        }
+
+        # Define the allowed fields for sanitized sweeper candles
+        allowed_sweeper_fields = {
+            "open", "high", "low", "close", "volume", "spread", "real_volume",
+            "symbol", "time", "candle_number", "timeframe",
+            "candle_x", "candle_y", "candle_width", "candle_height",
+            "candle_left", "candle_right", "candle_top", "candle_bottom",
+            "swing_type", "is_swing", "active_color",
+            "draw_x", "draw_y", "draw_w", "draw_h",
+            "draw_left", "draw_right", "draw_top", "draw_bottom",
+            "is_liquidity_sweeper", "swept_victim_number"
+        }
+
+        for p_name, family in patterns.items():
+            if not isinstance(family, list):
+                continue
+                
+            # Track victims we've already processed to avoid duplicates
+            processed_victims = set()
+            
+            # Create a new list to rebuild the family with sweepers added
+            new_family = []
+            
+            for candle in family:
+                if not isinstance(candle, dict):
+                    new_family.append(candle)
+                    continue
+                    
+                # Add current candle to new family
+                new_family.append(candle)
+                
+                # Check if this candle is a victim (swept_by_liquidity = True)
+                if candle.get("swept_by_liquidity") is True:
+                    victim_num = candle.get("candle_number")
+                    
+                    # Avoid processing same victim twice
+                    if victim_num in processed_victims:
+                        continue
+                        
+                    processed_victims.add(victim_num)
+                    
+                    # Get sweeper candle number
+                    sweeper_num = candle.get("swept_by_candle_number")
+                    if sweeper_num is None:
+                        continue
+                        
+                    # Find sweeper candle in original candles
+                    sweeper_candle = candle_map.get(sweeper_num)
+                    if sweeper_candle and sweeper_candle not in new_family:
+                        # Create a sanitized copy with only allowed fields
+                        sweeper_copy = {}
+                        
+                        # Copy only allowed fields from the original sweeper
+                        full_sweeper = candle_map.get(sweeper_num)
+                        if full_sweeper:
+                            for field in allowed_sweeper_fields:
+                                if field in full_sweeper:
+                                    sweeper_copy[field] = full_sweeper.get(field)
+                        
+                        # Mark it as sweeper (ensure these fields are set)
+                        sweeper_copy["is_liquidity_sweeper"] = True
+                        sweeper_copy["swept_victim_number"] = victim_num
+                        
+                        # Add sweeper to family
+                        new_family.append(sweeper_copy)
+            
+            # Replace the old family with the new one
+            if len(new_family) > len(family):
+                patterns[p_name] = new_family
+        
+        return target_data_tf
+
     def intruder_and_outlaw_check(processed_data):
         for file_key, candles in processed_data.items():
             if not isinstance(candles, list):
@@ -4165,6 +4258,22 @@ def entry_point_of_interest(broker_name):
 
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
 
+            # --- NEW STEP: Add liquidity sweepers to patterns ---
+            # Iterate through all timeframes and add sweeper details to victims in patterns
+            for tf in tfs_to_keep:
+                if tf in target_data:
+                    for file_key in list(target_data[tf].keys()):
+                        if file_key.endswith("_patterns"):
+                            # Extract base key (remove '_patterns' suffix)
+                            base_key = file_key.replace("_patterns", "")
+                            
+                            # Find original candles for this timeframe
+                            original_candles_key = base_key.replace(f"{new_folder_name}_", "")
+                            original_candles = target_data[tf].get(original_candles_key, [])
+                            
+                            if original_candles:
+                                # Add sweepers to patterns
+                                add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
 
             # --- STEP 4: Final Write (Images and Full Candle Data) ---
             # Write Images
@@ -4332,6 +4441,403 @@ def clear_unathorized_entries_folders(broker_name):
         return False
     return 
 
+# populate verified investors
+def move_verified_investors():
+    """
+    Moves verified investors from verified_investors.json to:
+    Step 1: investors.json (with limited fields: LOGIN_ID, PASSWORD, SERVER, INVESTED_WITH, TERMINAL_PATH)
+    Step 2: Strategy folders with activities.json (proper configuration)
+    
+    Verified investors must have:
+    - INVESTED_WITH (not empty)
+    - execution_start_date (not empty)
+    - contract_days_left (not empty)
+    - TERMINAL_PATH (not empty) - NEW MANDATORY FIELD
+    
+    Strategy name is extracted by splitting INVESTED_WITH on first underscore
+    e.g., "deriv6_double-levels" → strategy = "double-levels"
+    
+    For Step 2, only proceeds if the strategy folder already exists for the investor.
+    
+    NOTE: Investors are NOT removed from verified_investors.json after processing
+    """
+    
+    print("\n" + "="*80)
+    print("📦 MOVING VERIFIED INVESTORS TO INVESTOR USERS AND STRATEGY FOLDERS")
+    print("="*80)
+    
+    # Default activities template
+    DEFAULT_ACTIVITIES = {
+        "activate_autotrading": True,
+        "bypass_restriction": True,
+        "execution_start_date": "",
+        "contract_duration": 30,
+        "contract_expiry_date": "",
+        "unauthorized_trades": {},
+        "unauthorized_withdrawals": {},
+        "unauthorized_action_detected": False
+    }
+    
+    # Check if verified investors file exists
+    if not os.path.exists(VERIFIED_INVESTORS):
+        print(f"❌ Verified investors file not found: {VERIFIED_INVESTORS}")
+        return False
+    
+    try:
+        with open(VERIFIED_INVESTORS, 'r', encoding='utf-8') as f:
+            verified_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Error loading verified investors: {e}")
+        return False
+    
+    if not isinstance(verified_data, dict):
+        print(f"❌ Invalid format: expected dictionary")
+        return False
+    
+    print(f"\n📋 Found {len(verified_data)} investors in verified list")
+    
+    # ============================================
+    # STEP 1: Move to investors.json with limited fields
+    # ============================================
+    print("\n" + "="*80)
+    print("🔹 STEP 1: MOVING TO INVESTORS.JSON")
+    print("="*80)
+    
+    # Load existing investors.json if it exists
+    investors_data = {}
+    if os.path.exists(INVESTOR_USERS):
+        try:
+            with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
+                investors_data = json.load(f)
+            print(f"📄 Loaded existing investors.json with {len(investors_data)} investors")
+        except Exception as e:
+            print(f"⚠️ Error loading existing investors.json: {e}")
+            investors_data = {}
+    
+    investors_updated_count = 0
+    investors_skipped_count = 0
+    investors_error_count = 0
+    
+    for inv_id, investor_data in verified_data.items():
+        print(f"\n{'='*50}")
+        print(f"👤 Processing Investor ID: {inv_id} for investors.json")
+        print(f"{'='*50}")
+        
+        # CASE INSENSITIVE: Create a case-insensitive lookup by converting all keys to uppercase for comparison
+        investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
+        
+        # Check if investor has all required fields (using case-insensitive lookup)
+        invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
+        execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
+        contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
+        terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
+        
+        # Also check for login, password, server (case-insensitive)
+        login_id = investor_data_upper.get('LOGIN_ID') or investor_data_upper.get('LOGIN', '')
+        password = investor_data_upper.get('PASSWORD', '').strip()
+        server = investor_data_upper.get('SERVER', '').strip()
+        
+        missing_fields = []
+        if not invested_with:
+            missing_fields.append('INVESTED_WITH')
+        if not execution_start:
+            missing_fields.append('execution_start_date')
+        if not contract_days:
+            missing_fields.append('contract_days_left')
+        if not terminal_path:
+            missing_fields.append('TERMINAL_PATH')
+        if not login_id:
+            missing_fields.append('LOGIN_ID/LOGIN')
+        if not password:
+            missing_fields.append('PASSWORD')
+        if not server:
+            missing_fields.append('SERVER')
+        
+        if missing_fields:
+            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
+            print(f"      INVESTED_WITH: '{invested_with}'")
+            print(f"      execution_start_date: '{execution_start}'")
+            print(f"      contract_days_left: '{contract_days}'")
+            print(f"      TERMINAL_PATH: '{terminal_path}'")
+            print(f"      LOGIN_ID: '{login_id}'")
+            print(f"      PASSWORD: {'*' * len(password) if password else 'empty'}")
+            print(f"      SERVER: '{server}'")
+            investors_skipped_count += 1
+            continue
+        
+        # Extract required fields for investors.json
+        try:
+            # Create minimal investor record
+            minimal_investor = {
+                "LOGIN_ID": str(login_id).strip(),
+                "PASSWORD": password,
+                "SERVER": server,
+                "INVESTED_WITH": invested_with,
+                "TERMINAL_PATH": terminal_path
+            }
+            
+            # Update investors.json data
+            investors_data[inv_id] = minimal_investor
+            print(f"  ✅ Added/Updated in investors.json")
+            print(f"      LOGIN_ID: {minimal_investor['LOGIN_ID']}")
+            print(f"      SERVER: {minimal_investor['SERVER']}")
+            print(f"      INVESTED_WITH: {minimal_investor['INVESTED_WITH']}")
+            print(f"      TERMINAL_PATH: {minimal_investor['TERMINAL_PATH'][:50]}...")  # Truncate for display
+            
+            investors_updated_count += 1
+            
+        except Exception as e:
+            print(f"  ❌ Error creating minimal investor record: {e}")
+            investors_error_count += 1
+            continue
+    
+    # Save updated investors.json
+    if investors_updated_count > 0:
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(INVESTOR_USERS), exist_ok=True)
+            
+            with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
+                json.dump(investors_data, f, indent=4)
+            print(f"\n✅ Successfully saved {investors_updated_count} investors to {INVESTOR_USERS}")
+        except Exception as e:
+            print(f"\n❌ Error saving investors.json: {e}")
+            return False
+    
+    # ============================================
+    # STEP 2: Create activities.json in existing strategy folders
+    # ============================================
+    print("\n" + "="*80)
+    print("🔹 STEP 2: CREATING ACTIVITIES.JSON IN EXISTING STRATEGY FOLDERS")
+    print("="*80)
+    
+    processed_count = 0
+    skipped_count = 0
+    error_count = 0
+    no_strategy_folder_count = 0
+    
+    for inv_id, investor_data in verified_data.items():
+        print(f"\n{'='*50}")
+        print(f"👤 Processing Investor ID: {inv_id} for strategy folders")
+        print(f"{'='*50}")
+        
+        # CASE INSENSITIVE: Create a case-insensitive lookup
+        investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
+        
+        # Check if investor has all required fields (using case-insensitive lookup)
+        invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
+        execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
+        contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
+        terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
+        
+        missing_fields = []
+        if not invested_with:
+            missing_fields.append('INVESTED_WITH')
+        if not execution_start:
+            missing_fields.append('execution_start_date')
+        if not contract_days:
+            missing_fields.append('contract_days_left')
+        if not terminal_path:
+            missing_fields.append('TERMINAL_PATH')
+        
+        if missing_fields:
+            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
+            print(f"      INVESTED_WITH: '{invested_with}'")
+            print(f"      execution_start_date: '{execution_start}'")
+            print(f"      contract_days_left: '{contract_days}'")
+            print(f"      TERMINAL_PATH: '{terminal_path}'")
+            skipped_count += 1
+            continue
+        
+        # Extract strategy name by splitting on first underscore
+        try:
+            # Split on first underscore only
+            underscore_index = invested_with.find('_')
+            if underscore_index == -1:
+                print(f"  ❌ INVESTED_WITH format invalid: '{invested_with}' - no underscore found")
+                error_count += 1
+                continue
+            
+            strategy_name = invested_with[underscore_index + 1:]  # e.g., "structural-liquidity"
+            
+            print(f"  📊 INVESTED_WITH: '{invested_with}'")
+            print(f"  📁 Target Strategy: '{strategy_name}'")
+            
+        except Exception as e:
+            print(f"  ❌ Error parsing INVESTED_WITH '{invested_with}': {e}")
+            error_count += 1
+            continue
+        
+        # Check if strategy folder exists before proceeding
+        inv_root = Path(INV_PATH) / inv_id
+        strategy_folder = inv_root / strategy_name
+        pending_orders_folder = strategy_folder / "pending_orders"
+        
+        if not strategy_folder.exists():
+            print(f"  ⚠️  Strategy folder does not exist: {strategy_folder}")
+            print(f"      You need to create this folder structure for the investor")
+            print(f"      Skipping activities.json creation for this investor")
+            no_strategy_folder_count += 1
+            continue
+        
+        print(f"  ✅ Strategy folder exists: {strategy_folder}")
+        
+        try:
+            # Create pending_orders folder if it doesn't exist
+            pending_orders_folder.mkdir(parents=True, exist_ok=True)
+            print(f"  📁 Created/Verified folder: {pending_orders_folder}")
+            
+            # Path to activities.json
+            activities_path = pending_orders_folder / "activities.json"
+            
+            # Format execution start date from YYYY-MM-DD to "Month DD, YYYY"
+            formatted_start_date = execution_start
+            try:
+                # Try to parse YYYY-MM-DD format
+                date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
+                formatted_start_date = date_obj.strftime("%B %d, %Y")
+                print(f"  📅 Formatted date: {execution_start} → {formatted_start_date}")
+            except:
+                print(f"  ⚠️  Could not parse date '{execution_start}', using as-is")
+            
+            # Load existing activities.json if it exists
+            existing_activities = {}
+            if activities_path.exists():
+                try:
+                    with open(activities_path, 'r', encoding='utf-8') as f:
+                        existing_activities = json.load(f)
+                    print(f"  📄 Found existing activities.json")
+                except Exception as e:
+                    print(f"  ⚠️  Error reading existing activities.json: {e}")
+                    existing_activities = {}
+            
+            # Determine which fields need to be updated
+            updated_activities = existing_activities.copy()
+            fields_updated = []
+            
+            # Check each field from DEFAULT_ACTIVITIES
+            for field, default_value in DEFAULT_ACTIVITIES.items():
+                current_value = existing_activities.get(field)
+                
+                if field == "execution_start_date":
+                    # Special handling for execution_start_date
+                    expected_value = formatted_start_date
+                    if current_value != expected_value:
+                        if current_value is None or current_value == "":
+                            updated_activities[field] = expected_value
+                            fields_updated.append(field)
+                        else:
+                            print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
+                
+                elif field == "contract_duration":
+                    # Convert contract_days_left to integer
+                    try:
+                        expected_value = int(contract_days)
+                        if current_value != expected_value:
+                            if current_value is None or current_value == "":
+                                updated_activities[field] = expected_value
+                                fields_updated.append(field)
+                            else:
+                                print(f"      ℹ️  {field} already set to {current_value} (not changing)")
+                    except ValueError:
+                        print(f"  ⚠️  Invalid contract_days_left value: '{contract_days}'")
+                        expected_value = default_value
+                        if current_value != expected_value:
+                            if current_value is None or current_value == "":
+                                updated_activities[field] = expected_value
+                                fields_updated.append(field)
+                
+                elif field == "contract_expiry_date":
+                    # Calculate expiry date based on contract_duration
+                    try:
+                        duration = int(contract_days)
+                        # Parse execution start date
+                        try:
+                            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
+                            expiry_date = start_date + timedelta(days=duration)
+                            expected_value = expiry_date.strftime("%B %d, %Y")
+                            
+                            if current_value != expected_value:
+                                if current_value is None or current_value == "":
+                                    updated_activities[field] = expected_value
+                                    fields_updated.append(field)
+                                else:
+                                    print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
+                        except:
+                            # If can't calculate, leave as empty string
+                            if current_value is None or current_value == "":
+                                updated_activities[field] = ""
+                                fields_updated.append(field)
+                    except:
+                        if current_value is None or current_value == "":
+                            updated_activities[field] = ""
+                            fields_updated.append(field)
+                
+                elif field in ["unauthorized_trades", "unauthorized_withdrawals"]:
+                    # These should always be empty dictionaries initially
+                    if current_value is None or current_value == "" or not isinstance(current_value, dict):
+                        updated_activities[field] = {}
+                        fields_updated.append(field)
+                
+                elif field == "unauthorized_action_detected":
+                    # This should always be False initially
+                    if current_value is None or current_value == "" or current_value is True:
+                        updated_activities[field] = False
+                        fields_updated.append(field)
+                
+                else:
+                    # For other fields (activate_autotrading, bypass_restriction)
+                    if current_value is None or current_value == "":
+                        updated_activities[field] = default_value
+                        fields_updated.append(field)
+                    else:
+                        print(f"      ℹ️  {field} already set to {current_value} (not changing)")
+            
+            # If no fields were updated and file exists, skip writing
+            if not fields_updated and activities_path.exists():
+                print(f"  ✅ activities.json is already complete and up to date")
+                processed_count += 1
+                continue
+            
+            # Write updated activities.json
+            with open(activities_path, 'w', encoding='utf-8') as f:
+                json.dump(updated_activities, f, indent=4)
+            
+            if fields_updated:
+                print(f"  ✅ Updated activities.json with fields: {', '.join(fields_updated)}")
+            else:
+                print(f"  ✅ Created new activities.json")
+            
+            processed_count += 1
+            
+        except Exception as e:
+            print(f"  ❌ Error processing investor {inv_id}: {e}")
+            error_count += 1
+    
+    # ============================================
+    # STEP 3: REMOVED - Investors are NOT removed from verified_investors.json
+    # ============================================
+    print("\n" + "="*80)
+    print("🔹 STEP 3: VERIFIED INVESTORS FILE PRESERVED")
+    print("="*80)
+    print("  ✅ All investors remain in verified_investors.json (no removal)")
+    
+    # Print summary
+    print("\n" + "="*80)
+    print("📊 MOVE VERIFIED INVESTORS SUMMARY")
+    print("="*80)
+    print("🔹 STEP 1 - INVESTORS.JSON:")
+    print(f"   ✅ Successfully added/updated: {investors_updated_count}")
+    print(f"   ⏭️  Skipped (missing fields): {investors_skipped_count}")
+    print("\n🔹 STEP 2 - STRATEGY FOLDERS:")
+    print(f"   ✅ Successfully processed: {processed_count}")
+    print(f"   ⏭️  Skipped (missing fields): {skipped_count}")
+    print(f"   🚫 Skipped (strategy folder missing): {no_strategy_folder_count}")
+    print("\n🔹 STEP 3 - VERIFIED LIST STATUS:")
+    print(f"   📁 All investors remain in verified list: {len(verified_data)}")
+    print("="*80)
+    
+    return True
 
 def sync_dev_investors(dev_broker_id):
     """
@@ -4339,6 +4845,7 @@ def sync_dev_investors(dev_broker_id):
     Creates a requirements.json in the investor folder containing the 
     developer's minimum_balance setting.
     """
+    move_verified_investors()
     try:
         # 1. Load Data - Check required files
         missing_files = []
@@ -4415,20 +4922,46 @@ def sync_dev_investors(dev_broker_id):
                 try:
                     # Determine if we need to full clone or just update folders
                     if not os.path.exists(inv_strat_path):
-                        print(f"  └─ 🆕 New strategy folder. Performing full clone...")
-                        shutil.copytree(dev_strat_path, inv_strat_path)
+                        print(f"  └─ 🆕 New strategy folder. Performing clean clone...")
+                        
+                        # Create a temporary directory for cleaned strategy
+                        import tempfile
+                        temp_dir = tempfile.mkdtemp()
+                        
+                        # Copy the entire strategy to temp directory
+                        shutil.copytree(dev_strat_path, os.path.join(temp_dir, target_strat_name))
+                        temp_strat_path = os.path.join(temp_dir, target_strat_name)
+                        
+                        # Remove all subfolders except pending_orders
+                        for item in os.listdir(temp_strat_path):
+                            item_path = os.path.join(temp_strat_path, item)
+                            if os.path.isdir(item_path) and item != "pending_orders":
+                                shutil.rmtree(item_path)
+                                print(f"  └─ 🗑️ Removed folder: {item}")
+                        
+                        # Copy the cleaned strategy to investor folder
+                        shutil.copytree(temp_strat_path, inv_strat_path)
+                        
+                        # Clean up temp directory
+                        shutil.rmtree(temp_dir)
+                        
                     else:
-                        print(f"  └─ 📂 Folder exists. Updating specific files...")
-                        # Sync pending_orders folder
+                        print(f"  └─ 📂 Folder exists. Updating only pending_orders files...")
+                        # Sync ONLY pending_orders folder
                         dev_pending_path = os.path.join(dev_strat_path, "pending_orders")
                         inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
+                        
                         if os.path.exists(dev_pending_path):
+                            # Create pending_orders folder if it doesn't exist
                             os.makedirs(inv_pending_path, exist_ok=True)
+                            
+                            # Copy only files from pending_orders (no subfolders)
                             for file in os.listdir(dev_pending_path):
                                 s = os.path.join(dev_pending_path, file)
                                 d = os.path.join(inv_pending_path, file)
                                 if os.path.isfile(s):
                                     shutil.copy2(s, d)
+                                    print(f"  └─ 📄 Updated pending order file: {file}")
 
                     # --- SYNC CORE FILES ---
                     # 1. Copy limit orders as-is (no injection)
@@ -4438,6 +4971,7 @@ def sync_dev_investors(dev_broker_id):
                         dest_json = os.path.join(inv_strat_path, json_file)
                         if os.path.exists(src_json):
                             shutil.copy2(src_json, dest_json)
+                            print(f"  └─ 📄 Copied: {json_file}")
 
                     # 2. Create/Overwrite requirements.json in the SAME destination
                     req_dest_path = os.path.join(inv_strat_path, "requirements.json")
@@ -4446,15 +4980,15 @@ def sync_dev_investors(dev_broker_id):
                     
                     total_synced += 1
                     synced_investors.append(inv_name)
-                    print(f"  └─ ✅ Strategy '{target_strat_name}' synced + requirements.json created.")
+                    print(f"  └─ ✅ Strategy '{target_strat_name}' synced with only pending_orders folder.")
                     
                 except Exception as e:
                     print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
             else:
                 print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing")
-
+        move_verified_investors()
         return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} investors updated: {', '.join(synced_investors)}"
-
+    
     except Exception as e:
         return f" [{dev_broker_id}] ❌ Sync Error: {e}"
            
@@ -4470,7 +5004,7 @@ def single():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
-        sync_results = pool.map(sync_dev_investors, broker_names)
+        sync_results = pool.map(entry_point_of_interest, broker_names)
         for r in sync_results: print(r)
 
 def process_single_developer_pipeline(broker_name):
@@ -4531,6 +5065,5 @@ def main():
     
 
 if __name__ == "__main__":
-   single()
-
+   main()
 

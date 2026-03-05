@@ -21,9 +21,10 @@ from pathlib import Path
 import time
 import random
 
-INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
 INV_PATH = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors"
 UPDATED_INVESTORS = r"C:\xampp\htdocs\chronedge\synarex\updated_investors.json"
+INVESTOR_USERS = r"C:\xampp\htdocs\chronedge\synarex\usersdata\investors\investors.json"
+VERIFIED_INVESTORS = r"C:\xampp\htdocs\chronedge\synarex\verified_investors.json"
 ISSUES_INVESTORS = r"C:\xampp\htdocs\chronedge\synarex\issues_investors.json"
 NORMALIZE_SYMBOLS_PATH = r"C:\xampp\htdocs\chronedge\synarex\symbols_normalization.json"
 DEFAULT_ACCOUNTMANAGEMENT = r"C:\xampp\htdocs\chronedge\synarex\default_accountmanagement.json"
@@ -86,6 +87,43 @@ def debug_print_all_broker_symbols():
             print(f"{i}. {name}")
             
         print(f"{'='*40}\nEND OF LIST\n{'='*40}")
+
+def update_verified_investors_file():
+    """
+    Optional helper function to update the verified_investors.json file
+    to remove the MESSAGE field after moving them to activities.json
+    """
+    print("\n" + "="*80)
+    print("📋 CLEANING VERIFIED INVESTORS FILE")
+    print("="*80)
+    
+    verified_investors_path = Path(VERIFIED_INVESTORS)
+    if not verified_investors_path.exists():
+        return False
+    
+    try:
+        with open(verified_investors_path, 'r', encoding='utf-8') as f:
+            verified_investors = json.load(f)
+        
+        updated = False
+        for inv_id, investor_data in verified_investors.items():
+            if 'MESSAGE' in investor_data:
+                print(f"  🧹 Removing MESSAGE field for investor {inv_id}")
+                del investor_data['MESSAGE']
+                updated = True
+        
+        if updated:
+            with open(verified_investors_path, 'w', encoding='utf-8') as f:
+                json.dump(verified_investors, f, indent=4)
+            print(f"✅ Updated verified_investors.json - removed MESSAGE fields")
+        else:
+            print(f"ℹ️  No MESSAGE fields found to remove")
+            
+    except Exception as e:
+        print(f"❌ Error cleaning verified investors file: {e}")
+        return False
+    
+    return True
 
 def get_requirements(inv_id):
     """
@@ -5374,6 +5412,7 @@ def place_demo_orders_parallel():
     based on the investor_users JSON file.
     """
     print(f"\n{'='*10} 🚀 STARTING DEMO MULTIPROCESSING ENGINE {'='*10}")
+    
     
     # 1. Load the investor data directly from the JSON
     try:
