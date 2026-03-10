@@ -3763,6 +3763,8 @@ def entry_point_of_interest(broker_name):
         Generates brand new charts for confirmation data extracted from POI candles.
         Creates charts directly from the confirmation candle data without needing source charts.
         Features dynamic width scaling for optimal candle visibility.
+        Records pixel coordinates for each candle in the target_data structure.
+        
         Chart filename format: {lower_tf}_confirmation_from_{source_tf}_poi.png
         
         Args:
@@ -3805,7 +3807,7 @@ def entry_point_of_interest(broker_name):
         INNER_PADDING_BOTTOM = 20    # Space from bottom border to lowest candle
         
         # Numbering configuration
-        NUMBER_FONT_SCALE = 0.5  # Smaller font for numbers
+        NUMBER_FONT_SCALE = 0  # Smaller font for numbers (set to 0 to disable numbering)
         NUMBER_FONT_THICKNESS = 2
         NUMBER_OFFSET_ABOVE_WICK = 5  # Pixels above the wick to place the number
         NUMBER_BG_PADDING = 2  # Padding around number for background
@@ -3857,7 +3859,8 @@ def entry_point_of_interest(broker_name):
                         'high': candle.get('high', 0),
                         'low': candle.get('low', 0),
                         'close': candle.get('close', 0),
-                        'candle_number': candle.get('candle_number', None)  # Preserve the original candle number
+                        'candle_number': candle.get('candle_number', None),  # Preserve the original candle number
+                        'original_candle': candle  # Store reference to original candle for updating coordinates
                     })
                 
                 if not ohlc_data:
@@ -3973,7 +3976,11 @@ def entry_point_of_interest(broker_name):
                     # Single candle - center it
                     start_x = chart_left + (chart_width / 2)
                 
-                # Draw each candle with its actual candle number
+                # Define price to y conversion function for reuse
+                def price_to_y(price):
+                    return chart_bottom - int((price - min_price) / price_range * chart_height)
+                
+                # Draw each candle with its actual candle number (if enabled) and record coordinates
                 for i, candle in enumerate(ohlc_data):
                     # Calculate x position
                     if num_candles > 1:
@@ -3986,14 +3993,20 @@ def entry_point_of_interest(broker_name):
                     # Use default green for bullish, red for bearish
                     color = (0, 150, 0) if is_bullish else (0, 0, 255)
                     
-                    # Calculate y positions
-                    def price_to_y(price):
-                        return chart_bottom - int((price - min_price) / price_range * chart_height)
-                    
+                    # Calculate y positions for all OHLC values
                     open_y = price_to_y(candle['open'])
                     close_y = price_to_y(candle['close'])
                     high_y = price_to_y(candle['high'])
                     low_y = price_to_y(candle['low'])
+                    
+                    # Calculate candle rectangle coordinates for the body
+                    half_width = target_candle_width / 2
+                    candle_left_x = int(x_center - half_width)
+                    candle_right_x = int(x_center + half_width)
+                    
+                    # For the body: top is min(open, close), bottom is max(open, close)
+                    body_top_y = min(open_y, close_y)
+                    body_bottom_y = max(open_y, close_y)
                     
                     # Draw the wick (high-low line)
                     cv2.line(chart_img, 
@@ -4002,58 +4015,111 @@ def entry_point_of_interest(broker_name):
                             color, 1)
                     
                     # Draw the candle body
-                    half_width = target_candle_width / 2
-                    if is_bullish:
-                        cv2.rectangle(chart_img,
-                                    (int(x_center - half_width), close_y),
-                                    (int(x_center + half_width), open_y),
-                                    color, -1)
-                    else:
-                        cv2.rectangle(chart_img,
-                                    (int(x_center - half_width), open_y),
-                                    (int(x_center + half_width), close_y),
-                                    color, -1)
+                    cv2.rectangle(chart_img,
+                                (candle_left_x, body_top_y),
+                                (candle_right_x, body_bottom_y),
+                                color, -1)
                     
-                    # Get the actual candle number from the data
-                    candle_number = candle.get('candle_number')
+                    # Draw candle number only if NUMBER_FONT_SCALE > 0
+                    if NUMBER_FONT_SCALE > 0:
+                        # Get the actual candle number from the data
+                        candle_number = candle.get('candle_number')
+                        
+                        # If candle_number exists, use it; otherwise, fall back to sequential numbering
+                        if candle_number is not None:
+                            number_text = str(candle_number)
+                        else:
+                            number_text = str(i + 1)  # Fallback to sequential numbering
+                            log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
+                        
+                        # Calculate text size for background
+                        (text_width, text_height), baseline = cv2.getTextSize(
+                            number_text, cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, NUMBER_FONT_THICKNESS
+                        )
+                        
+                        # Position the number above the wick
+                        number_x = int(x_center - text_width / 2)
+                        number_y = high_y - NUMBER_OFFSET_ABOVE_WICK
+                        
+                        # Draw white background for better readability
+                        bg_x1 = number_x - NUMBER_BG_PADDING
+                        bg_y1 = number_y - text_height - NUMBER_BG_PADDING
+                        bg_x2 = number_x + text_width + NUMBER_BG_PADDING
+                        bg_y2 = number_y + NUMBER_BG_PADDING
+                        
+                        # Ensure background stays within image bounds
+                        bg_x1 = max(0, bg_x1)
+                        bg_y1 = max(0, bg_y1)
+                        bg_x2 = min(img_width, bg_x2)
+                        bg_y2 = min(BASE_HEIGHT, bg_y2)
+                        
+                        # Draw white rectangle background
+                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                        
+                        # Draw black border around background for better visibility
+                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), 1)
+                        
+                        # Draw the number in black
+                        cv2.putText(chart_img, number_text, (number_x, number_y),
+                                  cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
                     
-                    # If candle_number exists, use it; otherwise, fall back to sequential numbering
-                    if candle_number is not None:
-                        number_text = str(candle_number)
-                    else:
-                        number_text = str(i + 1)  # Fallback to sequential numbering
-                        log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
+                    # -----------------------------------------------------------------
+                    # RECORD CANDLE COORDINATES IN THE ORIGINAL DATA STRUCTURE
+                    # -----------------------------------------------------------------
+                    # Calculate full candle dimensions (including wick)
+                    full_candle_height = abs(low_y - high_y)
+                    body_height = abs(body_bottom_y - body_top_y)
                     
-                    # Calculate text size for background
-                    (text_width, text_height), baseline = cv2.getTextSize(
-                        number_text, cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, NUMBER_FONT_THICKNESS
-                    )
+                    # Get the original candle reference
+                    original_candle = candle['original_candle']
                     
-                    # Position the number above the wick
-                    number_x = int(x_center - text_width / 2)
-                    number_y = high_y - NUMBER_OFFSET_ABOVE_WICK
+                    # Record position data for the FULL candle (including wick)
+                    original_candle['candle_x'] = int(x_center)  # Center x-coordinate
+                    original_candle['candle_y'] = high_y  # Top of wick (highest point)
+                    original_candle['candle_width'] = candle_right_x - candle_left_x  # Body width
+                    original_candle['candle_height'] = full_candle_height  # Full height including wick
+                    original_candle['candle_left'] = candle_left_x
+                    original_candle['candle_right'] = candle_right_x
+                    original_candle['candle_top'] = high_y  # Top of wick
+                    original_candle['candle_bottom'] = low_y  # Bottom of wick
                     
-                    # Draw white background for better readability
-                    bg_x1 = number_x - NUMBER_BG_PADDING
-                    bg_y1 = number_y - text_height - NUMBER_BG_PADDING
-                    bg_x2 = number_x + text_width + NUMBER_BG_PADDING
-                    bg_y2 = number_y + NUMBER_BG_PADDING
+                    # Record body-specific coordinates
+                    original_candle['body_top'] = body_top_y
+                    original_candle['body_bottom'] = body_bottom_y
+                    original_candle['body_height'] = body_height
                     
-                    # Ensure background stays within image bounds
-                    bg_x1 = max(0, bg_x1)
-                    bg_y1 = max(0, bg_y1)
-                    bg_x2 = min(img_width, bg_x2)
-                    bg_y2 = min(BASE_HEIGHT, bg_y2)
+                    # Record wick coordinates
+                    original_candle['wick_top'] = high_y
+                    original_candle['wick_bottom'] = low_y
+                    original_candle['wick_x'] = int(x_center)
                     
-                    # Draw white rectangle background
-                    cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                    # Also record drawing coordinates (matching the full candle)
+                    original_candle['draw_x'] = int(x_center)
+                    original_candle['draw_y'] = high_y
+                    original_candle['draw_w'] = candle_right_x - candle_left_x
+                    original_candle['draw_h'] = full_candle_height
+                    original_candle['draw_left'] = candle_left_x
+                    original_candle['draw_right'] = candle_right_x
+                    original_candle['draw_top'] = high_y
+                    original_candle['draw_bottom'] = low_y
                     
-                    # Draw black border around background for better visibility
-                    cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), 1)
+                    # Record individual OHLC pixel positions
+                    original_candle['open_pixel_y'] = open_y
+                    original_candle['high_pixel_y'] = high_y
+                    original_candle['low_pixel_y'] = low_y
+                    original_candle['close_pixel_y'] = close_y
                     
-                    # Draw the number in black
-                    cv2.putText(chart_img, number_text, (number_x, number_y),
-                              cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
+                    # Add chart metadata
+                    original_candle['chart_width'] = img_width
+                    original_candle['chart_height'] = BASE_HEIGHT
+                    original_candle['chart_timeframe'] = target_tf
+                    original_candle['source_timeframe'] = source_tf
+                    original_candle['confirmation_key'] = conf_key
+                    
+                    # Add price range metadata for scaling reference
+                    original_candle['chart_min_price'] = min_price
+                    original_candle['chart_max_price'] = max_price
+                    original_candle['chart_price_range'] = price_range
                 
                 # Add title with candle count info - CHART NAME FORMAT: {target_tf}_confirmation_from_{source_tf}_poi
                 title = f"{sym} {target_tf}_confirmation_from_{source_tf}_poi ({num_candles} candles)"
@@ -4079,7 +4145,7 @@ def entry_point_of_interest(broker_name):
                 chart_count += 1
         
         if chart_count > 0:
-            log(f"  📊 Generated {chart_count} confirmation charts for {sym}")
+            log(f"  📊 Generated {chart_count} confirmation charts for {sym} with pixel coordinates recorded")
 
     def move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
         """
@@ -4619,9 +4685,7 @@ def entry_point_of_interest(broker_name):
 
         # --- NEW: Log summary of filtered processing ---
         if target_symbols:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (filtered to: {sorted(target_symbols)})")
-        else:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (no filtering)")
+            log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
         return sync_count
         
@@ -4670,7 +4734,7 @@ def entry_point_of_interest(broker_name):
                 new_folder_name = entry_settings.get('new_filename')
                 if new_folder_name:
                     print()
-                    log(f"\n📊 PROCESSING {new_folder_name} STRUCTURE")
+                    log(f"\n📊 PROCESSING {new_folder_name}")
                     
                     # Check if identify_definitions exist
                     identify_config = entry_settings.get("identify_definitions")
@@ -7001,12 +7065,9 @@ def entries_confirmation(broker_name):
                 with open(target_config_path, 'w', encoding='utf-8') as f:
                     json.dump(target_data, f, indent=4)
                 sync_count += 1
-                log(f"  ✅ [{sym}] Enriched and saved")
 
         if target_symbols:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (filtered to: {sorted(target_symbols)})")
-        else:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (no filtering)")
+            log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
             
         return sync_count
 
@@ -7055,7 +7116,7 @@ def entries_confirmation(broker_name):
                 new_folder_name = entry_settings.get('new_filename')
                 if new_folder_name:
                     print()
-                    log(f"\n📊 PROCESSING {new_folder_name} ENTRY POI CONFIRMATION")
+                    log(f"\n📊 PROCESSING {new_folder_name} ENTRIES POI CONFIRMATION")
                     
                     # Check if identify_definitions exist
                     identify_config = entry_settings.get("identify_definitions")
@@ -7077,7 +7138,7 @@ def entries_confirmation(broker_name):
                     total_syncs += syncs
         
         if entry_count > 0:
-            return f"Completed: {entry_count} entry points processed, {total_syncs} total syncs"
+            return f"COMPLETED: {entry_count} ENTRIES CONFIRMATION PROCESSED"
         else:
             return f"No entry points found for processing."
     
