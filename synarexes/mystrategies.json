@@ -206,7 +206,7 @@
                 }
             },
             "higherhighsandlowerlows": {
-                "BARS": 301,
+                "BARS": 300,
                 "filename":"parentswing.json",
                 "read_candles_from":"new_old",
                 "number_candles":"define_candle",
@@ -231,7 +231,7 @@
             },
             "fvg": {
                 "filename":"fvg.json",
-                "BARS": 301,
+                "BARS": 300,
                 "NEIGHBOR_LEFT": 14,
                 "NEIGHBOR_RIGHT": 14,
                 "read_candles_from":"new_old",
