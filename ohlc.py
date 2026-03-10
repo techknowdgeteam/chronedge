@@ -8,23 +8,20 @@ import json
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 from pathlib import Path
 from datetime import datetime
-import calculateprices
 import time
-import threading
-import traceback
 from datetime import timedelta
 import traceback
 import shutil
 from datetime import datetime
 import re
-import placeorders
-import insiders_server
-import timeorders
-import concurrent.futures
 import multiprocessing
+import os
+import json
+import time
+import re
+
 
 
 
@@ -206,10 +203,7 @@ def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
 
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     """
-    Fetch OHLCV data for a given symbol and timeframe with detailed diagnostics.
-    
-    Returns:
-        df (pd.DataFrame or None), error_log (list of dicts)
+    Fetch OHLCV data including the currently forming candle (index 0).
     """
     error_log = []
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -217,88 +211,46 @@ def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
 
     broker_name = mt5.terminal_info().name if mt5.terminal_info() else "unknown"
 
-    # --- Step 1: Ensure symbol is selected (with retry) ---
+    # --- Step 1: Ensure symbol is selected ---
     selected = False
     for attempt in range(3):
         if mt5.symbol_select(symbol, True):
             selected = True
             break
-        time.sleep(0.5)  # small delay before retry
+        time.sleep(0.5)
 
     if not selected:
         last_err = mt5.last_error()
-        err_msg = f"FAILED symbol_select('{symbol}') after 3 attempts: {last_err}"
+        err_msg = f"FAILED symbol_select('{symbol}'): {last_err}"
         log_and_print(err_msg, "ERROR")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "error": err_msg,
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
+        return None, [{"error": err_msg, "timestamp": timestamp}]
 
-    # --- Step 2: Try to copy rates ---
+    # --- Step 2: Fetch rates ---
+    # Position 0 is the current forming candle. 
+    # This fetches 'bars' number of candles ending at the current live one.
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, bars)
 
-    if rates is None:
+    if rates is None or len(rates) == 0:
         last_err = mt5.last_error()
-        err_msg = f"copy_rates_from_pos returned None for {symbol} (TF: {mt5_timeframe}): {last_err}"
+        err_msg = f"No data for {symbol}: {last_err}"
         log_and_print(err_msg, "ERROR")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "error": err_msg,
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
+        return None, [{"error": err_msg, "timestamp": timestamp}]
 
     available_bars = len(rates)
-    if available_bars == 0:
-        err_msg = f"NO historical data available for {symbol} on this timeframe (requested {bars} bars, got 0)"
-        log_and_print(err_msg, "WARNING")
-        error_log.append({
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "timeframe": mt5_timeframe,
-            "requested_bars": bars,
-            "available_bars": 0,
-            "error": "No bars returned (likely broker limitation on higher timeframes)",
-            "broker": broker_name
-        })
-        save_errors(error_log)
-        return None, error_log
-
-    # --- Success path ---
-    if available_bars < bars:
-        log_msg = (f"Partial data: {symbol} → requested {bars} bars, "
-                   f"but only {available_bars} available (common on higher TFs like 1h/4h)")
-        log_and_print(log_msg, "WARNING")
-    else:
-        log_and_print(f"Fetched {available_bars} bars for {symbol}", "INFO")
-
+    
     # Convert to DataFrame
     df = pd.DataFrame(rates)
     df["time"] = pd.to_datetime(df["time"], unit="s")
     df = df.set_index("time")
 
-    # Clean and standardize dtypes
+    # Standardize dtypes
     df = df.astype({
-        "open": float,
-        "high": float,
-        "low": float,
-        "close": float,
-        "tick_volume": float,
-        "spread": int,
-        "real_volume": float
+        "open": float, "high": float, "low": float, "close": float,
+        "tick_volume": float, "spread": int, "real_volume": float
     })
     df.rename(columns={"tick_volume": "volume"}, inplace=True)
 
+    log_and_print(f"Fetched {available_bars} bars (including live candle) for {symbol}", "INFO")
     return df, error_log
 
 def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
@@ -336,8 +288,8 @@ def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
         with open(all_json_path, 'w', encoding='utf-8') as f:
             json.dump(all_candles, f, indent=4)
 
-        # Latest completed candle: second from end (-2)
-        previous_latest_candle = all_candles[-2].copy()
+        # Latest completed candle: second from end (-1)
+        previous_latest_candle = all_candles[-1].copy()
         candle_time = lagos_tz.localize(datetime.strptime(previous_latest_candle["time"], '%Y-%m-%d %H:%M:%S'))
         delta = now - candle_time
         total_hours = delta.total_seconds() / 3600
@@ -412,7 +364,7 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
     json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
-    candle_slices = [ 21, 31, 41, 51, 101, 151, 201, 301, 501, 701, 801, 1001]
+    candle_slices = [300, 2000]
 
     generated_slice_counts = []  # To pass to JSON slicers
 
@@ -524,9 +476,9 @@ def save_sliced_newest_oldest_json(symbol, timeframe_str, timeframe_folder, slic
             with open(slice_json_path, 'w', encoding='utf-8') as f:
                 json.dump(reordered, f, indent=4)
 
-            # Latest completed candle in this slice: second from end (-2)
+            # Latest completed candle in this slice: second from end (-1)
             if len(reordered) >= 2:
-                prev_candle = reordered[-2].copy()
+                prev_candle = reordered[-1].copy()
                 candle_time = lagos_tz.localize(datetime.strptime(prev_candle["time"], '%Y-%m-%d %H:%M:%S'))
                 delta = now - candle_time
                 total_hours = delta.total_seconds() / 3600
@@ -945,141 +897,145 @@ def clear_unknown_broker():
         print(f"\nReminder: {missing} configured broker(s) missing their folder!")
         print("   Expected format: Deriv 2, Bybit 6, Exness 1, etc.")
 
+def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRAME_MAP, result_dict):
+    """
+    This function runs in its own process.
+    It stays dedicated to ONE terminal path and processes its specific list of symbols.
+    """
+    processed_count = 0
+    
+    for symbol, cat in symbol_chunk:
+        # Initialize MT5 for this specific terminal
+        ok, _ = initialize_mt5(
+            account_cfg["TERMINAL_PATH"], 
+            account_cfg["LOGIN_ID"], 
+            account_cfg["PASSWORD"], 
+            account_cfg["SERVER"]
+        )
+        
+        if not ok:
+            log_and_print(f"  [!] {account_key.upper()} failed to connect for {symbol}", "ERROR")
+            continue
+
+        try:
+            log_and_print(f"  [→] {account_key.upper()} | Processing: {symbol} ({cat})", "INFO")
+            
+            sym_folder = os.path.join(account_cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
+            os.makedirs(sym_folder, exist_ok=True)
+
+            for tf_str, mt5_tf in TIMEFRAME_MAP.items():
+                tf_folder = os.path.join(sym_folder, tf_str)
+                os.makedirs(tf_folder, exist_ok=True)
+
+                df, _ = fetch_ohlcv_data(symbol, mt5_tf, bars)
+                if df is not None and not df.empty:
+                    df["symbol"] = symbol
+                    save_newest_oldest_df(df, symbol, tf_str, tf_folder)
+                    chart_path, _ = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
+                    slice_counts, _ = generate_and_save_chart(symbol, tf_str, tf_folder)
+                    
+                    if slice_counts:
+                        save_sliced_newest_oldest_json(symbol, tf_str, tf_folder, slice_counts)
+                    if chart_path:
+                        crop_chart(chart_path, symbol, tf_str, tf_folder)
+            
+            # Pass account_key as the broker name for identification
+            ticks_value(symbol, sym_folder, account_key, account_cfg["BASE_FOLDER"], [symbol])
+            processed_count += 1
+            
+        except Exception as e:
+            log_and_print(f"  [!] {account_key.upper()} Error on {symbol}: {e}", "ERROR")
+        finally:
+            mt5.shutdown()
+    
+    result_dict[account_key] = processed_count
+
 def fetch_charts_all_brokers(bars):
-    # ------------------------------------------------------------------
-    # PATHS
-    # ------------------------------------------------------------------
     backup_developers_dictionary()
     category_path = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 
-    # ------------------------------------------------------------------
-    # HELPERS
-    # ------------------------------------------------------------------
-    def normalize_broker_key(name: str) -> str:
-        return re.sub(r'\d+', '', re.sub(r'[\/\s\-_]+', '', name.strip())).lower()
+    log_and_print("\n" + "="*60, "INFO")
+    log_and_print("🚀 SYNCHRONIZING MULTI-ACCOUNT ENGINE", "INFO")
+    log_and_print("="*60 + "\n", "INFO")
 
-    def mark_chosen_broker(original_broker_key: str, user_brokerid: str, balance: float):
-        target_dir = fr"C:\xampp\htdocs\chronedge\synarex\usersdata\symbols_calculated_prices\{original_broker_key}"
-        os.makedirs(target_dir, exist_ok=True)
-        chosen_path = os.path.join(target_dir, "chosenbroker.json")
-        chosen_data = {
-            "chosen": True,
-            "broker_display_name": user_brokerid,
-            "balance": round(balance, 2),
-            "selected_at": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        try:
-            with open(chosen_path, "w", encoding="utf-8") as f:
-                json.dump(chosen_data, f, indent=4)
-        except Exception as e:
-            log_and_print(f"FAILED to write chosenbroker.json: {e}", "ERROR")
+    try:
+        # 1. Load symbols
+        with open(category_path, "r", encoding="utf-8") as f:
+            categories_data = json.load(f)
 
-    # ------------------------------------------------------------------
-    # MAIN LOOP
-    # ------------------------------------------------------------------
-    while True:
-        error_log = []
-        log_and_print("\n=== NEW SIMPLIFIED CYCLE STARTED ===", "INFO")
+        # 2. Get the master list of all symbols to process
+        # We use the first available terminal to see what symbols are actually on the server
+        master_symbol_list = []
+        first_cfg = list(ohlcdictionary.values())[0]
+        
+        ok, _ = initialize_mt5(first_cfg["TERMINAL_PATH"], first_cfg["LOGIN_ID"], first_cfg["PASSWORD"], first_cfg["SERVER"])
+        if ok:
+            mt5_available, _ = get_symbols()
+            mt5.shutdown()
+            for cat, symbol_list in categories_data.items():
+                for sym in symbol_list:
+                    if sym in mt5_available:
+                        master_symbol_list.append((sym, cat))
+        
+        total_symbols = len(master_symbol_list)
+        if total_symbols == 0:
+            log_and_print("No symbols found to process.", "WARNING")
+            return True
 
-        try:
-            # 1. LOAD CATEGORIES & SYMBOLS
-            if not os.path.exists(category_path):
-                log_and_print(f"CRITICAL: {category_path} not found!", "CRITICAL")
-                time.sleep(600); continue
+        # 3. Split symbols equally across all accounts in ohlcdictionary
+        accounts = list(ohlcdictionary.items()) # [('deriv_terminal_1', cfg), ('deriv_terminal_2', cfg)...]
+        num_accounts = len(accounts)
+        
+        # Math to divide symbols into chunks
+        avg = total_symbols // num_accounts
+        rem = total_symbols % num_accounts
+        chunks = []
+        start = 0
+        for i in range(num_accounts):
+            end = start + avg + (1 if i < rem else 0)
+            chunks.append(master_symbol_list[start:end])
+            start = end
+
+        log_and_print(f"📋 WORKLOAD DISTRIBUTION ({total_symbols} symbols total):", "INFO")
+        
+        # 4. Launch Processes
+        manager = multiprocessing.Manager()
+        final_counts = manager.dict()
+        processes = []
+
+        for i, (acc_key, acc_cfg) in enumerate(accounts):
+            chunk = chunks[i]
+            log_and_print(f"   ➤ {acc_key}: Assigned {len(chunk)} symbols", "SUCCESS")
             
-            with open(category_path, "r", encoding="utf-8") as f:
-                categories_data = json.load(f)
-
-            # 2. SELECT BEST BROKER INSTANCE (Highest Balance)
-            selected_brokers = {} 
-            for original_key, cfg in ohlcdictionary.items():
-                user_brokerid = cfg.get("original_name", original_key)
-                norm_key = normalize_broker_key(user_brokerid)
-
-                balance = 0.0
-                ok, errs = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
-                if ok:
-                    account_info = mt5.account_info()
-                    if account_info: balance = account_info.balance
-                    mt5.shutdown()
-
-                if norm_key not in selected_brokers or balance > selected_brokers[norm_key][2]:
-                    selected_brokers[norm_key] = (user_brokerid, cfg, balance, original_key)
-
-            # Mark chosen brokers and prepare working dict
-            unique_brokers = {}
-            for norm_key, (user_id, cfg, bal, orig_key) in selected_brokers.items():
-                unique_brokers[user_id] = cfg
-                mark_chosen_broker(orig_key, user_id, bal)
-
-            # 3. BUILD CANDIDATE QUEUE (Cross-reference MT5 available symbols with JSON)
-            candidates = {bn: {cat: [] for cat in categories_data.keys()} for bn in unique_brokers}
-            total_to_do = 0
-
-            for bn, cfg in unique_brokers.items():
-                ok, _ = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
-                if not ok: continue
-                
-                # Get list of symbols actually available on this MT5 terminal
-                mt5_available, _ = get_symbols() 
-                mt5.shutdown()
-
-                for cat, symbol_list in categories_data.items():
-                    for sym in symbol_list:
-                        if sym in mt5_available:
-                            candidates[bn][cat].append(sym)
-                            total_to_do += 1
-
-            if total_to_do == 0:
-                log_and_print("No matching symbols found in any broker - sleeping", "WARNING")
-                time.sleep(1800); continue
-
-            log_and_print(f"TOTAL TO PROCESS: {total_to_do}", "SUCCESS")
-
-            # 4. ROUND-ROBIN PROCESSING
-            remaining = {b: {c: candidates[b][c][:] for c in categories_data.keys()} for b in unique_brokers}
+            if not chunk: continue
             
-            while any(any(remaining[b][c]) for b in unique_brokers for c in categories_data.keys()):
-                for cat in categories_data.keys():
-                    for bn, cfg in unique_brokers.items():
-                        if not remaining[bn][cat]: continue
+            p = multiprocessing.Process(
+                target=process_account_worker, 
+                args=(acc_key, acc_cfg, chunk, bars, TIMEFRAME_MAP, final_counts)
+            )
+            processes.append(p)
+            p.start()
 
-                        symbol = remaining[bn][cat].pop(0) # Get next symbol
+        print("-" * 60)
 
-                        ok, _ = initialize_mt5(cfg["TERMINAL_PATH"], cfg["LOGIN_ID"], cfg["PASSWORD"], cfg["SERVER"])
-                        if not ok: continue
+        # Wait for all accounts to finish their work
+        for p in processes:
+            p.join()
 
-                        log_and_print(f"PROCESSING {symbol} ({cat}) on {bn.upper()}", "INFO")
-                        sym_folder = os.path.join(cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
-                        os.makedirs(sym_folder, exist_ok=True)
+        # 5. Final Summary
+        log_and_print("\n" + "="*60, "SUCCESS")
+        log_and_print("🏁 ALL ACCOUNTS FINISHED PROCESSING", "SUCCESS")
+        for acc_key, count in final_counts.items():
+            log_and_print(f"   ✔ {acc_key}: Processed {count} symbols", "SUCCESS")
+        log_and_print("="*60 + "\n", "SUCCESS")
 
-                        # Process Timeframes
-                        for tf_str, mt5_tf in TIMEFRAME_MAP.items():
-                            tf_folder = os.path.join(sym_folder, tf_str)
-                            os.makedirs(tf_folder, exist_ok=True)
+        return True
 
-                            df, errs = fetch_ohlcv_data(symbol, mt5_tf, bars)
-                            if df is not None and not df.empty:
-                                df["symbol"] = symbol
-                                save_newest_oldest_df(df, symbol, tf_str, tf_folder)
-                                chart_path, _ = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
-                                slice_counts, _ = generate_and_save_chart(symbol, tf_str, tf_folder)
-                                if slice_counts:
-                                    save_sliced_newest_oldest_json(symbol, tf_str, tf_folder, slice_counts)
-                                if chart_path:
-                                    crop_chart(chart_path, symbol, tf_str, tf_folder)
-                        
-                        ticks_value(symbol, sym_folder, bn, cfg["BASE_FOLDER"], candidates[bn][cat])
-                        mt5.shutdown()
+    except Exception as e:
+        log_and_print(f"💥 SYSTEM ERROR: {e}", "CRITICAL")
+        return False
 
-            log_and_print("CYCLE 100% COMPLETED", "SUCCESS")
-            time.sleep(1800)
-
-        except Exception as e:
-            log_and_print(f"MAIN LOOP CRASH: {e}", "CRITICAL")
-            time.sleep(600)
-            
-if __name__ == "__main__":
+def main():
     success = fetch_charts_all_brokers(
         bars=2001
     )
@@ -1087,7 +1043,11 @@ if __name__ == "__main__":
     if success:
         log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
     else:
-        log_and_print("Process failed. Check error log for details.", "ERROR")
+        log_and_print("Process failed. Check error log for details.", "ERROR")   
+
+if __name__ == "__main__":
+    main()
+    
 
 
         
