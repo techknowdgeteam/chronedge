@@ -3618,10 +3618,13 @@ def entry_point_of_interest(broker_name):
         
         return orders_added           
 
-    def extract_poi_to_confirmation(target_data_tf, new_key, dev_base_path, new_folder_name, sym, pending_full_candle_refs):
+    def extract_poi_to_confirmation(target_data_tf, new_key, dev_base_path, new_folder_name, sym, pending_full_candle_refs, poi_confirmation_timeframes=None):
         """
         Extracts candles from point_of_interest markers and looks for the same timestamp in lower timeframes' full candle data.
         Creates {lower_tf}_confirmation_from_{source_tf}_poi_{original_key} structures in config.json
+        
+        ONLY creates confirmations for timeframe relationships explicitly defined in poi_confirmation_timeframes.
+        No default relationships are created.
         
         Args:
             target_data_tf: The timeframe data in target_data
@@ -3630,7 +3633,17 @@ def entry_point_of_interest(broker_name):
             new_folder_name: The entry folder name
             sym: Symbol being processed
             pending_full_candle_refs: Dictionary of references to full candle data in config.json
+            poi_confirmation_timeframes: Dictionary defining allowed POI -> confirmation timeframe relationships
+                                        Format: {"source_tf": ["confirmation_tf1", "confirmation_tf2", ...]}
+                                        If None or empty, NO confirmations will be created.
         """
+        # -----------------------------------------------------------------
+        # STRICT VALIDATION: Only proceed if we have confirmation timeframes configured
+        # -----------------------------------------------------------------
+        if not poi_confirmation_timeframes:
+            # No configuration provided - don't create any confirmations
+            return target_data_tf
+        
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
@@ -3648,28 +3661,45 @@ def entry_point_of_interest(broker_name):
         if not source_tf:
             return target_data_tf
         
-        # Define timeframe hierarchy (from highest to lowest)
-        tf_hierarchy = ['1M', '1W', '3D', '1D', '12h', '8h', '6h', '4h', '3h', '2h', '1h', '45m', '30m', '15m', '5m', '3m', '1m']
+        # -----------------------------------------------------------------
+        # STRICT FILTERING: Only use confirmation timeframes explicitly defined for this source_tf
+        # -----------------------------------------------------------------
+        # Check if this source timeframe has any configured confirmation relationships
+        if source_tf not in poi_confirmation_timeframes:
+            # No configuration for this source timeframe - skip completely
+            log(f"    ⏭️ No confirmation configuration for {source_tf} POI - skipping confirmations")
+            return target_data_tf
+        
+        # Get the allowed confirmation timeframes for this source_tf
+        allowed_confirmation_tfs = poi_confirmation_timeframes[source_tf]
+        
+        if not allowed_confirmation_tfs:
+            # Empty list means no confirmations for this source_tf
+            log(f"    ⏭️ Empty confirmation list for {source_tf} POI - skipping confirmations")
+            return target_data_tf
+        
+        log(f"    📋 Using configured confirmation timeframes for {source_tf} POI: {allowed_confirmation_tfs}")
         
         # Find all available timeframes from pending_full_candle_refs
         available_tfs = set()
+        tf_to_ref_map = {}  # Map timeframe to its reference data
         for ref_key, ref_data in pending_full_candle_refs.items():
             if ref_key.startswith('full_candles_ref_') or '_full_candles_ref_' in ref_key:
-                available_tfs.add(ref_data["tf"])
+                tf = ref_data["tf"]
+                available_tfs.add(tf)
+                tf_to_ref_map[tf] = ref_data
         
-        # Find lower timeframes (below source_tf) that are available
+        # Filter allowed confirmation timeframes to only those that are available
         lower_tfs = []
-        if source_tf in tf_hierarchy:
-            source_index = tf_hierarchy.index(source_tf)
-            # Get all timeframes below source_tf that are available
-            for tf in tf_hierarchy[source_index + 1:]:
-                if tf in available_tfs:
-                    lower_tfs.append(tf)
+        for tf in allowed_confirmation_tfs:
+            if tf in available_tfs:
+                lower_tfs.append(tf)
+            else:
+                log(f"      ⚠️ Configured confirmation timeframe {tf} not available for {sym}")
         
         if not lower_tfs:
-            #log(f"  ℹ️ No lower timeframes available for {sym} {source_tf}")
+            log(f"      ⚠️ No configured confirmation timeframes available for {source_tf}")
             return target_data_tf
-        
         
         # Collect all POI timestamps from source timeframe
         poi_timestamps = set()
@@ -3688,7 +3718,9 @@ def entry_point_of_interest(broker_name):
         
         log(f"  🔍 Found {len(poi_timestamps)} POI candles in {source_tf} for {sym}")
         
-        # For each POI timestamp, look for it in each lower timeframe
+        any_confirmations_created = False
+        
+        # For each POI timestamp, look for it in each allowed lower timeframe
         for timestamp in sorted(list(poi_timestamps)):
             log(f"    📍 Processing POI at {timestamp}")
             
@@ -3697,16 +3729,13 @@ def entry_point_of_interest(broker_name):
             
             # For each lower timeframe, try to find the candle
             for lower_tf in lower_tfs:
-                # Find the reference to the full candle data for this lower timeframe
-                lower_tf_candles = None
-                lower_tf_config_key = None
-                
-                for ref_key, ref_data in pending_full_candle_refs.items():
-                    if ref_data["tf"] == lower_tf:
-                        # The candles are stored in target_data_tf under the config_key
-                        lower_tf_config_key = ref_data["config_key"]
-                        lower_tf_candles = ref_data["target_data_ref"].get(lower_tf_config_key, [])
-                        break
+                # Get the reference data for this timeframe
+                ref_data = tf_to_ref_map.get(lower_tf)
+                if not ref_data:
+                    continue
+                    
+                # The candles are stored in target_data_tf under the config_key
+                lower_tf_candles = ref_data["target_data_ref"].get(ref_data["config_key"], [])
                 
                 if not lower_tf_candles:
                     log(f"      ⚠️ No candle data found for {lower_tf}")
@@ -3722,6 +3751,8 @@ def entry_point_of_interest(broker_name):
                 if poi_index == -1:
                     #log(f"      ⚠️ Timestamp {timestamp} not found in {lower_tf}")
                     continue
+                
+                any_confirmations_created = True
                 
                 # Extract from this index to the end (latest)
                 candles_from_poi = lower_tf_candles[poi_index:]
@@ -3755,6 +3786,9 @@ def entry_point_of_interest(broker_name):
                 target_data_tf[confirmation_key].sort(key=lambda x: x.get("time", ""))
                 
                 log(f"   💾 {len(new_candles)} {lower_tf} candles confirmation from POI at {timestamp}")
+        
+        if not any_confirmations_created:
+            log(f"    ℹ️ No confirmation candles could be created for {source_tf} POI timestamps")
         
         return target_data_tf
 
@@ -3852,16 +3886,40 @@ def entry_point_of_interest(broker_name):
                 
                 # Extract OHLC data from confirmation candles, preserving candle_number
                 ohlc_data = []
-                for candle in confirmation_data:
-                    ohlc_data.append({
-                        'time': candle.get('time', ''),
-                        'open': candle.get('open', 0),
-                        'high': candle.get('high', 0),
-                        'low': candle.get('low', 0),
-                        'close': candle.get('close', 0),
-                        'candle_number': candle.get('candle_number', None),  # Preserve the original candle number
-                        'original_candle': candle  # Store reference to original candle for updating coordinates
-                    })
+                for item in confirmation_data:
+                    # FIX: Check if item is a dictionary or a string
+                    if isinstance(item, dict):
+                        # It's a candle dictionary - proceed normally
+                        ohlc_data.append({
+                            'time': item.get('time', ''),
+                            'open': item.get('open', 0),
+                            'high': item.get('high', 0),
+                            'low': item.get('low', 0),
+                            'close': item.get('close', 0),
+                            'candle_number': item.get('candle_number', None),  # Preserve the original candle number
+                            'original_candle': item  # Store reference to original candle for updating coordinates
+                        })
+                    elif isinstance(item, str):
+                        # It's a string (possibly just a timestamp) - create a minimal candle
+                        # Try to parse the string as a timestamp
+                        timestamp = item
+                        log(f"       ⚠️ Warning: Found string instead of candle dict in {conf_key}: {timestamp[:50] if len(timestamp) > 50 else timestamp}")
+                        
+                        # Create a placeholder candle with just the timestamp
+                        # You may want to adjust these default values
+                        ohlc_data.append({
+                            'time': timestamp,
+                            'open': 0,
+                            'high': 0,
+                            'low': 0,
+                            'close': 0,
+                            'candle_number': None,
+                            'original_candle': {'time': timestamp}  # Create a minimal original candle
+                        })
+                    else:
+                        # Unknown type - skip
+                        log(f"       ⚠️ Warning: Unexpected data type in {conf_key}: {type(item)}")
+                        continue
                 
                 if not ohlc_data:
                     continue
@@ -3929,7 +3987,14 @@ def entry_point_of_interest(broker_name):
                 # Calculate price range for scaling
                 all_prices = []
                 for d in ohlc_data:
-                    all_prices.extend([d['high'], d['low']])
+                    # Only include prices if they're non-zero (placeholders might be zero)
+                    if d['high'] > 0 or d['low'] > 0:
+                        all_prices.extend([d['high'], d['low']])
+                
+                # If all prices are zero (all placeholder candles), create a dummy range
+                if not all_prices:
+                    all_prices = [0, 100]  # Dummy range for display
+                    log(f"       ⚠️ Warning: No valid price data in {conf_key}, using dummy range")
                 
                 min_price = min(all_prices)
                 max_price = max(all_prices)
@@ -3978,6 +4043,9 @@ def entry_point_of_interest(broker_name):
                 
                 # Define price to y conversion function for reuse
                 def price_to_y(price):
+                    # Handle case where price_range is zero to avoid division by zero
+                    if price_range == 0:
+                        return chart_bottom - chart_height // 2
                     return chart_bottom - int((price - min_price) / price_range * chart_height)
                 
                 # Draw each candle with its actual candle number (if enabled) and record coordinates
@@ -3988,10 +4056,15 @@ def entry_point_of_interest(broker_name):
                     else:
                         x_center = start_x
                     
-                    # Determine if bullish or bearish
-                    is_bullish = candle['close'] >= candle['open']
-                    # Use default green for bullish, red for bearish
-                    color = (0, 150, 0) if is_bullish else (0, 0, 255)
+                    # Determine if bullish or bearish (for placeholder candles, treat as neutral/gray)
+                    if candle['close'] == 0 and candle['open'] == 0:
+                        # Placeholder candle - use gray
+                        color = (128, 128, 128)
+                        is_bullish = None
+                    else:
+                        is_bullish = candle['close'] >= candle['open']
+                        # Use default green for bullish, red for bearish
+                        color = (0, 150, 0) if is_bullish else (0, 0, 255)
                     
                     # Calculate y positions for all OHLC values
                     open_y = price_to_y(candle['open'])
@@ -4008,17 +4081,19 @@ def entry_point_of_interest(broker_name):
                     body_top_y = min(open_y, close_y)
                     body_bottom_y = max(open_y, close_y)
                     
-                    # Draw the wick (high-low line)
-                    cv2.line(chart_img, 
-                            (int(x_center), high_y), 
-                            (int(x_center), low_y), 
-                            color, 1)
+                    # Draw the wick (high-low line) - only if we have valid price data
+                    if candle['high'] != 0 or candle['low'] != 0:
+                        cv2.line(chart_img, 
+                                (int(x_center), high_y), 
+                                (int(x_center), low_y), 
+                                color, 1)
                     
-                    # Draw the candle body
-                    cv2.rectangle(chart_img,
-                                (candle_left_x, body_top_y),
-                                (candle_right_x, body_bottom_y),
-                                color, -1)
+                    # Draw the candle body - only if we have valid open/close
+                    if candle['open'] != 0 or candle['close'] != 0:
+                        cv2.rectangle(chart_img,
+                                    (candle_left_x, body_top_y),
+                                    (candle_right_x, body_bottom_y),
+                                    color, -1)
                     
                     # Draw candle number only if NUMBER_FONT_SCALE > 0
                     if NUMBER_FONT_SCALE > 0:
@@ -4030,7 +4105,8 @@ def entry_point_of_interest(broker_name):
                             number_text = str(candle_number)
                         else:
                             number_text = str(i + 1)  # Fallback to sequential numbering
-                            log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
+                            if candle['open'] != 0 or candle['close'] != 0:  # Only warn for real candles
+                                log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
                         
                         # Calculate text size for background
                         (text_width, text_height), baseline = cv2.getTextSize(
@@ -4061,65 +4137,65 @@ def entry_point_of_interest(broker_name):
                         
                         # Draw the number in black
                         cv2.putText(chart_img, number_text, (number_x, number_y),
-                                  cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
+                                cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
                     
                     # -----------------------------------------------------------------
                     # RECORD CANDLE COORDINATES IN THE ORIGINAL DATA STRUCTURE
                     # -----------------------------------------------------------------
-                    # Calculate full candle dimensions (including wick)
-                    full_candle_height = abs(low_y - high_y)
-                    body_height = abs(body_bottom_y - body_top_y)
-                    
-                    # Get the original candle reference
-                    original_candle = candle['original_candle']
-                    
-                    # Record position data for the FULL candle (including wick)
-                    original_candle['candle_x'] = int(x_center)  # Center x-coordinate
-                    original_candle['candle_y'] = high_y  # Top of wick (highest point)
-                    original_candle['candle_width'] = candle_right_x - candle_left_x  # Body width
-                    original_candle['candle_height'] = full_candle_height  # Full height including wick
-                    original_candle['candle_left'] = candle_left_x
-                    original_candle['candle_right'] = candle_right_x
-                    original_candle['candle_top'] = high_y  # Top of wick
-                    original_candle['candle_bottom'] = low_y  # Bottom of wick
-                    
-                    # Record body-specific coordinates
-                    original_candle['body_top'] = body_top_y
-                    original_candle['body_bottom'] = body_bottom_y
-                    original_candle['body_height'] = body_height
-                    
-                    # Record wick coordinates
-                    original_candle['wick_top'] = high_y
-                    original_candle['wick_bottom'] = low_y
-                    original_candle['wick_x'] = int(x_center)
-                    
-                    # Also record drawing coordinates (matching the full candle)
-                    original_candle['draw_x'] = int(x_center)
-                    original_candle['draw_y'] = high_y
-                    original_candle['draw_w'] = candle_right_x - candle_left_x
-                    original_candle['draw_h'] = full_candle_height
-                    original_candle['draw_left'] = candle_left_x
-                    original_candle['draw_right'] = candle_right_x
-                    original_candle['draw_top'] = high_y
-                    original_candle['draw_bottom'] = low_y
-                    
-                    # Record individual OHLC pixel positions
-                    original_candle['open_pixel_y'] = open_y
-                    original_candle['high_pixel_y'] = high_y
-                    original_candle['low_pixel_y'] = low_y
-                    original_candle['close_pixel_y'] = close_y
-                    
-                    # Add chart metadata
-                    original_candle['chart_width'] = img_width
-                    original_candle['chart_height'] = BASE_HEIGHT
-                    original_candle['chart_timeframe'] = target_tf
-                    original_candle['source_timeframe'] = source_tf
-                    original_candle['confirmation_key'] = conf_key
-                    
-                    # Add price range metadata for scaling reference
-                    original_candle['chart_min_price'] = min_price
-                    original_candle['chart_max_price'] = max_price
-                    original_candle['chart_price_range'] = price_range
+                    # Only try to record coordinates if we have a valid original_candle that's a dict
+                    original_candle = candle.get('original_candle')
+                    if original_candle and isinstance(original_candle, dict):
+                        # Calculate full candle dimensions (including wick)
+                        full_candle_height = abs(low_y - high_y)
+                        body_height = abs(body_bottom_y - body_top_y)
+                        
+                        # Record position data for the FULL candle (including wick)
+                        original_candle['candle_x'] = int(x_center)  # Center x-coordinate
+                        original_candle['candle_y'] = high_y  # Top of wick (highest point)
+                        original_candle['candle_width'] = candle_right_x - candle_left_x  # Body width
+                        original_candle['candle_height'] = full_candle_height  # Full height including wick
+                        original_candle['candle_left'] = candle_left_x
+                        original_candle['candle_right'] = candle_right_x
+                        original_candle['candle_top'] = high_y  # Top of wick
+                        original_candle['candle_bottom'] = low_y  # Bottom of wick
+                        
+                        # Record body-specific coordinates
+                        original_candle['body_top'] = body_top_y
+                        original_candle['body_bottom'] = body_bottom_y
+                        original_candle['body_height'] = body_height
+                        
+                        # Record wick coordinates
+                        original_candle['wick_top'] = high_y
+                        original_candle['wick_bottom'] = low_y
+                        original_candle['wick_x'] = int(x_center)
+                        
+                        # Also record drawing coordinates (matching the full candle)
+                        original_candle['draw_x'] = int(x_center)
+                        original_candle['draw_y'] = high_y
+                        original_candle['draw_w'] = candle_right_x - candle_left_x
+                        original_candle['draw_h'] = full_candle_height
+                        original_candle['draw_left'] = candle_left_x
+                        original_candle['draw_right'] = candle_right_x
+                        original_candle['draw_top'] = high_y
+                        original_candle['draw_bottom'] = low_y
+                        
+                        # Record individual OHLC pixel positions
+                        original_candle['open_pixel_y'] = open_y
+                        original_candle['high_pixel_y'] = high_y
+                        original_candle['low_pixel_y'] = low_y
+                        original_candle['close_pixel_y'] = close_y
+                        
+                        # Add chart metadata
+                        original_candle['chart_width'] = img_width
+                        original_candle['chart_height'] = BASE_HEIGHT
+                        original_candle['chart_timeframe'] = target_tf
+                        original_candle['source_timeframe'] = source_tf
+                        original_candle['confirmation_key'] = conf_key
+                        
+                        # Add price range metadata for scaling reference
+                        original_candle['chart_min_price'] = min_price
+                        original_candle['chart_max_price'] = max_price
+                        original_candle['chart_price_range'] = price_range
                 
                 # Add title with candle count info - CHART NAME FORMAT: {target_tf}_confirmation_from_{source_tf}_poi
                 title = f"{sym} {target_tf}_confirmation_from_{source_tf}_poi ({num_candles} candles)"
@@ -4625,6 +4701,14 @@ def entry_point_of_interest(broker_name):
                                 add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
 
             # --- STEP 5: Extract POI to confirmation candles ---
+            # Get the POI confirmation timeframes from entry settings
+            poi_confirmation_timeframes = entry_settings.get("poi_confirmation_timeframes", {})
+            
+            if poi_confirmation_timeframes:
+                log(f"  📋 POI Confirmation Rules: {poi_confirmation_timeframes}")
+            else:
+                log(f"  ℹ️ No POI confirmation rules configured - no confirmations will be created")
+            
             for tf in tfs_to_keep:
                 if tf in target_data:
                     for file_key in list(target_data[tf].keys()):
@@ -4640,7 +4724,8 @@ def entry_point_of_interest(broker_name):
                                 dev_base_path, 
                                 new_folder_name, 
                                 sym,
-                                pending_full_candle_data  # Pass the queued full candle references
+                                pending_full_candle_data,  # Pass the queued full candle references
+                                poi_confirmation_timeframes  # Pass the configuration
                             )
                             
                             # Check if anything was added/modified
@@ -4685,12 +4770,10 @@ def entry_point_of_interest(broker_name):
 
         # --- NEW: Log summary of filtered processing ---
         if target_symbols:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (filtered to: {sorted(target_symbols)})")
-        else:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (no filtering)")
+            log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
         return sync_count
-        
+   
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
@@ -4736,7 +4819,7 @@ def entry_point_of_interest(broker_name):
                 new_folder_name = entry_settings.get('new_filename')
                 if new_folder_name:
                     print()
-                    log(f"\n📊 PROCESSING {new_folder_name} STRUCTURE")
+                    log(f"\n📊 PROCESSING {new_folder_name}")
                     
                     # Check if identify_definitions exist
                     identify_config = entry_settings.get("identify_definitions")
@@ -6359,10 +6442,13 @@ def entries_confirmation(broker_name):
         
         return orders_added           
 
-    def extract_poi_to_confirmation(target_data_tf, new_key, dev_base_path, new_folder_name, sym, pending_full_candle_refs):
+    def extract_poi_to_confirmation(target_data_tf, new_key, dev_base_path, new_folder_name, sym, pending_full_candle_refs, poi_confirmation_timeframes=None):
         """
         Extracts candles from point_of_interest markers and looks for the same timestamp in lower timeframes' full candle data.
         Creates {lower_tf}_confirmation_from_{source_tf}_poi_{original_key} structures in config.json
+        
+        ONLY creates confirmations for timeframe relationships explicitly defined in poi_confirmation_timeframes.
+        No default relationships are created.
         
         Args:
             target_data_tf: The timeframe data in target_data
@@ -6371,7 +6457,17 @@ def entries_confirmation(broker_name):
             new_folder_name: The entry folder name
             sym: Symbol being processed
             pending_full_candle_refs: Dictionary of references to full candle data in config.json
+            poi_confirmation_timeframes: Dictionary defining allowed POI -> confirmation timeframe relationships
+                                        Format: {"source_tf": ["confirmation_tf1", "confirmation_tf2", ...]}
+                                        If None or empty, NO confirmations will be created.
         """
+        # -----------------------------------------------------------------
+        # STRICT VALIDATION: Only proceed if we have confirmation timeframes configured
+        # -----------------------------------------------------------------
+        if not poi_confirmation_timeframes:
+            # No configuration provided - don't create any confirmations
+            return target_data_tf
+        
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
@@ -6389,29 +6485,45 @@ def entries_confirmation(broker_name):
         if not source_tf:
             return target_data_tf
         
-        # Define timeframe hierarchy (from highest to lowest)
-        tf_hierarchy = ['1M', '1W', '3D', '1D', '12h', '8h', '6h', '4h', '3h', '2h', '1h', '45m', '30m', '15m', '5m', '3m', '1m']
+        # -----------------------------------------------------------------
+        # STRICT FILTERING: Only use confirmation timeframes explicitly defined for this source_tf
+        # -----------------------------------------------------------------
+        # Check if this source timeframe has any configured confirmation relationships
+        if source_tf not in poi_confirmation_timeframes:
+            # No configuration for this source timeframe - skip completely
+            log(f"    ⏭️ No confirmation configuration for {source_tf} POI - skipping confirmations")
+            return target_data_tf
+        
+        # Get the allowed confirmation timeframes for this source_tf
+        allowed_confirmation_tfs = poi_confirmation_timeframes[source_tf]
+        
+        if not allowed_confirmation_tfs:
+            # Empty list means no confirmations for this source_tf
+            log(f"    ⏭️ Empty confirmation list for {source_tf} POI - skipping confirmations")
+            return target_data_tf
+        
+        log(f"    📋 Using configured confirmation timeframes for {source_tf} POI: {allowed_confirmation_tfs}")
         
         # Find all available timeframes from pending_full_candle_refs
         available_tfs = set()
+        tf_to_ref_map = {}  # Map timeframe to its reference data
         for ref_key, ref_data in pending_full_candle_refs.items():
             if ref_key.startswith('full_candles_ref_') or '_full_candles_ref_' in ref_key:
-                available_tfs.add(ref_data["tf"])
+                tf = ref_data["tf"]
+                available_tfs.add(tf)
+                tf_to_ref_map[tf] = ref_data
         
-        # Find lower timeframes (below source_tf) that are available
+        # Filter allowed confirmation timeframes to only those that are available
         lower_tfs = []
-        if source_tf in tf_hierarchy:
-            source_index = tf_hierarchy.index(source_tf)
-            # Get all timeframes below source_tf that are available
-            for tf in tf_hierarchy[source_index + 1:]:
-                if tf in available_tfs:
-                    lower_tfs.append(tf)
+        for tf in allowed_confirmation_tfs:
+            if tf in available_tfs:
+                lower_tfs.append(tf)
+            else:
+                log(f"      ⚠️ Configured confirmation timeframe {tf} not available for {sym}")
         
         if not lower_tfs:
-            #log(f"  ℹ️ No lower timeframes available for {sym} {source_tf}")
+            log(f"      ⚠️ No configured confirmation timeframes available for {source_tf}")
             return target_data_tf
-        
-        log(f"  🔍 Source TF: {source_tf}, Available lower TFs: {lower_tfs}")
         
         # Collect all POI timestamps from source timeframe
         poi_timestamps = set()
@@ -6430,7 +6542,9 @@ def entries_confirmation(broker_name):
         
         log(f"  🔍 Found {len(poi_timestamps)} POI candles in {source_tf} for {sym}")
         
-        # For each POI timestamp, look for it in each lower timeframe
+        any_confirmations_created = False
+        
+        # For each POI timestamp, look for it in each allowed lower timeframe
         for timestamp in sorted(list(poi_timestamps)):
             log(f"    📍 Processing POI at {timestamp}")
             
@@ -6439,16 +6553,13 @@ def entries_confirmation(broker_name):
             
             # For each lower timeframe, try to find the candle
             for lower_tf in lower_tfs:
-                # Find the reference to the full candle data for this lower timeframe
-                lower_tf_candles = None
-                lower_tf_config_key = None
-                
-                for ref_key, ref_data in pending_full_candle_refs.items():
-                    if ref_data["tf"] == lower_tf:
-                        # The candles are stored in target_data_tf under the config_key
-                        lower_tf_config_key = ref_data["config_key"]
-                        lower_tf_candles = ref_data["target_data_ref"].get(lower_tf_config_key, [])
-                        break
+                # Get the reference data for this timeframe
+                ref_data = tf_to_ref_map.get(lower_tf)
+                if not ref_data:
+                    continue
+                    
+                # The candles are stored in target_data_tf under the config_key
+                lower_tf_candles = ref_data["target_data_ref"].get(ref_data["config_key"], [])
                 
                 if not lower_tf_candles:
                     log(f"      ⚠️ No candle data found for {lower_tf}")
@@ -6464,6 +6575,8 @@ def entries_confirmation(broker_name):
                 if poi_index == -1:
                     #log(f"      ⚠️ Timestamp {timestamp} not found in {lower_tf}")
                     continue
+                
+                any_confirmations_created = True
                 
                 # Extract from this index to the end (latest)
                 candles_from_poi = lower_tf_candles[poi_index:]
@@ -6496,7 +6609,10 @@ def entries_confirmation(broker_name):
                 # Sort by time
                 target_data_tf[confirmation_key].sort(key=lambda x: x.get("time", ""))
                 
-                log(f"      ✅ {len(new_candles)} candles {lower_tf} confirmation from POI at {timestamp}")
+                log(f"   💾 {len(new_candles)} {lower_tf} candles confirmation from POI at {timestamp}")
+        
+        if not any_confirmations_created:
+            log(f"    ℹ️ No confirmation candles could be created for {source_tf} POI timestamps")
         
         return target_data_tf
 
@@ -6505,6 +6621,8 @@ def entries_confirmation(broker_name):
         Generates brand new charts for confirmation data extracted from POI candles.
         Creates charts directly from the confirmation candle data without needing source charts.
         Features dynamic width scaling for optimal candle visibility.
+        Records pixel coordinates for each candle in the target_data structure.
+        
         Chart filename format: {lower_tf}_confirmation_from_{source_tf}_poi.png
         
         Args:
@@ -6546,6 +6664,12 @@ def entries_confirmation(broker_name):
         INNER_PADDING_TOP = 20       # Space from top border to highest candle
         INNER_PADDING_BOTTOM = 20    # Space from bottom border to lowest candle
         
+        # Numbering configuration
+        NUMBER_FONT_SCALE = 0  # Smaller font for numbers (set to 0 to disable numbering)
+        NUMBER_FONT_THICKNESS = 2
+        NUMBER_OFFSET_ABOVE_WICK = 5  # Pixels above the wick to place the number
+        NUMBER_BG_PADDING = 2  # Padding around number for background
+        
         # Process each timeframe
         for tf in timeframes_to_process:
             if tf not in target_data:
@@ -6553,13 +6677,43 @@ def entries_confirmation(broker_name):
                 
             target_data_tf = target_data[tf]
             
-            # Find all confirmation keys in this timeframe's data
-            # New format: {lower_tf}_confirmation_from_{source_tf}_poi_{original_key}
-            confirmation_keys = [key for key in target_data_tf.keys() if "_confirmation_from_" in key]
+            # Find all confirmation data keys in this timeframe's data (not pattern keys)
+            # Look for keys that end with the original pattern name but don't end with "_patterns"
+            confirmation_keys = []
+            
+            # First, identify all base pattern names from pattern keys
+            pattern_bases = set()
+            for key in target_data_tf.keys():
+                if key.endswith("_patterns"):
+                    # Extract base key by removing '_patterns'
+                    base_key = key.replace("_patterns", "")
+                    pattern_bases.add(base_key)
+            
+            # Now look for keys that match these base patterns but aren't pattern keys themselves
+            for key in target_data_tf.keys():
+                # Skip pattern keys and metadata
+                if key.endswith("_patterns") or key == "_metadata":
+                    continue
+                
+                # Check if this key matches any pattern base
+                for base_key in pattern_bases:
+                    if key == base_key or key.startswith(base_key + "_") or base_key.startswith(key + "_"):
+                        # This is a candidate - check if it contains "_confirmation_from_"
+                        if "_confirmation_from_" in key:
+                            confirmation_keys.append(key)
+                            break
+            
+            # Alternative approach: directly look for keys with "_confirmation_from_" that don't end with "_patterns"
+            for key in target_data_tf.keys():
+                if "_confirmation_from_" in key and not key.endswith("_patterns"):
+                    confirmation_keys.append(key)
+            
+            # Remove duplicates
+            confirmation_keys = list(set(confirmation_keys))
             
             for conf_key in confirmation_keys:
                 # Parse the confirmation key to get source and target timeframes
-                # Format: {lower_tf}_confirmation_from_{source_tf}_poi_{original_key}
+                # Format: {target_tf}_confirmation_from_{source_tf}_poi_{original_key}
                 parts = conf_key.split('_confirmation_from_')
                 
                 if len(parts) != 2:
@@ -6569,7 +6723,8 @@ def entries_confirmation(broker_name):
                 remaining = parts[1]
                 
                 # Split remaining into source_tf and original_key
-                source_parts = remaining.split('_', 1)
+                # The remaining part has format: {source_tf}_poi_{original_key}
+                source_parts = remaining.split('_poi_')
                 if len(source_parts) != 2:
                     continue
                     
@@ -6579,29 +6734,58 @@ def entries_confirmation(broker_name):
                 if not source_tf or not target_tf:
                     continue
                 
-                # Get the confirmation data
+                # Get the confirmation data (this is the actual candle data, not patterns)
                 confirmation_data = target_data_tf.get(conf_key, [])
                 if not confirmation_data:
+                    log(f"    ⚠️ No confirmation data found for {conf_key}")
                     continue
                 
-                # Extract OHLC data from confirmation candles
+                # Log that we're generating chart for this confirmation data
+                log(f"    📊 Generating chart for {conf_key} with {len(confirmation_data)} candles")
+                
+                # Extract OHLC data from confirmation candles, preserving candle_number
                 ohlc_data = []
-                for candle in confirmation_data:
-                    ohlc_data.append({
-                        'time': candle.get('time', ''),
-                        'open': candle.get('open', 0),
-                        'high': candle.get('high', 0),
-                        'low': candle.get('low', 0),
-                        'close': candle.get('close', 0)
-                    })
+                for item in confirmation_data:
+                    # Check if item is a dictionary or a string
+                    if isinstance(item, dict):
+                        # It's a candle dictionary - proceed normally
+                        ohlc_data.append({
+                            'time': item.get('time', ''),
+                            'open': item.get('open', 0),
+                            'high': item.get('high', 0),
+                            'low': item.get('low', 0),
+                            'close': item.get('close', 0),
+                            'candle_number': item.get('candle_number', None),  # Preserve the original candle number
+                            'original_candle': item  # Store reference to original candle for updating coordinates
+                        })
+                    elif isinstance(item, str):
+                        # It's a string (possibly just a timestamp) - create a minimal candle
+                        timestamp = item
+                        log(f"       ⚠️ Warning: Found string instead of candle dict in {conf_key}: {timestamp[:50] if len(timestamp) > 50 else timestamp}")
+                        
+                        # Create a placeholder candle with just the timestamp
+                        ohlc_data.append({
+                            'time': timestamp,
+                            'open': 0,
+                            'high': 0,
+                            'low': 0,
+                            'close': 0,
+                            'candle_number': None,
+                            'original_candle': {'time': timestamp}  # Create a minimal original candle
+                        })
+                    else:
+                        # Unknown type - skip
+                        log(f"       ⚠️ Warning: Unexpected data type in {conf_key}: {type(item)}")
+                        continue
                 
                 if not ohlc_data:
+                    log(f"    ⚠️ No valid OHLC data extracted for {conf_key}")
                     continue
                 
                 num_candles = len(ohlc_data)
                 
                 # -----------------------------------------------------------------
-                # DYNAMIC WIDTH CALCULATION - NOW PROPERLY ACCOUNTS FOR ALL ELEMENTS
+                # DYNAMIC WIDTH CALCULATION
                 # -----------------------------------------------------------------
                 
                 # Determine optimal candle width based on number of candles
@@ -6627,7 +6811,6 @@ def entries_confirmation(broker_name):
                 target_candle_width = min(target_candle_width, MAX_CANDLE_WIDTH)
                 
                 # Calculate spacing based on candle width and multiplier
-                # This is the desired spacing BEFORE applying min spacing constraint
                 desired_spacing = target_candle_width * base_spacing_multiplier
                 
                 # Apply minimum spacing constraint
@@ -6640,7 +6823,6 @@ def entries_confirmation(broker_name):
                     total_span = target_candle_width * 2  # For single candle, give it some space
                 
                 # Calculate the total width needed for the chart area (including half candles at edges)
-                # Each candle extends half its width on each side from its center
                 chart_area_width = total_span + target_candle_width
                 
                 # Add inner padding to get the bordered area width
@@ -6663,7 +6845,14 @@ def entries_confirmation(broker_name):
                 # Calculate price range for scaling
                 all_prices = []
                 for d in ohlc_data:
-                    all_prices.extend([d['high'], d['low']])
+                    # Only include prices if they're non-zero (placeholders might be zero)
+                    if d['high'] > 0 or d['low'] > 0:
+                        all_prices.extend([d['high'], d['low']])
+                
+                # If all prices are zero (all placeholder candles), create a dummy range
+                if not all_prices:
+                    all_prices = [0, 100]  # Dummy range for display
+                    log(f"       ⚠️ Warning: No valid price data in {conf_key}, using dummy range")
                 
                 min_price = min(all_prices)
                 max_price = max(all_prices)
@@ -6699,7 +6888,6 @@ def entries_confirmation(broker_name):
                 # We want to center the candles in the available chart area
                 if num_candles > 1:
                     # Calculate if our pre-calculated spacing fits within the chart area
-                    # (it should, since we designed the image width around it)
                     if total_span <= chart_width - target_candle_width:
                         # Candles fit - center them
                         start_x = chart_left + (chart_width - (total_span + target_candle_width)) / 2 + (target_candle_width / 2)
@@ -6711,7 +6899,14 @@ def entries_confirmation(broker_name):
                     # Single candle - center it
                     start_x = chart_left + (chart_width / 2)
                 
-                # Draw each candle
+                # Define price to y conversion function for reuse
+                def price_to_y(price):
+                    # Handle case where price_range is zero to avoid division by zero
+                    if price_range == 0:
+                        return chart_bottom - chart_height // 2
+                    return chart_bottom - int((price - min_price) / price_range * chart_height)
+                
+                # Draw each candle with its actual candle number (if enabled) and record coordinates
                 for i, candle in enumerate(ohlc_data):
                     # Calculate x position
                     if num_candles > 1:
@@ -6719,38 +6914,146 @@ def entries_confirmation(broker_name):
                     else:
                         x_center = start_x
                     
-                    # Determine if bullish or bearish
-                    is_bullish = candle['close'] >= candle['open']
-                    # Use default green for bullish, red for bearish
-                    color = (0, 150, 0) if is_bullish else (0, 0, 255)
+                    # Determine if bullish or bearish (for placeholder candles, treat as neutral/gray)
+                    if candle['close'] == 0 and candle['open'] == 0:
+                        # Placeholder candle - use gray
+                        color = (128, 128, 128)
+                        is_bullish = None
+                    else:
+                        is_bullish = candle['close'] >= candle['open']
+                        # Use default green for bullish, red for bearish
+                        color = (0, 150, 0) if is_bullish else (0, 0, 255)
                     
-                    # Calculate y positions
-                    def price_to_y(price):
-                        return chart_bottom - int((price - min_price) / price_range * chart_height)
-                    
+                    # Calculate y positions for all OHLC values
                     open_y = price_to_y(candle['open'])
                     close_y = price_to_y(candle['close'])
                     high_y = price_to_y(candle['high'])
                     low_y = price_to_y(candle['low'])
                     
-                    # Draw the wick (high-low line)
-                    cv2.line(chart_img, 
-                            (int(x_center), high_y), 
-                            (int(x_center), low_y), 
-                            color, 1)
-                    
-                    # Draw the candle body
+                    # Calculate candle rectangle coordinates for the body
                     half_width = target_candle_width / 2
-                    if is_bullish:
+                    candle_left_x = int(x_center - half_width)
+                    candle_right_x = int(x_center + half_width)
+                    
+                    # For the body: top is min(open, close), bottom is max(open, close)
+                    body_top_y = min(open_y, close_y)
+                    body_bottom_y = max(open_y, close_y)
+                    
+                    # Draw the wick (high-low line) - only if we have valid price data
+                    if candle['high'] != 0 or candle['low'] != 0:
+                        cv2.line(chart_img, 
+                                (int(x_center), high_y), 
+                                (int(x_center), low_y), 
+                                color, 1)
+                    
+                    # Draw the candle body - only if we have valid open/close
+                    if candle['open'] != 0 or candle['close'] != 0:
                         cv2.rectangle(chart_img,
-                                    (int(x_center - half_width), close_y),
-                                    (int(x_center + half_width), open_y),
+                                    (candle_left_x, body_top_y),
+                                    (candle_right_x, body_bottom_y),
                                     color, -1)
-                    else:
-                        cv2.rectangle(chart_img,
-                                    (int(x_center - half_width), open_y),
-                                    (int(x_center + half_width), close_y),
-                                    color, -1)
+                    
+                    # Draw candle number only if NUMBER_FONT_SCALE > 0
+                    if NUMBER_FONT_SCALE > 0:
+                        # Get the actual candle number from the data
+                        candle_number = candle.get('candle_number')
+                        
+                        # If candle_number exists, use it; otherwise, fall back to sequential numbering
+                        if candle_number is not None:
+                            number_text = str(candle_number)
+                        else:
+                            number_text = str(i + 1)  # Fallback to sequential numbering
+                            if candle['open'] != 0 or candle['close'] != 0:  # Only warn for real candles
+                                log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
+                        
+                        # Calculate text size for background
+                        (text_width, text_height), baseline = cv2.getTextSize(
+                            number_text, cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, NUMBER_FONT_THICKNESS
+                        )
+                        
+                        # Position the number above the wick
+                        number_x = int(x_center - text_width / 2)
+                        number_y = high_y - NUMBER_OFFSET_ABOVE_WICK
+                        
+                        # Draw white background for better readability
+                        bg_x1 = number_x - NUMBER_BG_PADDING
+                        bg_y1 = number_y - text_height - NUMBER_BG_PADDING
+                        bg_x2 = number_x + text_width + NUMBER_BG_PADDING
+                        bg_y2 = number_y + NUMBER_BG_PADDING
+                        
+                        # Ensure background stays within image bounds
+                        bg_x1 = max(0, bg_x1)
+                        bg_y1 = max(0, bg_y1)
+                        bg_x2 = min(img_width, bg_x2)
+                        bg_y2 = min(BASE_HEIGHT, bg_y2)
+                        
+                        # Draw white rectangle background
+                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                        
+                        # Draw black border around background for better visibility
+                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), 1)
+                        
+                        # Draw the number in black
+                        cv2.putText(chart_img, number_text, (number_x, number_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
+                    
+                    # -----------------------------------------------------------------
+                    # RECORD CANDLE COORDINATES IN THE ORIGINAL DATA STRUCTURE
+                    # -----------------------------------------------------------------
+                    # Only try to record coordinates if we have a valid original_candle that's a dict
+                    original_candle = candle.get('original_candle')
+                    if original_candle and isinstance(original_candle, dict):
+                        # Calculate full candle dimensions (including wick)
+                        full_candle_height = abs(low_y - high_y)
+                        body_height = abs(body_bottom_y - body_top_y)
+                        
+                        # Record position data for the FULL candle (including wick)
+                        original_candle['candle_x'] = int(x_center)  # Center x-coordinate
+                        original_candle['candle_y'] = high_y  # Top of wick (highest point)
+                        original_candle['candle_width'] = candle_right_x - candle_left_x  # Body width
+                        original_candle['candle_height'] = full_candle_height  # Full height including wick
+                        original_candle['candle_left'] = candle_left_x
+                        original_candle['candle_right'] = candle_right_x
+                        original_candle['candle_top'] = high_y  # Top of wick
+                        original_candle['candle_bottom'] = low_y  # Bottom of wick
+                        
+                        # Record body-specific coordinates
+                        original_candle['body_top'] = body_top_y
+                        original_candle['body_bottom'] = body_bottom_y
+                        original_candle['body_height'] = body_height
+                        
+                        # Record wick coordinates
+                        original_candle['wick_top'] = high_y
+                        original_candle['wick_bottom'] = low_y
+                        original_candle['wick_x'] = int(x_center)
+                        
+                        # Also record drawing coordinates (matching the full candle)
+                        original_candle['draw_x'] = int(x_center)
+                        original_candle['draw_y'] = high_y
+                        original_candle['draw_w'] = candle_right_x - candle_left_x
+                        original_candle['draw_h'] = full_candle_height
+                        original_candle['draw_left'] = candle_left_x
+                        original_candle['draw_right'] = candle_right_x
+                        original_candle['draw_top'] = high_y
+                        original_candle['draw_bottom'] = low_y
+                        
+                        # Record individual OHLC pixel positions
+                        original_candle['open_pixel_y'] = open_y
+                        original_candle['high_pixel_y'] = high_y
+                        original_candle['low_pixel_y'] = low_y
+                        original_candle['close_pixel_y'] = close_y
+                        
+                        # Add chart metadata
+                        original_candle['chart_width'] = img_width
+                        original_candle['chart_height'] = BASE_HEIGHT
+                        original_candle['chart_timeframe'] = target_tf
+                        original_candle['source_timeframe'] = source_tf
+                        original_candle['confirmation_key'] = conf_key
+                        
+                        # Add price range metadata for scaling reference
+                        original_candle['chart_min_price'] = min_price
+                        original_candle['chart_max_price'] = max_price
+                        original_candle['chart_price_range'] = price_range
                 
                 # Add title with candle count info - CHART NAME FORMAT: {target_tf}_confirmation_from_{source_tf}_poi
                 title = f"{sym} {target_tf}_confirmation_from_{source_tf}_poi ({num_candles} candles)"
@@ -6773,11 +7076,252 @@ def entries_confirmation(broker_name):
                 output_path = os.path.join(target_sym_dir, output_filename)
                 cv2.imwrite(output_path, chart_img)
                 
-                log(f"    ✅ Confirmation chart: {output_filename}")
+                log(f"    ✅ Saved chart: {output_filename}")
                 chart_count += 1
         
         if chart_count > 0:
-            log(f"  📊 Generated {chart_count} confirmation charts for {sym}")
+            log(f"  📊 Generated {chart_count} confirmation charts for {sym} with pixel coordinates recorded")
+        else:
+            log(f"  ℹ️ No confirmation charts generated for {sym}")
+
+    def move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
+        """
+        Helper function to reorganize confirmation keys to their target timeframes.
+        
+        Args:
+            target_data: The target_data dictionary containing all timeframe data
+            dev_base_path: Base development path
+            new_folder_name: New folder name for the entry
+            sym: Current symbol being processed
+        
+        Returns:
+            bool: True if any modifications were made, False otherwise
+        """
+        modified = False
+        
+        # First, collect all confirmation keys from all timeframes
+        confirmation_keys_to_move = []
+        for source_tf, tf_data in list(target_data.items()):
+            if isinstance(tf_data, dict):
+                for key in list(tf_data.keys()):
+                    # Check if this is a confirmation key (contains "_confirmation_from_")
+                    if "_confirmation_from_" in key:
+                        # Parse the key to get the target timeframe
+                        # Format: {target_tf}_confirmation_from_{source_tf}_poi_{original_key}
+                        parts = key.split('_confirmation_from_')
+                        if len(parts) == 2:
+                            target_tf = parts[0]  # This is the timeframe where it should belong
+                            confirmation_keys_to_move.append({
+                                'source_tf': source_tf,
+                                'target_tf': target_tf,
+                                'key': key,
+                                'data': tf_data[key]
+                            })
+        
+        # Now move each confirmation key to its target timeframe
+        for item in confirmation_keys_to_move:
+            source_tf = item['source_tf']
+            target_tf = item['target_tf']
+            key = item['key']
+            data = item['data']
+            
+            # Skip if source and target are the same (already in correct place)
+            if source_tf == target_tf:
+                continue
+            
+            # Ensure target timeframe exists in target_data
+            if target_tf not in target_data:
+                target_data[target_tf] = {}
+            
+            # Check if this key already exists in target timeframe
+            if key not in target_data[target_tf]:
+                # Move the data to target timeframe
+                target_data[target_tf][key] = data
+                
+                # Remove from source timeframe
+                if key in target_data[source_tf]:
+                    del target_data[source_tf][key]
+                    modified = True
+                    
+                    # If source timeframe becomes empty after removal, we could optionally remove it
+                    # But we'll leave that for cleanup elsewhere
+            else:
+                # Key already exists in target - we need to merge
+                log(f"  ⚠️ Key {key} already exists in {target_tf}, merging data")
+                
+                # Get existing data
+                existing_data = target_data[target_tf][key]
+                
+                # Create a set of existing timestamps to avoid duplicates
+                existing_timestamps = set()
+                for candle in existing_data:
+                    if 'time' in candle:
+                        existing_timestamps.add(candle['time'])
+                
+                # Add new candles that don't already exist
+                new_candles_added = 0
+                for candle in data:
+                    if 'time' in candle and candle['time'] not in existing_timestamps:
+                        existing_data.append(candle)
+                        new_candles_added += 1
+                
+                if new_candles_added > 0:
+                    # Sort by time
+                    existing_data.sort(key=lambda x: x.get('time', ''))
+                    modified = True
+                    log(f"    ✅ Added {new_candles_added} new candles to existing data")
+                
+                # Remove from source timeframe
+                if key in target_data[source_tf]:
+                    del target_data[source_tf][key]
+                    modified = True
+        
+        return modified
+    
+    def populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
+        """
+        Populate original candle lists with confirmation data from their corresponding confirmation keys.
+        This overwrites the original candle data with the confirmation data, completely replacing it.
+        Creates a backup of the original data under a 'backup' key before overwriting.
+        
+        Args:
+            target_data: The target_data dictionary containing all timeframe data
+            dev_base_path: Base development path
+            new_folder_name: New folder name for the entry
+            sym: Current symbol being processed
+        
+        Returns:
+            bool: True if any modifications were made, False otherwise
+        """
+        modified = False
+        
+        # First, collect all confirmation keys and map them to their target candle lists
+        # Format: {target_tf}_confirmation_from_{source_tf}_poi_{original_key}
+        # We need to map this to: original_key (without the prefix) in the target_tf
+        
+        for tf, tf_data in target_data.items():
+            if not isinstance(tf_data, dict):
+                continue
+                
+            # Find all confirmation keys in this timeframe
+            confirmation_keys = []
+            for key in list(tf_data.keys()):
+                if "_confirmation_from_" in key:
+                    # Parse the key to understand what it's confirming
+                    # Format: {target_tf}_confirmation_from_{source_tf}_poi_{original_key}
+                    parts = key.split('_confirmation_from_')
+                    if len(parts) == 2:
+                        target_tf = parts[0]  # The timeframe this confirmation belongs to
+                        remainder = parts[1]
+                        
+                        # Further split to get source_tf and original_key
+                        # remainder format: {source_tf}_poi_{original_key}
+                        source_parts = remainder.split('_poi_')
+                        if len(source_parts) == 2:
+                            source_tf = source_parts[0]
+                            original_key = source_parts[1]
+                            
+                            confirmation_keys.append({
+                                'timeframe': tf,
+                                'key': key,
+                                'data': tf_data[key],
+                                'target_tf': target_tf,
+                                'source_tf': source_tf,
+                                'original_key': original_key
+                            })
+            
+            # Now process each confirmation key to populate its target candle lists
+            for conf_item in confirmation_keys:
+                conf_tf = conf_item['timeframe']
+                conf_key = conf_item['key']
+                conf_data = conf_item['data']
+                target_tf = conf_item['target_tf']
+                source_tf = conf_item['source_tf']
+                original_key = conf_item['original_key']
+                
+                # We want to populate candle lists in the target_tf (where the confirmation belongs)
+                # Look for candle lists in target_tf that match patterns related to the original_key
+                
+                if target_tf in target_data and isinstance(target_data[target_tf], dict):
+                    target_tf_data = target_data[target_tf]
+                    
+                    # Find all candle lists in this timeframe that should be updated
+                    # These would be keys that contain the original_key or are the original_key itself
+                    candle_lists_to_update = []
+                    
+                    for candle_key in list(target_tf_data.keys()):
+                        # Skip if this is a patterns key or a confirmation key
+                        if candle_key.endswith('_patterns') or '_confirmation_from_' in candle_key:
+                            continue
+                        
+                        # Check if this candle list should be updated with confirmation data
+                        # It should be updated if it's related to the original_key
+                        # This includes:
+                        # 1. Exact match with original_key
+                        # 2. Keys that contain original_key as a suffix (like "PREFIX_original_key")
+                        # 3. Keys that are the base name without the new_folder_name prefix
+                        
+                        candle_key_lower = candle_key.lower()
+                        original_key_lower = original_key.lower()
+                        
+                        # Check for various matching patterns
+                        should_update = (
+                            candle_key == original_key or  # Exact match
+                            candle_key.endswith(f"_{original_key}") or  # Suffix match
+                            candle_key_lower.endswith(f"_{original_key_lower}") or  # Case insensitive suffix
+                            original_key_lower in candle_key_lower or  # Contains the original key
+                            candle_key.replace(f"{new_folder_name}_", "") == original_key  # Without prefix
+                        )
+                        
+                        if should_update:
+                            candle_lists_to_update.append(candle_key)
+                    
+                    # Also check for keys that might be the base pattern name
+                    # For example, if original_key is "higherhighsandlowerlows", also look for 
+                    # "STRUCTURAL-LIQUIDITY_higherhighsandlowerlows" and similar
+                    for candle_key in list(target_tf_data.keys()):
+                        if candle_key.endswith('_patterns') or '_confirmation_from_' in candle_key:
+                            continue
+                        
+                        # If the candle_key contains the original_key as a suffix after an underscore
+                        parts = candle_key.split('_')
+                        if len(parts) > 1 and parts[-1] == original_key:
+                            if candle_key not in candle_lists_to_update:
+                                candle_lists_to_update.append(candle_key)
+                    
+                    # Remove duplicates
+                    candle_lists_to_update = list(set(candle_lists_to_update))
+                    
+                    # Now update each identified candle list with the confirmation data
+                    if candle_lists_to_update:
+                        
+                        # Create backup of original data before overwriting
+                        # We only need one backup since all candle lists being updated have the same data
+                        # (they all correspond to the same original pattern)
+                        
+                        # Get the first candle list to backup (they all have the same data)
+                        first_candle_key = candle_lists_to_update[0]
+                        original_data = target_tf_data.get(first_candle_key, [])
+                        
+                        # Create backup key name based on the original_key
+                        # Format: backup_original_key
+                        backup_key = f"backup"
+                        
+                        # Only create backup if it doesn't already exist
+                        if backup_key not in target_tf_data:
+                            target_tf_data[backup_key] = original_data.copy()
+                            modified = True
+                        else:
+                            log(f"    ℹ️ Backup {backup_key} already exists, skipping backup creation")
+                        
+                        # Now update all candle lists with confirmation data
+                        for candle_key in candle_lists_to_update:
+                            # COMPLETELY REPLACE the original data with confirmation data
+                            # This is what the user requested: overwrite/remove original
+                            target_tf_data[candle_key] = conf_data.copy()
+                            modified = True
+        
+        return modified
 
     def process_entry_confirmation_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
@@ -6914,22 +7458,6 @@ def entries_confirmation(broker_name):
                     if not candles:
                         continue
                     
-                    # Check if this candle data is already enriched
-                    # Look for existing confirmation keys that match the pattern
-                    enrichment_key_pattern = f"{tf}_confirmation_from_"
-                    already_enriched = False
-                    
-                    for existing_key in target_data[tf].keys():
-                        if existing_key.startswith(enrichment_key_pattern) and existing_key.endswith(f"_poi_{file_key}"):
-                            # Check if patterns exist (indicating full enrichment)
-                            if f"{existing_key}_patterns" in target_data[tf]:
-                                already_enriched = True
-                                log(f"  ⏭️ [{sym}] {tf} {file_key} already enriched, skipping")
-                                break
-                    
-                    if already_enriched:
-                        continue
-                    
                     # Find existing confirmation keys for this timeframe and file_key
                     # Pattern: {current_tf}_confirmation_from_{higher_tf}_poi_{file_key}
                     matching_keys = []
@@ -6944,6 +7472,11 @@ def entries_confirmation(broker_name):
                     
                     # Process each matching key
                     for new_key in matching_keys:
+                        # IMPORTANT CHANGE: Check if this key already has patterns (indicates it's already enriched)
+                        if f"{new_key}_patterns" in target_data[tf]:
+                            log(f"  ⏭️ [{sym}] {new_key} already enriched with patterns, skipping")
+                            continue
+                        
                         # Extract source timeframe from the key for chart naming
                         source_tf = new_key.replace(f"{tf}_confirmation_from_", "").split("_poi_")[0]
                         chart_base_name = f"{tf}_confirmation_from_{source_tf}_poi"
@@ -6993,15 +7526,22 @@ def entries_confirmation(broker_name):
                                 # Queue the image to be saved (overwrites the existing one)
                                 pending_images[f"{chart_base_name}.png"] = (tf, img, new_key)
 
-                # Process full_candles_data.json from target symbol directory
-                target_full_candle_path = os.path.join(target_sym_dir, f"{tf}_full_candles_data.json")
-                if os.path.exists(target_full_candle_path):
-                    try:
-                        with open(target_full_candle_path, 'r', encoding='utf-8') as f:
-                            full_data_content = json.load(f)
-                            pending_full_candle_data[f"{tf}_full_candles_data.json"] = (tf, full_data_content)
-                    except Exception as e:
-                        log(f"Error reading full_candles_data for {sym} {tf}: {e}")
+                    # Process full_candles_data.json from target symbol directory
+                    target_full_candle_path = os.path.join(target_sym_dir, f"{tf}_full_candles_data.json")
+                    if os.path.exists(target_full_candle_path):
+                        try:
+                            with open(target_full_candle_path, 'r', encoding='utf-8') as f:
+                                full_data_content = json.load(f)
+                                # Create a reference in the same format as pending_full_candle_data in process_entry
+                                full_candles_ref_key = f"{tf}_full_candles_ref_{file_key}"
+                                pending_full_candle_data[full_candles_ref_key] = {
+                                    "tf": tf,
+                                    "config_key": file_key,
+                                    "target_data_ref": target_data[tf],
+                                    "target_key": file_key
+                                }
+                        except Exception as e:
+                            log(f"Error reading full_candles_data for {sym} {tf}: {e}")
             
             # Process Ticks JSON (still from source since ticks are separate)
             source_ticks_path = os.path.join(dev_base_path, sym, f"{sym}_ticks.json")
@@ -7027,6 +7567,67 @@ def entries_confirmation(broker_name):
 
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
+
+            # -----------------------------------------------------------------
+            # NEW: Add POI Confirmation Extraction (like process_entry)
+            # -----------------------------------------------------------------
+            # Get the POI confirmation timeframes from entry settings
+            poi_confirmation_timeframes = entry_settings.get("poi_confirmation_timeframes", {})
+            
+            if poi_confirmation_timeframes:
+                log(f"  📋 POI Confirmation Rules: {poi_confirmation_timeframes}")
+            else:
+                log(f"  ℹ️ No POI confirmation rules configured - no confirmations will be created")
+            
+            for tf in tfs_to_keep:
+                if tf in target_data:
+                    for file_key in list(target_data[tf].keys()):
+                        if file_key.endswith("_patterns"):
+                            # Extract base key (remove '_patterns' suffix)
+                            base_key = file_key.replace("_patterns", "")
+                            
+                            # Call the POI extraction function for this pattern, passing pending_full_candle_data
+                            original_target_data = target_data[tf].copy()  # Keep a copy for reference
+                            result = extract_poi_to_confirmation(
+                                target_data[tf], 
+                                base_key, 
+                                dev_base_path, 
+                                new_folder_name, 
+                                sym,
+                                pending_full_candle_data,  # Pass the queued full candle references
+                                poi_confirmation_timeframes  # Pass the configuration
+                            )
+                            
+                            # Check if anything was added/modified
+                            if result != original_target_data:
+                                target_data[tf] = result
+                                modified = True
+                                log(f"  📊 Added POI confirmation candles for {sym} {tf}")
+
+            # -----------------------------------------------------------------
+            # NEW: Generate confirmation charts (like process_entry)
+            # -----------------------------------------------------------------
+            generate_confirmation_charts(
+                dev_base_path,
+                new_folder_name,
+                sym,
+                target_sym_dir,
+                target_data,
+                pending_full_candle_data,
+                tfs_to_keep  # Pass the list of timeframes to keep
+            )
+
+            # -----------------------------------------------------------------
+            # NEW: Move confirmation keys to target timeframes (like process_entry)
+            # -----------------------------------------------------------------
+            if move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
+                modified = True
+
+            # -----------------------------------------------------------------
+            # NEW: Populate other timeframes with confirmation entry data (like process_entry)
+            # -----------------------------------------------------------------
+            if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
+                modified = True
 
             # Add liquidity sweepers to patterns
             for tf in tfs_to_keep:
@@ -7057,22 +7658,16 @@ def entries_confirmation(broker_name):
                 cv2.imwrite(img_path, img_data)
                 log(f"  💾 [{sym}] {img_name} updated")
 
-            # Write tf_full_candles_data.json files
-            for json_name, (tf, content) in pending_full_candle_data.items():
-                if tf in tfs_to_keep:
-                    with open(os.path.join(target_sym_dir, json_name), 'w', encoding='utf-8') as f:
-                        json.dump(content, f, indent=4)
+            # Write tf_full_candles_data.json files (if needed - though we may not need this anymore)
+            # This part might be deprecated if we're using references instead
 
             if modified:
                 with open(target_config_path, 'w', encoding='utf-8') as f:
                     json.dump(target_data, f, indent=4)
                 sync_count += 1
-                log(f"  ✅ [{sym}] Enriched and saved")
 
         if target_symbols:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (filtered to: {sorted(target_symbols)})")
-        else:
-            log(f"✅ Completed: Processed {sync_count} symbols for {new_folder_name} (no filtering)")
+            log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
             
         return sync_count
 
@@ -7121,7 +7716,7 @@ def entries_confirmation(broker_name):
                 new_folder_name = entry_settings.get('new_filename')
                 if new_folder_name:
                     print()
-                    log(f"\n📊 PROCESSING {new_folder_name} ENTRY POI CONFIRMATION")
+                    log(f"\n📊 PROCESSING {new_folder_name} ENTRIES POI CONFIRMATION")
                     
                     # Check if identify_definitions exist
                     identify_config = entry_settings.get("identify_definitions")
@@ -7143,7 +7738,7 @@ def entries_confirmation(broker_name):
                     total_syncs += syncs
         
         if entry_count > 0:
-            return f"Completed: {entry_count} entry points processed, {total_syncs} total syncs"
+            return f"COMPLETED: {entry_count} ENTRIES CONFIRMATION PROCESSED"
         else:
             return f"No entry points found for processing."
     
