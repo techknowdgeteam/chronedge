@@ -2593,7 +2593,7 @@ def entry_point_of_interest(broker_name):
         """
         Identifies Point of Interest (Breaker) based strictly on price violation.
         Updated to specifically target swing_low and swing_high violations.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject and after_subject values without auto-appending _liquidity.
         Tags anchor candles with 'from': True and 'after': True.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
@@ -2605,9 +2605,9 @@ def entry_point_of_interest(broker_name):
         from_sub = poi_config.get("from_subject")  
         after_sub = poi_config.get("after_subject") 
         
-        # Create variants to check for both the original and liquidity versions
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
-        after_variants = [after_sub, f"{after_sub}_liquidity"] if after_sub else []
+        # FIX: Only check for the exact values, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        after_variants = [after_sub] if after_sub else []
 
         candle_map = {
             c.get("candle_number"): c 
@@ -2616,7 +2616,7 @@ def entry_point_of_interest(broker_name):
         }
 
         for p_name, family in patterns.items():
-            # 1. Locate the anchor candles - check both original and liquidity variants
+            # 1. Locate the anchor candles - check only the exact values
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -2698,12 +2698,12 @@ def entry_point_of_interest(broker_name):
                 family.append(hitler_record)
 
         return target_data_tf
-
+    
     def identify_poi_mitigation(target_data_tf, new_key, poi_config):
         """
         Removes patterns where specific candles (restrict_definitions_mitigation) 
         violate the target price based on swing type.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject and restrict values without auto-appending _liquidity.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
@@ -2718,13 +2718,13 @@ def entry_point_of_interest(broker_name):
 
         restrict_subs = [s.strip() for s in restrict_raw.split(",")]
         
-        # Create variants for from_subject (check both original and liquidity)
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
+        # FIX: Only check for the exact from_subject value, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
         
         patterns_to_remove = []
 
         for p_name, family in patterns.items():
-            # Find from_candle using variants
+            # Find from_candle using exact value only
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -2750,10 +2750,10 @@ def entry_point_of_interest(broker_name):
 
             is_mitigated = False
             
-            # Check if any restricted candle violates the price level
-            # For each restrict subject, check both original and liquidity variants
+            # FIX: Check each restrict subject using exact values only (no auto-appended _liquidity)
             for sub_key in restrict_subs:
-                sub_variants = [sub_key, f"{sub_key}_liquidity"]
+                # Only check for the exact subject value
+                sub_variants = [sub_key]  # Don't auto-append _liquidity
                 
                 restrict_candle = None
                 for variant in sub_variants:
@@ -2789,14 +2789,14 @@ def entry_point_of_interest(broker_name):
             del patterns[p_name]
 
         return target_data_tf
-
+    
     def draw_poi_tools(img, target_data_tf, new_key, poi_config):
         """
         Draws visual markers on the image. 
         Boxes feature a single-edge border on the 'sensitive' price level.
         Updates 'from_candle' with flags regarding its extension or break status.
         Now attaches the formatted time of the breaker candle to the center of boxes.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject value without auto-appending _liquidity.
         """
         if not poi_config or img is None:
             return img
@@ -2807,8 +2807,8 @@ def entry_point_of_interest(broker_name):
         drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
         from_sub = poi_config.get("from_subject")
         
-        # Create variants for from_subject (check both original and liquidity)
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
+        # FIX: Only check for the exact value provided, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
         
         # Config mapping for sensitive edge
         hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
@@ -2817,7 +2817,7 @@ def entry_point_of_interest(broker_name):
         img_height, img_width = img.shape[:2]
 
         for p_name, family in patterns.items():
-            # 1. Identify the origin (from_candle) using variants
+            # 1. Identify the origin (from_candle) using exact value only
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -3461,6 +3461,138 @@ def entry_point_of_interest(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
+    
+    def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
+        """
+        Saves hitler/POI entry information into a poi_entry.json file.
+        Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
+        Follows the same logic as identify_prices but targets Hitler/POI candles
+        Only records orders for symbols that have confirmation keys across all timeframes
+        """
+        if not record_config:
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        pending_poi_list = []
+        price_map = {
+            "low_price": "low",
+            "high_price": "high",
+            "open_price": "open",
+            "close_price": "close"
+        }
+        
+        # Updated Path Logic: Inside the new_folder_name directory
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+        os.makedirs(orders_dir, exist_ok=True)
+        poi_file = os.path.join(orders_dir, "poi_entry.json")
+
+        # Check if this source timeframe has any confirmation keys in ANY timeframe of the full target data
+        has_confirmation = False
+        source_tf = None
+        
+        # First, determine the source timeframe from any pattern
+        for p_name, family in patterns.items():
+            if family and len(family) > 0:
+                source_tf = family[0].get("timeframe")
+                if source_tf:
+                    break
+        
+        if source_tf and target_data_full:
+            # Check through ALL timeframes in the full target data
+            for tf_key, tf_data in target_data_full.items():
+                if isinstance(tf_data, dict):
+                    # Check each key in this timeframe's data
+                    for data_key in tf_data.keys():
+                        if isinstance(data_key, str) and f"_confirmation_from_{source_tf}_poi_" in data_key:
+                            has_confirmation = True
+                            break
+                if has_confirmation:
+                    break
+        
+        # If no confirmation keys found across all timeframes, don't record any orders
+        if not has_confirmation:
+            return
+
+        for p_name, family in patterns.items():
+            # Find the Hitler/POI candle instead of pending_entry_level
+            hitler_candle = next((c for c in family if c.get("is_hitler_breaker") is True or c.get("point_of_interest") is True), None)
+            
+            if hitler_candle:
+                poi_data = {
+                    "symbol": hitler_candle.get("symbol", "unknown"),
+                    "timeframe": hitler_candle.get("timeframe", "unknown"),
+                    "risk_reward": record_config.get("risk_reward", 0),
+                    "order_type": "unknown",
+                    "entry": 0,
+                    "exit": 0,
+                    "target": 0,
+                    "hitler_time": hitler_candle.get("time", "")  # Additional field for hitler time
+                }
+
+                # Get entry, exit, and target prices using the same logic as identify_prices
+                for role in ["entry", "exit", "target"]:
+                    role_cfg = record_config.get(role, {})
+                    subject_key = role_cfg.get("subject")
+                    
+                    if subject_key:
+                        target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                        if target_candle:
+                            swing_type = target_candle.get("swing_type", "").lower()
+                            price_attr_raw = ""
+                            if "high" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                            elif "low" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
+
+                            actual_key = price_map.get(price_attr_raw, price_attr_raw)
+                            if actual_key:
+                                poi_data[role] = target_candle.get(actual_key, 0)
+                
+                # Determine order type using the same logic as identify_prices
+                entry_subject = record_config.get("entry", {}).get("subject")
+                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), hitler_candle)
+                
+                e_swing = entry_candle.get("swing_type", "").lower()
+                type_cfg = record_config.get("order_type", {})
+                
+                if "high" in e_swing:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
+                else:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+
+                pending_poi_list.append(poi_data)
+
+        if pending_poi_list:
+            # Instead of overwriting, we should append/merge with existing data
+            # But we need to ensure we don't have duplicates
+            existing_poi = []
+            if os.path.exists(poi_file):
+                try:
+                    with open(poi_file, 'r', encoding='utf-8') as f:
+                        existing_poi = json.load(f)
+                except: 
+                    existing_poi = []
+            
+            # Create a dictionary keyed by (symbol, timeframe, hitler_time) to avoid duplicates
+            poi_dict = {}
+            
+            # Add existing entries to dictionary
+            for entry in existing_poi:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Add new entries (will overwrite if same key exists)
+            for entry in pending_poi_list:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Convert back to list
+            merged_poi = list(poi_dict.values())
+            
+            with open(poi_file, 'w', encoding='utf-8') as f:
+                json.dump(merged_poi, f, indent=4)
 
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
@@ -4568,7 +4700,7 @@ def entry_point_of_interest(broker_name):
                             modified = True
         
         return modified
-
+    
     def process_entry_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
@@ -4752,6 +4884,11 @@ def entry_point_of_interest(broker_name):
                                 original_candles = candles
                                 if original_candles:
                                     add_liquidity_sweepers_to_patterns(target_data[tf], new_key, original_candles)
+                                    
+                                    # --- ADDED: Call liquidity_flags_to_sweepers immediately after adding sweepers ---
+                                    patterns_key = f"{new_key}_patterns"
+                                    if patterns_key in target_data[tf]:
+                                        liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
                                 
                             modified = True
 
@@ -4819,6 +4956,10 @@ def entry_point_of_interest(broker_name):
                             
                             if original_candles:
                                 add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
+                                
+                                # --- ADDED: Also add liquidity flags to sweepers for any patterns created here ---
+                                if identify_config:
+                                    liquidity_flags_to_sweepers(target_data[tf], file_key, identify_config)
 
 
             # --- STEP 5: Now create images WITH sweepers properly added ---
@@ -4863,12 +5004,11 @@ def entry_point_of_interest(broker_name):
                                 if record_config:
                                     identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
                             
-                            # Draw definition tools AFTER sweepers have been added
+                            # Draw definition tools AFTER sweepers and flags have been added
                             if identify_config:
                                 patterns_key = f"{new_key}_patterns"
                                 if patterns_key in target_data[tf]:
-                                    # --- ADDED: Call liquidity_flags_to_sweepers before drawing definition tools ---
-                                    liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
+                                    # No need to call liquidity_flags_to_sweepers here as it's already done
                                     img = draw_definition_tools(img, target_data[tf], patterns_key, identify_config)
                             
                             img_filename = f"{tf}_{file_key}.png"
@@ -4943,6 +5083,55 @@ def entry_point_of_interest(broker_name):
         if entry_confirmation_enabled:
             log(f"  🧹 Clearing old limit orders for {new_folder_name} (confirmation enabled)")
             limit_orders_old_record_cleanup(dev_base_path, new_folder_name)
+            
+            # --- NEW: Identify and save Hitler/POI prices using the same record_config ---
+            log(f"  🎯 Identifying Hitler/POI entries for {new_folder_name}")
+            record_config = entry_settings.get("record_prices")  # Use the same record_config as limit orders
+            
+            if record_config:
+                # First, clear the existing poi_entry.json to start fresh
+                orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+                poi_file = os.path.join(orders_dir, "poi_entry.json")
+                if os.path.exists(poi_file):
+                    try:
+                        os.remove(poi_file)
+                        log(f"    🧹 Cleared existing poi_entry.json")
+                    except:
+                        pass
+                
+                # Iterate through all symbols and timeframes to identify hitler prices
+                for sym in sorted(os.listdir(base_folder)):
+                    sym_p = os.path.join(base_folder, sym)
+                    if not os.path.isdir(sym_p):
+                        continue
+                        
+                    target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
+                    target_config_path = os.path.join(target_sym_dir, "config.json")
+                    
+                    if os.path.exists(target_config_path):
+                        try:
+                            with open(target_config_path, 'r', encoding='utf-8') as f:
+                                target_data = json.load(f)
+                            
+                            # Process each timeframe
+                            for tf in target_data.keys():
+                                if isinstance(target_data[tf], dict):
+                                    for key in target_data[tf].keys():
+                                        if key.endswith("_patterns"):
+                                            # Call identify_hitler_prices for each pattern key
+                                            # Pass the FULL target_data so it can check across all timeframes
+                                            identify_hitler_prices(
+                                                target_data[tf], 
+                                                key.replace("_patterns", ""), 
+                                                record_config,
+                                                dev_base_path, 
+                                                new_folder_name,
+                                                target_data  # Pass the full target_data for cross-timeframe checking
+                                            )
+                        except Exception as e:
+                            log(f"Error processing hitler prices for {sym}: {e}")
+            else:
+                log(f"  ⚠️ No record_config found for {new_folder_name}, skipping Hitler/POI identification")
         else:
             log(f"  💾 Preserving limit orders for {new_folder_name} (confirmation disabled)")
 
@@ -4950,7 +5139,7 @@ def entry_point_of_interest(broker_name):
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
-        return sync_count 
+        return sync_count
     
     def main_logic():
         """Main logic for processing entry points of interest."""
@@ -6049,7 +6238,7 @@ def entries_confirmation(broker_name):
         """
         Identifies Point of Interest (Breaker) based strictly on price violation.
         Updated to specifically target swing_low and swing_high violations.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject and after_subject values without auto-appending _liquidity.
         Tags anchor candles with 'from': True and 'after': True.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
@@ -6061,9 +6250,9 @@ def entries_confirmation(broker_name):
         from_sub = poi_config.get("from_subject")  
         after_sub = poi_config.get("after_subject") 
         
-        # Create variants to check for both the original and liquidity versions
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
-        after_variants = [after_sub, f"{after_sub}_liquidity"] if after_sub else []
+        # FIX: Only check for the exact values, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        after_variants = [after_sub] if after_sub else []
 
         candle_map = {
             c.get("candle_number"): c 
@@ -6072,7 +6261,7 @@ def entries_confirmation(broker_name):
         }
 
         for p_name, family in patterns.items():
-            # 1. Locate the anchor candles - check both original and liquidity variants
+            # 1. Locate the anchor candles - check only the exact values
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -6154,12 +6343,12 @@ def entries_confirmation(broker_name):
                 family.append(hitler_record)
 
         return target_data_tf
-
+    
     def identify_poi_mitigation(target_data_tf, new_key, poi_config):
         """
         Removes patterns where specific candles (restrict_definitions_mitigation) 
         violate the target price based on swing type.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject and restrict values without auto-appending _liquidity.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
@@ -6174,13 +6363,13 @@ def entries_confirmation(broker_name):
 
         restrict_subs = [s.strip() for s in restrict_raw.split(",")]
         
-        # Create variants for from_subject (check both original and liquidity)
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
+        # FIX: Only check for the exact from_subject value, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
         
         patterns_to_remove = []
 
         for p_name, family in patterns.items():
-            # Find from_candle using variants
+            # Find from_candle using exact value only
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -6206,10 +6395,10 @@ def entries_confirmation(broker_name):
 
             is_mitigated = False
             
-            # Check if any restricted candle violates the price level
-            # For each restrict subject, check both original and liquidity variants
+            # FIX: Check each restrict subject using exact values only (no auto-appended _liquidity)
             for sub_key in restrict_subs:
-                sub_variants = [sub_key, f"{sub_key}_liquidity"]
+                # Only check for the exact subject value
+                sub_variants = [sub_key]  # Don't auto-append _liquidity
                 
                 restrict_candle = None
                 for variant in sub_variants:
@@ -6245,14 +6434,14 @@ def entries_confirmation(broker_name):
             del patterns[p_name]
 
         return target_data_tf
-
+    
     def draw_poi_tools(img, target_data_tf, new_key, poi_config):
         """
         Draws visual markers on the image. 
         Boxes feature a single-edge border on the 'sensitive' price level.
         Updates 'from_candle' with flags regarding its extension or break status.
         Now attaches the formatted time of the breaker candle to the center of boxes.
-        Now recognizes both {define_name} and {define_name}_liquidity as valid subjects.
+        Now respects the exact from_subject value without auto-appending _liquidity.
         """
         if not poi_config or img is None:
             return img
@@ -6263,8 +6452,8 @@ def entries_confirmation(broker_name):
         drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
         from_sub = poi_config.get("from_subject")
         
-        # Create variants for from_subject (check both original and liquidity)
-        from_variants = [from_sub, f"{from_sub}_liquidity"] if from_sub else []
+        # FIX: Only check for the exact value provided, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
         
         # Config mapping for sensitive edge
         hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
@@ -6273,7 +6462,7 @@ def entries_confirmation(broker_name):
         img_height, img_width = img.shape[:2]
 
         for p_name, family in patterns.items():
-            # 1. Identify the origin (from_candle) using variants
+            # 1. Identify the origin (from_candle) using exact value only
             from_candle = None
             for variant in from_variants:
                 from_candle = next((c for c in family if c.get(variant) is True), None)
@@ -6917,6 +7106,138 @@ def entries_confirmation(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
+    
+    def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
+        """
+        Saves hitler/POI entry information into a poi_entry.json file.
+        Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
+        Follows the same logic as identify_prices but targets Hitler/POI candles
+        Only records orders for symbols that have confirmation keys across all timeframes
+        """
+        if not record_config:
+            return
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        pending_poi_list = []
+        price_map = {
+            "low_price": "low",
+            "high_price": "high",
+            "open_price": "open",
+            "close_price": "close"
+        }
+        
+        # Updated Path Logic: Inside the new_folder_name directory
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+        os.makedirs(orders_dir, exist_ok=True)
+        poi_file = os.path.join(orders_dir, "poi_entry.json")
+
+        # Check if this source timeframe has any confirmation keys in ANY timeframe of the full target data
+        has_confirmation = False
+        source_tf = None
+        
+        # First, determine the source timeframe from any pattern
+        for p_name, family in patterns.items():
+            if family and len(family) > 0:
+                source_tf = family[0].get("timeframe")
+                if source_tf:
+                    break
+        
+        if source_tf and target_data_full:
+            # Check through ALL timeframes in the full target data
+            for tf_key, tf_data in target_data_full.items():
+                if isinstance(tf_data, dict):
+                    # Check each key in this timeframe's data
+                    for data_key in tf_data.keys():
+                        if isinstance(data_key, str) and f"_confirmation_from_{source_tf}_poi_" in data_key:
+                            has_confirmation = True
+                            break
+                if has_confirmation:
+                    break
+        
+        # If no confirmation keys found across all timeframes, don't record any orders
+        if not has_confirmation:
+            return
+
+        for p_name, family in patterns.items():
+            # Find the Hitler/POI candle instead of pending_entry_level
+            hitler_candle = next((c for c in family if c.get("is_hitler_breaker") is True or c.get("point_of_interest") is True), None)
+            
+            if hitler_candle:
+                poi_data = {
+                    "symbol": hitler_candle.get("symbol", "unknown"),
+                    "timeframe": hitler_candle.get("timeframe", "unknown"),
+                    "risk_reward": record_config.get("risk_reward", 0),
+                    "order_type": "unknown",
+                    "entry": 0,
+                    "exit": 0,
+                    "target": 0,
+                    "hitler_time": hitler_candle.get("time", "")  # Additional field for hitler time
+                }
+
+                # Get entry, exit, and target prices using the same logic as identify_prices
+                for role in ["entry", "exit", "target"]:
+                    role_cfg = record_config.get(role, {})
+                    subject_key = role_cfg.get("subject")
+                    
+                    if subject_key:
+                        target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                        if target_candle:
+                            swing_type = target_candle.get("swing_type", "").lower()
+                            price_attr_raw = ""
+                            if "high" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                            elif "low" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
+
+                            actual_key = price_map.get(price_attr_raw, price_attr_raw)
+                            if actual_key:
+                                poi_data[role] = target_candle.get(actual_key, 0)
+                
+                # Determine order type using the same logic as identify_prices
+                entry_subject = record_config.get("entry", {}).get("subject")
+                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), hitler_candle)
+                
+                e_swing = entry_candle.get("swing_type", "").lower()
+                type_cfg = record_config.get("order_type", {})
+                
+                if "high" in e_swing:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
+                else:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+
+                pending_poi_list.append(poi_data)
+
+        if pending_poi_list:
+            # Instead of overwriting, we should append/merge with existing data
+            # But we need to ensure we don't have duplicates
+            existing_poi = []
+            if os.path.exists(poi_file):
+                try:
+                    with open(poi_file, 'r', encoding='utf-8') as f:
+                        existing_poi = json.load(f)
+                except: 
+                    existing_poi = []
+            
+            # Create a dictionary keyed by (symbol, timeframe, hitler_time) to avoid duplicates
+            poi_dict = {}
+            
+            # Add existing entries to dictionary
+            for entry in existing_poi:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Add new entries (will overwrite if same key exists)
+            for entry in pending_poi_list:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Convert back to list
+            merged_poi = list(poi_dict.values())
+            
+            with open(poi_file, 'w', encoding='utf-8') as f:
+                json.dump(merged_poi, f, indent=4)
 
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
@@ -8042,7 +8363,7 @@ def entries_confirmation(broker_name):
                             modified = True
         
         return modified
-
+    
     def process_entry_confirmation_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
@@ -8243,6 +8564,11 @@ def entries_confirmation(broker_name):
                                     
                                     if original_candles:
                                         add_liquidity_sweepers_to_patterns(target_data[tf], new_key, original_candles)
+                                        
+                                        # --- MOVED: Call liquidity_flags_to_sweepers immediately after adding sweepers ---
+                                        patterns_key = f"{new_key}_patterns"
+                                        if patterns_key in target_data[tf]:
+                                            liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
                                 
                                 modified = True
                                 
@@ -8352,8 +8678,8 @@ def entries_confirmation(broker_name):
             if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
                 modified = True
 
-            # STEP 4 ADD DEFINITIONS LIQUIDITY TO PATTERNS (This section is now redundant but kept for backward compatibility)
-            # Note: This section is kept but the main processing now happens immediately after pattern creation
+            # STEP 4 ADD DEFINITIONS LIQUIDITY TO PATTERNS - Now redundant as we already did it above
+            # But keeping for backward compatibility with any patterns that might have been created elsewhere
             for tf in tfs_to_keep:
                 if tf in target_data:
                     for file_key in list(target_data[tf].keys()):
@@ -8374,6 +8700,9 @@ def entries_confirmation(broker_name):
                             
                             if original_candles:
                                 add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
+                                
+                                # Also add liquidity flags to sweepers for any patterns created here
+                                liquidity_flags_to_sweepers(target_data[tf], file_key, identify_config)
 
             # =================================================================
             # NOW DRAW ALL IMAGES WITH SWEEPERS INCLUDED
@@ -8433,12 +8762,11 @@ def entries_confirmation(broker_name):
                                     if record_config:
                                         identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
                                 
-                                # Draw definition tools NOW that sweepers are in the patterns
+                                # Draw definition tools NOW that sweepers and flags are in the patterns
                                 if identify_config:
                                     patterns_key = f"{new_key}_patterns"
                                     if patterns_key in target_data[tf]:
-                                        # --- ADDED: Call liquidity_flags_to_sweepers before drawing definition tools ---
-                                        liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
+                                        # No need to call liquidity_flags_to_sweepers here as it's already done
                                         img = draw_definition_tools(img, target_data[tf], patterns_key, identify_config)
                                 
                                 # Queue the image to be saved
@@ -8456,11 +8784,60 @@ def entries_confirmation(broker_name):
                     json.dump(target_data, f, indent=4)
                 sync_count += 1
 
+        # --- FINAL STEP: Identify and save Hitler/POI prices using the same record_config ---
+        log(f"  🎯 Identifying Hitler/POI entries for {new_folder_name}")
+        record_config = entry_settings.get("record_prices")  # Use the same record_config as limit orders
+        
+        if record_config:
+            # First, clear the existing poi_entry.json to start fresh
+            orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+            poi_file = os.path.join(orders_dir, "poi_entry.json")
+            if os.path.exists(poi_file):
+                try:
+                    os.remove(poi_file)
+                    log(f"    🧹 Cleared existing poi_entry.json")
+                except:
+                    pass
+            
+            # Iterate through all symbols and timeframes to identify hitler prices
+            for sym in sorted(os.listdir(base_folder)):
+                sym_p = os.path.join(base_folder, sym)
+                if not os.path.isdir(sym_p):
+                    continue
+                    
+                target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
+                target_config_path = os.path.join(target_sym_dir, "config.json")
+                
+                if os.path.exists(target_config_path):
+                    try:
+                        with open(target_config_path, 'r', encoding='utf-8') as f:
+                            target_data = json.load(f)
+                        
+                        # Process each timeframe
+                        for tf in target_data.keys():
+                            if isinstance(target_data[tf], dict):
+                                for key in target_data[tf].keys():
+                                    if key.endswith("_patterns"):
+                                        # Call identify_hitler_prices for each pattern key
+                                        # Pass the FULL target_data so it can check across all timeframes
+                                        identify_hitler_prices(
+                                            target_data[tf], 
+                                            key.replace("_patterns", ""), 
+                                            record_config,
+                                            dev_base_path, 
+                                            new_folder_name,
+                                            target_data  # Pass the full target_data for cross-timeframe checking
+                                        )
+                    except Exception as e:
+                        log(f"Error processing hitler prices for {sym}: {e}")
+        else:
+            log(f"  ⚠️ No record_config found for {new_folder_name}, skipping Hitler/POI identification")
+
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
             
         return sync_count
-    
+
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
