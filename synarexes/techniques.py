@@ -478,7 +478,7 @@ def label_objects(
         cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
 
-def swing_points(broker_name):
+def swing_pointss(broker_name):
 
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
@@ -526,7 +526,7 @@ def swing_points(broker_name):
         label_cfg = hlll_cfg.get("label", {})
         hh_text = label_cfg.get("swinghighs_text", "HH")
         ll_text = label_cfg.get("swinglows_text", "ll")
-        cm_text = label_cfg.get("contourmaker_text", "m")
+        cm_text = label_cfg.get("contourmaker_text", "")
         label_at = label_cfg.get("label_at", {})
         hh_pos = label_at.get("swing_highs", "high").lower()
         ll_pos = label_at.get("swing_lows", "low").lower()
@@ -695,6 +695,335 @@ def swing_points(broker_name):
 
     log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
     return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"  
+
+def swing_points(broker_name):
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    def log(msg, level="INFO"):
+        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] {msg}")
+
+    dev_dict = load_developers_dictionary()
+    cfg = dev_dict.get(broker_name)
+    if not cfg:
+        return f"[{broker_name}] Error: Broker not in dictionary."
+    
+    base_folder = cfg.get("BASE_FOLDER")
+    am_data = get_account_management(broker_name)
+    if not am_data:
+        return f"[{broker_name}] Error: accountmanagement.json missing."
+    
+    define_candles = am_data.get("chart", {}).get("define_candles", {})
+    keyword = "swing_points"
+    matching_configs = [(k, v) for k, v in define_candles.items() if keyword in k.lower()]
+    if not matching_configs:
+        return f"[{broker_name}] Error: No configuration found for '{keyword}'."
+    
+    total_marked_all, processed_charts_all = 0, 0
+
+    def resolve_marker(raw):
+        if not raw: return None, False
+        raw = str(raw).lower().strip()
+        if raw in ["arrow", "arrows", "singlearrow"]: return "arrow", False
+        if raw in ["doublearrow", "doublearrows"]: return "arrow", True
+        if raw in ["reverse_arrow", "reversearrow"]: return "reverse_arrow", False
+        if raw in ["reverse_doublearrow", "reverse_doublearrows"]: return "reverse_arrow", True
+        if raw in ["rightarrow", "right_arrow"]: return "rightarrow", False
+        if raw in ["leftarrow", "left_arrow"]: return "leftarrow", False
+        if "dot" in raw: return "dot", False
+        return raw, False
+
+    def process_image_tile(img, tile_start, tile_width, data_segment, 
+                          neighbor_left, neighbor_right, 
+                          ll_col, hh_col, ll_text, hh_text, cm_text,
+                          ll_obj, hh_obj, ll_dbl, hh_dbl,
+                          ll_cm_obj, hh_cm_obj, ll_cm_dbl, hh_cm_dbl,
+                          ll_pos, hh_pos):
+        """
+        Process a single tile of the image with corresponding data segment
+        Returns: modified tile, swing_count_in_tile, processed_data_segment
+        """
+        tile_end = min(tile_start + tile_width, img.shape[1])
+        tile = img[:, tile_start:tile_end].copy()
+        
+        # Adjust x-coordinates for this tile
+        for idx, candle in enumerate(data_segment):
+            if 'candle_x' in candle:
+                # Store original global x for reference
+                candle['global_x'] = candle['candle_x']
+                # Adjust to tile-local coordinates
+                candle['candle_x'] = candle['candle_x'] - tile_start
+                if candle['candle_x'] < 0 or candle['candle_x'] > tile_width:
+                    continue
+        
+        n = len(data_segment)
+        swing_count_in_tile = 0
+        start_idx = neighbor_left
+        end_idx = n - neighbor_right
+        
+        swing_data = []
+        
+        for i in range(start_idx, end_idx):
+            curr_h, curr_l = data_segment[i]['high'], data_segment[i]['low']
+            
+            l_h = [d['high'] for d in data_segment[i - neighbor_left:i]]
+            l_l = [d['low'] for d in data_segment[i - neighbor_left:i]]
+            r_h = [d['high'] for d in data_segment[i + 1:i + 1 + neighbor_right]]
+            r_l = [d['low'] for d in data_segment[i + 1:i + 1 + neighbor_right]]
+            
+            is_hh = curr_h > max(l_h) and curr_h > max(r_h)
+            is_ll = curr_l < min(l_l) and curr_l < min(r_l)
+            
+            if not (is_hh or is_ll):
+                continue
+            
+            swing_count_in_tile += 1
+            is_bull = is_ll
+            active_color = ll_col if is_bull else hh_col
+            custom_text = ll_text if is_bull else hh_text
+            obj_type = ll_obj if is_bull else hh_obj
+            dbl_arrow = ll_dbl if is_bull else hh_dbl
+            position = ll_pos if is_bull else hh_pos
+            
+            # Draw on tile
+            label_objects_and_text(
+                tile, data_segment[i]["candle_x"], data_segment[i]["candle_y"], 
+                data_segment[i]["candle_height"],
+                fvg_swing_type=data_segment[i]['candle_number'],
+                custom_text=custom_text,
+                object_type=obj_type,
+                is_bullish_arrow=is_bull,
+                is_marked=True,
+                double_arrow=dbl_arrow,
+                arrow_color=active_color,
+                label_position=position
+            )
+            
+            # Handle contour maker
+            m_idx = i + neighbor_right
+            contour_maker_entry = None
+            if m_idx < n:
+                cm_obj = ll_cm_obj if is_bull else hh_cm_obj
+                cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
+                
+                label_objects_and_text(
+                    tile, data_segment[m_idx]["candle_x"], data_segment[m_idx]["candle_y"], 
+                    data_segment[m_idx]["candle_height"],
+                    custom_text=cm_text,
+                    object_type=cm_obj,
+                    is_bullish_arrow=is_bull,
+                    is_marked=True,
+                    double_arrow=cm_dbl,
+                    arrow_color=active_color,
+                    label_position=position
+                )
+                
+                data_segment[m_idx]["is_contour_maker"] = True
+                contour_maker_entry = data_segment[m_idx].copy()
+            
+            # Update data with swing info (use global coordinates)
+            swing_info = {
+                "swing_type": "swing_low" if is_bull else "swing_high",
+                "is_swing": True,
+                "active_color": active_color,
+                "contour_maker": contour_maker_entry,
+                "m_idx": data_segment[i].get('global_idx', i) + neighbor_right if m_idx < n else None
+            }
+            
+            # Restore global x for output
+            if 'global_x' in data_segment[i]:
+                data_segment[i]['draw_x'] = data_segment[i]['global_x']
+            else:
+                data_segment[i]['draw_x'] = data_segment[i].get('candle_x', 0) + tile_start
+            
+            data_segment[i].update(swing_info)
+        
+        return tile, swing_count_in_tile, data_segment
+
+    log(f"--- STARTING HH/ll ANALYSIS: {broker_name} ---")
+
+    for config_key, hlll_cfg in matching_configs:
+        bars = hlll_cfg.get("BARS", 101)
+        output_filename_base = hlll_cfg.get("filename", "highers.json")
+        direction = hlll_cfg.get("read_candles_from", "new_old")
+        
+        neighbor_left = hlll_cfg.get("NEIGHBOR_LEFT", 5)
+        neighbor_right = hlll_cfg.get("NEIGHBOR_RIGHT", 5)
+        
+        # Tile processing settings
+        TILE_WIDTH = 10000  # Process 10,000 pixels at a time
+        TILE_OVERLAP = max(neighbor_left, neighbor_right) * 50  # Overlap to handle swing detection across tile boundaries
+        
+        label_cfg = hlll_cfg.get("label", {})
+        hh_text = label_cfg.get("swinghighs_text", "HH")
+        ll_text = label_cfg.get("swinglows_text", "ll")
+        cm_text = label_cfg.get("contourmaker_text", "")
+        label_at = label_cfg.get("label_at", {})
+        hh_pos = label_at.get("swing_highs", "high").lower()
+        ll_pos = label_at.get("swing_lows", "low").lower()
+        
+        color_map = {"green": (0, 255, 0), "red": (255, 0, 0), "blue": (0, 0, 255)}
+        hh_col = color_map.get(label_at.get("swing_highs_color", "red").lower(), (255, 0, 0))
+        ll_col = color_map.get(label_at.get("swing_lows_color", "green").lower(), (0, 255, 0))
+        
+        hh_obj, hh_dbl = resolve_marker(label_at.get("swing_highs_marker", "arrow"))
+        ll_obj, ll_dbl = resolve_marker(label_at.get("swing_lows_marker", "arrow"))
+        hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("swing_highs_contourmaker_marker", ""))
+        ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("swing_lows_contourmaker_marker", ""))
+
+        for sym in sorted(os.listdir(base_folder)):
+            sym_p = os.path.join(base_folder, sym)
+            if not os.path.isdir(sym_p): continue
+            
+            for tf in sorted(os.listdir(sym_p)):
+                paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
+                config_path = os.path.join(paths["output_dir"], "config.json")
+                
+                if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
+                    continue
+                
+                try:
+                    # Load data
+                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
+                        data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
+                    
+                    # Load image with memory mapping for large files
+                    log(f"Loading large image: {paths['source_chart']}")
+                    img = cv2.imread(paths["source_chart"])
+                    if img is None: 
+                        log(f"   Skipping: Could not load image {paths['source_chart']}", "WARNING")
+                        continue
+                    
+                    img_height, img_width = img.shape[:2]
+                    log(f"   Image dimensions: {img_width}x{img_height} pixels")
+                    
+                    # Process candles to get x-coordinates
+                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if len(contours) == 0: 
+                        log(f"   No contours found for {sym} {tf}")
+                        continue
+
+                    contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+                    
+                    if len(data) != len(contours):
+                        min_len = min(len(data), len(contours))
+                        data = data[:min_len]
+                        contours = contours[:min_len]
+
+                    # Extract candle positions
+                    for idx, contour in enumerate(contours):
+                        x, y, w, h = cv2.boundingRect(contour)
+                        data[idx].update({
+                            "candle_x": x + (w // 2),
+                            "candle_y": y,
+                            "candle_width": w,
+                            "candle_height": h,
+                            "candle_left": x,
+                            "candle_right": x + w,
+                            "candle_top": y,
+                            "candle_bottom": y + h,
+                            "global_idx": idx  # Store original index
+                        })
+
+                    # Create output image (copy of original to draw on)
+                    output_img = img.copy()
+                    
+                    # Process in tiles
+                    total_swings_in_chart = 0
+                    
+                    for tile_start in range(0, img_width, TILE_WIDTH - TILE_OVERLAP):
+                        tile_end = min(tile_start + TILE_WIDTH, img_width)
+                        
+                        # Find candles in this tile (with overlap)
+                        tile_candles = []
+                        for candle in data:
+                            candle_x = candle.get('candle_x', 0)
+                            # Include candles that are in the tile or within overlap region
+                            if (candle_x >= tile_start - TILE_OVERLAP and 
+                                candle_x <= tile_end + TILE_OVERLAP):
+                                # Make a copy for this tile processing
+                                candle_copy = candle.copy()
+                                candle_copy['tile_idx'] = len(tile_candles)
+                                tile_candles.append(candle_copy)
+                        
+                        if len(tile_candles) < neighbor_left + neighbor_right + 1:
+                            continue  # Not enough candles in this tile
+                        
+                        log(f"   Processing tile {tile_start}-{tile_end}: {len(tile_candles)} candles")
+                        
+                        # Process this tile
+                        tile_img, swings_in_tile, processed_tile_data = process_image_tile(
+                            output_img, tile_start, TILE_WIDTH, tile_candles,
+                            neighbor_left, neighbor_right,
+                            ll_col, hh_col, ll_text, hh_text, cm_text,
+                            ll_obj, hh_obj, ll_dbl, hh_dbl,
+                            ll_cm_obj, hh_cm_obj, ll_cm_dbl, hh_cm_dbl,
+                            ll_pos, hh_pos
+                        )
+                        
+                        # Copy the processed tile back to the output image
+                        output_img[:, tile_start:tile_end] = tile_img
+                        
+                        # Update original data with swing information
+                        for processed_candle in processed_tile_data:
+                            if 'global_idx' in processed_candle:
+                                idx = processed_candle['global_idx']
+                                if idx < len(data):
+                                    # Merge swing info without overwriting existing data
+                                    if 'is_swing' in processed_candle:
+                                        data[idx].update({
+                                            k: v for k, v in processed_candle.items() 
+                                            if k in ['swing_type', 'is_swing', 'active_color', 
+                                                    'contour_maker', 'm_idx']
+                                        })
+                        
+                        total_swings_in_chart += swings_in_tile
+                        
+                        # Clear tile data to free memory
+                        del tile_img
+                        del processed_tile_data
+                        
+                        # Force garbage collection for large images
+                        import gc
+                        gc.collect()
+
+                    # Finalize outputs for this specific TF
+                    os.makedirs(paths["output_dir"], exist_ok=True)
+                    cv2.imwrite(paths["output_chart"], output_img)
+
+                    config_json = {}
+                    if os.path.exists(config_path):
+                        try:
+                            with open(config_path, 'r', encoding='utf-8') as f:
+                                config_json = json.load(f)
+                        except:
+                            config_json = {}
+                    
+                    config_json[config_key] = data
+                    config_json[f"{config_key}_candle_list"] = data 
+
+                    with open(config_path, 'w', encoding='utf-8') as f:
+                        json.dump(config_json, f, indent=4)
+                    
+                    log(f"{sym} | {tf} | Key: {config_key} Swings found: {total_swings_in_chart}")
+                    
+                    processed_charts_all += 1
+                    total_marked_all += total_swings_in_chart
+                    
+                    # Clean up large image
+                    del img
+                    del output_img
+                    gc.collect()
+
+                except Exception as e:
+                    log(f"   [ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
+                    import traceback
+                    traceback.print_exc()
+
+    log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
+    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"
 
 def fair_value_gaps(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -2682,7 +3011,7 @@ def entry_point_of_interest(broker_name):
                 label = f"after_subject_{after_sub}_violator_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
                 
                 from_candle[label] = True
-                hitler_record["is_hitler_breaker"] = True
+                hitler_record["is_hitler_poi"] = True
                 hitler_record["point_of_interest"] = True
                 
                 # Enrich coordinates for visualization
@@ -2696,6 +3025,9 @@ def entry_point_of_interest(broker_name):
                         hitler_record[k] = full_record.get(k)
                 
                 family.append(hitler_record)
+                from_candle["pattern_entry"] = True
+            else:
+                from_candle["pattern_entry"] = True
 
         return target_data_tf
     
@@ -2828,7 +3160,7 @@ def entry_point_of_interest(broker_name):
                 continue
 
             # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_breaker") or c.get("is_invalid_hitler")), None)
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler")), None)
             
             # 2. Determine X boundaries and Update Flags
             start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
@@ -2843,7 +3175,7 @@ def entry_point_of_interest(broker_name):
                 
                 # Update the status flags on the origin candle
                 from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
-                from_candle["pending_entry_level"] = False
+                
 
                 # --- DATE FORMATTING LOGIC ---
                 raw_time = breaker_candle.get("time", "")
@@ -2920,7 +3252,7 @@ def entry_point_of_interest(broker_name):
                 cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
 
         return img
-    
+     
     def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
         """
         Checks for swing violations between multiple pairs of definitions (sender and receiver).
@@ -3380,10 +3712,11 @@ def entry_point_of_interest(broker_name):
                     family_text_drawn += 1
         return img
     
-    def identify_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
+    def identify_pending_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
         """
         Saves limit orders into a pending_orders folder INSIDE the specific new_filename folder.
         Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
+        Also adds order_type flag to the entry candle in the original data structure
         """
         if not record_config:
             return
@@ -3446,6 +3779,13 @@ def entry_point_of_interest(broker_name):
                     order_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
                 else:
                     order_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                
+                # Add order_type flag to the origin candle (pending_entry_level candle)
+                origin_candle["order_type"] = order_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from origin_candle
+                if entry_candle != origin_candle:
+                    entry_candle["order_type"] = order_data["order_type"]
 
                 pending_list.append(order_data)
 
@@ -3461,13 +3801,14 @@ def entry_point_of_interest(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
-    
+
     def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
         """
         Saves hitler/POI entry information into a poi_entry.json file.
         Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
         Follows the same logic as identify_prices but targets Hitler/POI candles
         Only records orders for symbols that have confirmation keys across all timeframes
+        Also adds order_type flag to the Hitler/POI candle in the original data structure
         """
         if not record_config:
             return
@@ -3517,7 +3858,7 @@ def entry_point_of_interest(broker_name):
 
         for p_name, family in patterns.items():
             # Find the Hitler/POI candle instead of pending_entry_level
-            hitler_candle = next((c for c in family if c.get("is_hitler_breaker") is True or c.get("point_of_interest") is True), None)
+            hitler_candle = next((c for c in family if c.get("is_hitler_poi") is True or c.get("point_of_interest") is True), None)
             
             if hitler_candle:
                 poi_data = {
@@ -3561,6 +3902,13 @@ def entry_point_of_interest(broker_name):
                     poi_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
                 else:
                     poi_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                
+                # Add order_type flag to the Hitler/POI candle
+                hitler_candle["order_type"] = poi_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from hitler_candle
+                if entry_candle != hitler_candle:
+                    entry_candle["order_type"] = poi_data["order_type"]
 
                 pending_poi_list.append(poi_data)
 
@@ -5002,7 +5350,19 @@ def entry_point_of_interest(broker_name):
                                 img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
                                 record_config = entry_settings.get("record_prices")
                                 if record_config:
-                                    identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                    identify_pending_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                    
+                                    # --- ADDED: Call identify_hitler_prices immediately after identify_prices ---
+                                    patterns_key = f"{new_key}_patterns"
+                                    if patterns_key in target_data[tf]:
+                                        identify_hitler_prices(
+                                            target_data[tf], 
+                                            new_key, 
+                                            record_config,
+                                            dev_base_path, 
+                                            new_folder_name,
+                                            target_data  # Pass the full target_data for cross-timeframe checking
+                                        )
                             
                             # Draw definition tools AFTER sweepers and flags have been added
                             if identify_config:
@@ -6247,7 +6607,7 @@ def entries_confirmation(broker_name):
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
-        from_sub = poi_config.get("from_subject")  
+        from_sub = poi_config.get("from_subject") 
         after_sub = poi_config.get("after_subject") 
         
         # FIX: Only check for the exact values, don't auto-append _liquidity
@@ -6298,6 +6658,7 @@ def entries_confirmation(broker_name):
                 continue
 
             hitler_record = None
+            pending_entry = None
 
             # Search for the violator candle after 'after_subject'
             for oc in original_candles:
@@ -6327,9 +6688,7 @@ def entries_confirmation(broker_name):
                 label = f"after_subject_{after_sub}_violator_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
                 
                 from_candle[label] = True
-                hitler_record["is_hitler_breaker"] = True
                 hitler_record["point_of_interest"] = True
-                
                 # Enrich coordinates for visualization
                 coordinate_keys = [
                     "candle_x", "candle_y", "candle_width", "candle_height",
@@ -6341,6 +6700,9 @@ def entries_confirmation(broker_name):
                         hitler_record[k] = full_record.get(k)
                 
                 family.append(hitler_record)
+                from_candle["pattern_entry"] = True
+            else:
+                from_candle["pattern_entry"] = True
 
         return target_data_tf
     
@@ -6434,138 +6796,7 @@ def entries_confirmation(broker_name):
             del patterns[p_name]
 
         return target_data_tf
-    
-    def draw_poi_tools(img, target_data_tf, new_key, poi_config):
-        """
-        Draws visual markers on the image. 
-        Boxes feature a single-edge border on the 'sensitive' price level.
-        Updates 'from_candle' with flags regarding its extension or break status.
-        Now attaches the formatted time of the breaker candle to the center of boxes.
-        Now respects the exact from_subject value without auto-appending _liquidity.
-        """
-        if not poi_config or img is None:
-            return img
 
-        pattern_key = f"{new_key}_patterns"
-        patterns = target_data_tf.get(pattern_key, {})
-        
-        drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
-        from_sub = poi_config.get("from_subject")
-        
-        # FIX: Only check for the exact value provided, don't auto-append _liquidity
-        from_variants = [from_sub] if from_sub else []
-        
-        # Config mapping for sensitive edge
-        hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
-        ll_hl_edge = poi_config.get("subject_is_swinglow_or_higherlow")   # e.g., "high_price"
-        
-        img_height, img_width = img.shape[:2]
-
-        for p_name, family in patterns.items():
-            # 1. Identify the origin (from_candle) using exact value only
-            from_candle = None
-            for variant in from_variants:
-                from_candle = next((c for c in family if c.get(variant) is True), None)
-                if from_candle:
-                    break
-                    
-            if not from_candle:
-                continue
-
-            # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_breaker") or c.get("is_invalid_hitler")), None)
-            
-            # 2. Determine X boundaries and Update Flags
-            start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
-            
-            formatted_date = ""
-            if breaker_candle:
-                end_x = int(breaker_candle.get("draw_left", breaker_candle.get("candle_left", img_width)))
-                color = (0, 0, 255)  # Red for broken
-                
-                # FIX: Get the candle_number from the breaker record to avoid "unknown"
-                hitler_num = breaker_candle.get("candle_number", "unknown")
-                
-                # Update the status flags on the origin candle
-                from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
-                from_candle["pending_entry_level"] = False
-
-                # --- DATE FORMATTING LOGIC ---
-                raw_time = breaker_candle.get("time", "")
-                try:
-                    # Convert "2026-02-13 19:00:00" -> "Feb 13, 2026"
-                    dt_obj = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
-                    formatted_date = dt_obj.strftime("%b %d, %Y")
-                except (ValueError, TypeError):
-                    formatted_date = ""
-
-            else:
-                end_x = img_width
-                color = (0, 255, 0)  # Green for active
-                from_candle["pending_entry_level"] = True
-
-            # 3. Handle Drawing Tools
-            
-            # --- TOOL: BOX ---
-            if "box" in drawing_tool:
-                y_high = int(from_candle.get("draw_top", 0))
-                y_low = int(from_candle.get("draw_bottom", 0))
-                
-                # Draw Transparent Fill
-                black_color = (0, 0, 0) 
-                overlay = img.copy()
-                cv2.rectangle(overlay, (start_x, y_high), (end_x, y_low), black_color, -1)
-                cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
-
-                # --- TEXT DRAWING (Box Center) ---
-                if formatted_date:
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 0.4
-                    thickness = 1
-                    # Calculate text size to offset for true centering
-                    text_size = cv2.getTextSize(formatted_date, font, font_scale, thickness)[0]
-                    
-                    text_x = start_x + (end_x - start_x) // 2 - text_size[0] // 2
-                    text_y = y_high + (y_low - y_high) // 2 + text_size[1] // 2
-                    
-                    cv2.putText(img, formatted_date, (text_x, text_y), font, font_scale, black_color, thickness, cv2.LINE_AA)
-
-                # Determine Sensitive Border logic
-                swing_type = from_candle.get("swing_type", "").lower()
-                border_y = None
-
-                if "swing_high" in swing_type or "lower_high" in swing_type:
-                    border_y = y_low if hh_lh_edge == "low_price" else y_high
-                elif "swing_low" in swing_type or "higher_low" in swing_type:
-                    border_y = y_high if ll_hl_edge == "high_price" else y_low
-
-                # Draw the single sensitive border line
-                if border_y is not None:
-                    cv2.line(img, (start_x, border_y), (end_x, border_y), black_color, 1)
-
-            # --- TOOL: DASHED HORIZONTAL LINE ---
-            elif "dashed_horizontal_line" in drawing_tool:
-                swing_type = from_candle.get("swing_type", "").lower()
-                if "high" in swing_type:
-                    target_y = int(from_candle.get("draw_top", 0))
-                else:
-                    target_y = int(from_candle.get("draw_bottom", 0))
-
-                dash_length, gap_length = 10, 5
-                curr_x = start_x
-                while curr_x < end_x:
-                    next_x = min(curr_x + dash_length, end_x)
-                    cv2.line(img, (curr_x, target_y), (next_x, target_y), color, 2)
-                    curr_x += dash_length + gap_length
-
-            # --- TOOL: STANDARD HORIZONTAL LINE ---
-            elif "horizontal_line" in drawing_tool:
-                swing_type = from_candle.get("swing_type", "").lower()
-                target_y = int(from_candle.get("draw_top", 0)) if "high" in swing_type else int(from_candle.get("draw_bottom", 0))
-                cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
-
-        return img
-    
     def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
         """
         Checks for swing violations between multiple pairs of definitions (sender and receiver).
@@ -6753,7 +6984,137 @@ def entries_confirmation(broker_name):
                 del patterns[p_name]
 
         return target_data_tf
+    
+    def draw_poi_tools(img, target_data_tf, new_key, poi_config):
+        """
+        Draws visual markers on the image. 
+        Boxes feature a single-edge border on the 'sensitive' price level.
+        Updates 'from_candle' with flags regarding its extension or break status.
+        Now attaches the formatted time of the breaker candle to the center of boxes.
+        Now respects the exact from_subject value without auto-appending _liquidity.
+        """
+        if not poi_config or img is None:
+            return img
 
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
+        from_sub = poi_config.get("from_subject")
+        
+        # FIX: Only check for the exact value provided, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        
+        # Config mapping for sensitive edge
+        hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
+        ll_hl_edge = poi_config.get("subject_is_swinglow_or_higherlow")   # e.g., "high_price"
+        
+        img_height, img_width = img.shape[:2]
+
+        for p_name, family in patterns.items():
+            # 1. Identify the origin (from_candle) using exact value only
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+                    
+            if not from_candle:
+                continue
+
+            # Locate the breaker candle using the boolean flags
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler")), None)
+            
+            # 2. Determine X boundaries and Update Flags
+            start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
+            
+            formatted_date = ""
+            if breaker_candle:
+                end_x = int(breaker_candle.get("draw_left", breaker_candle.get("candle_left", img_width)))
+                color = (0, 0, 255)  # Red for broken
+                
+                # FIX: Get the candle_number from the breaker record to avoid "unknown"
+                hitler_num = breaker_candle.get("candle_number", "unknown")
+                
+                # Update the status flags on the origin candle
+                from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
+
+                # --- DATE FORMATTING LOGIC ---
+                raw_time = breaker_candle.get("time", "")
+                try:
+                    # Convert "2026-02-13 19:00:00" -> "Feb 13, 2026"
+                    dt_obj = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
+                    formatted_date = dt_obj.strftime("%b %d, %Y")
+                except (ValueError, TypeError):
+                    formatted_date = ""
+
+            else:
+                end_x = img_width
+                color = (0, 255, 0)  # Green for active
+                from_candle["pending_entry_level"] = True
+
+            # 3. Handle Drawing Tools
+            
+            # --- TOOL: BOX ---
+            if "box" in drawing_tool:
+                y_high = int(from_candle.get("draw_top", 0))
+                y_low = int(from_candle.get("draw_bottom", 0))
+                
+                # Draw Transparent Fill
+                black_color = (0, 0, 0) 
+                overlay = img.copy()
+                cv2.rectangle(overlay, (start_x, y_high), (end_x, y_low), black_color, -1)
+                cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
+
+                # --- TEXT DRAWING (Box Center) ---
+                if formatted_date:
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.4
+                    thickness = 1
+                    # Calculate text size to offset for true centering
+                    text_size = cv2.getTextSize(formatted_date, font, font_scale, thickness)[0]
+                    
+                    text_x = start_x + (end_x - start_x) // 2 - text_size[0] // 2
+                    text_y = y_high + (y_low - y_high) // 2 + text_size[1] // 2
+                    
+                    cv2.putText(img, formatted_date, (text_x, text_y), font, font_scale, black_color, thickness, cv2.LINE_AA)
+
+                # Determine Sensitive Border logic
+                swing_type = from_candle.get("swing_type", "").lower()
+                border_y = None
+
+                if "swing_high" in swing_type or "lower_high" in swing_type:
+                    border_y = y_low if hh_lh_edge == "low_price" else y_high
+                elif "swing_low" in swing_type or "higher_low" in swing_type:
+                    border_y = y_high if ll_hl_edge == "high_price" else y_low
+
+                # Draw the single sensitive border line
+                if border_y is not None:
+                    cv2.line(img, (start_x, border_y), (end_x, border_y), black_color, 1)
+
+            # --- TOOL: DASHED HORIZONTAL LINE ---
+            elif "dashed_horizontal_line" in drawing_tool:
+                swing_type = from_candle.get("swing_type", "").lower()
+                if "high" in swing_type:
+                    target_y = int(from_candle.get("draw_top", 0))
+                else:
+                    target_y = int(from_candle.get("draw_bottom", 0))
+
+                dash_length, gap_length = 10, 5
+                curr_x = start_x
+                while curr_x < end_x:
+                    next_x = min(curr_x + dash_length, end_x)
+                    cv2.line(img, (curr_x, target_y), (next_x, target_y), color, 2)
+                    curr_x += dash_length + gap_length
+
+            # --- TOOL: STANDARD HORIZONTAL LINE ---
+            elif "horizontal_line" in drawing_tool:
+                swing_type = from_candle.get("swing_type", "").lower()
+                target_y = int(from_candle.get("draw_top", 0)) if "high" in swing_type else int(from_candle.get("draw_bottom", 0))
+                cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
+
+        return img
+    
     def draw_definition_tools(img, target_data_tf, pattern_key, identify_config):
         """
         Draws visual markers for definitions as HORIZONTAL LINES with optional text labels.
@@ -7024,17 +7385,36 @@ def entries_confirmation(broker_name):
                     text_drawn_count += 1
                     family_text_drawn += 1
         return img
- 
-    def identify_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
+    
+    def identify_pending_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
         """
         Saves limit orders into a pending_orders folder INSIDE the specific new_filename folder.
         Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
+        Also adds order_type flag to the entry candle in the original data structure
+        Also checks poi_entry.json for existing POI orders and adds POI flags to matching patterns
         """
         if not record_config:
             return
 
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
+        
+        # Load POI entries if they exist
+        poi_orders = []
+        poi_file = os.path.join(dev_base_path, new_folder_name, "pending_orders", "poi_entry.json")
+        if os.path.exists(poi_file):
+            try:
+                with open(poi_file, 'r', encoding='utf-8') as f:
+                    poi_orders = json.load(f)
+            except:
+                poi_orders = []
+        
+        # Create a lookup dictionary for POI orders by hitler_time
+        poi_by_time = {}
+        for poi in poi_orders:
+            hitler_time = poi.get("hitler_time")
+            if hitler_time:
+                poi_by_time[hitler_time] = poi
         
         pending_list = []
         price_map = {
@@ -7052,6 +7432,20 @@ def entries_confirmation(broker_name):
         for p_name, family in patterns.items():
             origin_candle = next((c for c in family if c.get("pending_entry_level") is True), None)
             
+            # Check if this pattern has a POI origin time matching any POI order
+            found_poi = None
+            poi_origin_time = None
+            
+            # Scan all candles in the family to find poi_origin_time
+            for candle in family:
+                if candle.get("poi_origin_time"):
+                    poi_origin_time = candle.get("poi_origin_time")
+                    # Check if this poi_origin_time exists in our POI orders
+                    if poi_origin_time in poi_by_time:
+                        found_poi = poi_by_time[poi_origin_time]
+                        break
+            
+            # First determine the order type for this pattern
             if origin_candle:
                 order_data = {
                     "symbol": origin_candle.get("symbol", "unknown"),
@@ -7081,16 +7475,39 @@ def entries_confirmation(broker_name):
                             if actual_key:
                                 order_data[role] = target_candle.get(actual_key, 0)
                 
-                entry_subject = record_config.get("entry", {}).get("subject")
-                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), origin_candle)
+                # FIX: Look for pattern_entry directly instead of relying on record_config
+                entry_candle = next((c for c in family if c.get("pattern_entry") is True), origin_candle)
                 
                 e_swing = entry_candle.get("swing_type", "").lower()
                 type_cfg = record_config.get("order_type", {})
                 
                 if "high" in e_swing:
-                    order_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
+                    # Use direct string fallback if config value is None
+                    order_type_val = type_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                    pattern_order_type = order_type_val if order_type_val is not None else "sell_limit"
                 else:
-                    order_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                    order_type_val = type_cfg.get("subject_is_swinglow_or_higherlow")
+                    pattern_order_type = order_type_val if order_type_val is not None else "buy_limit"
+                
+                order_data["order_type"] = pattern_order_type
+                
+                # Add order_type flag to the origin candle (pending_entry_level candle)
+                origin_candle["order_type"] = pattern_order_type
+                
+                # Also add order_type flag to the entry candle if it's different from origin_candle
+                if entry_candle != origin_candle:
+                    entry_candle["order_type"] = pattern_order_type
+                
+                # If POI found, add POI flags to the candle that has the order_type
+                if found_poi and poi_origin_time:
+                    # Add POI flags to the entry candle (which already has order_type)
+                    entry_candle["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
+                    entry_candle["pattern_time_id_with_poi"] = poi_origin_time
+                    
+                    # Also add to origin candle if it's different
+                    if origin_candle != entry_candle:
+                        origin_candle["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
+                        origin_candle["pattern_time_id_with_poi"] = poi_origin_time
 
                 pending_list.append(order_data)
 
@@ -7106,13 +7523,14 @@ def entries_confirmation(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
-    
+
     def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
         """
         Saves hitler/POI entry information into a poi_entry.json file.
         Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
         Follows the same logic as identify_prices but targets Hitler/POI candles
         Only records orders for symbols that have confirmation keys across all timeframes
+        Also adds order_type flag to the Hitler/POI candle in the original data structure
         """
         if not record_config:
             return
@@ -7162,9 +7580,12 @@ def entries_confirmation(broker_name):
 
         for p_name, family in patterns.items():
             # Find the Hitler/POI candle instead of pending_entry_level
-            hitler_candle = next((c for c in family if c.get("is_hitler_breaker") is True or c.get("point_of_interest") is True), None)
+            hitler_candle = next((c for c in family if c.get("is_hitler_poi") is True or c.get("point_of_interest") is True), None)
             
             if hitler_candle:
+                # Get the hitler time for this candle
+                hitler_time = hitler_candle.get("time", "")
+                
                 poi_data = {
                     "symbol": hitler_candle.get("symbol", "unknown"),
                     "timeframe": hitler_candle.get("timeframe", "unknown"),
@@ -7173,7 +7594,7 @@ def entries_confirmation(broker_name):
                     "entry": 0,
                     "exit": 0,
                     "target": 0,
-                    "hitler_time": hitler_candle.get("time", "")  # Additional field for hitler time
+                    "hitler_time": hitler_time  # Additional field for hitler time
                 }
 
                 # Get entry, exit, and target prices using the same logic as identify_prices
@@ -7195,17 +7616,26 @@ def entries_confirmation(broker_name):
                             if actual_key:
                                 poi_data[role] = target_candle.get(actual_key, 0)
                 
-                # Determine order type using the same logic as identify_prices
-                entry_subject = record_config.get("entry", {}).get("subject")
-                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), hitler_candle)
+                # FIX: Look for pattern_entry directly instead of relying on record_config
+                entry_candle = next((c for c in family if c.get("pattern_entry") is True), hitler_candle)
                 
                 e_swing = entry_candle.get("swing_type", "").lower()
                 type_cfg = record_config.get("order_type", {})
                 
                 if "high" in e_swing:
-                    poi_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
+                    # Use direct string fallback if config value is None
+                    order_type_val = type_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                    poi_data["order_type"] = order_type_val if order_type_val is not None else "sell_limit"
                 else:
-                    poi_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                    order_type_val = type_cfg.get("subject_is_swinglow_or_higherlow")
+                    poi_data["order_type"] = order_type_val if order_type_val is not None else "buy_limit"
+                
+                # Add order_type flag to the Hitler/POI candle
+                hitler_candle["order_type"] = poi_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from hitler_candle
+                if entry_candle != hitler_candle:
+                    entry_candle["order_type"] = poi_data["order_type"]
 
                 pending_poi_list.append(poi_data)
 
@@ -7239,6 +7669,135 @@ def entries_confirmation(broker_name):
             with open(poi_file, 'w', encoding='utf-8') as f:
                 json.dump(merged_poi, f, indent=4)
 
+    def poi_order_direction_validation(target_data_tf, pattern_key):
+        """
+        Validates patterns based on order_type and poi_entry_order_type.
+        Also keeps only the youngest pattern and removes older ones.
+        
+        Rules:
+        1. If a pattern has no order_type field at all, it's invalid and removed immediately
+        2. If a pattern has both order_type and poi_entry_order_type, they must match
+        3. Only patterns that satisfy these conditions remain
+        4. After validation, keep only the youngest pattern (lowest number, e.g., 1) and delete older ones (2-10)
+        
+        Args:
+            target_data_tf: The timeframe data dictionary containing patterns
+            pattern_key: The key for the patterns dictionary (e.g., "1h_confirmation_from_4h_poi_primary_patterns")
+        
+        Returns:
+            bool: True if any patterns were removed, False otherwise
+        """
+        if pattern_key not in target_data_tf:
+            return False
+        
+        patterns_dict = target_data_tf[pattern_key]
+        if not isinstance(patterns_dict, dict):
+            return False
+        
+        patterns_removed = False
+        patterns_to_delete = []
+        
+        # First pass: Validate patterns based on order_type rules
+        for pattern_name, pattern_candles in patterns_dict.items():
+            if not isinstance(pattern_candles, list):
+                patterns_to_delete.append(pattern_name)
+                patterns_removed = True
+                log(f"    🗑️ Removing invalid pattern {pattern_name} - not a list")
+                continue
+            
+            # Track if we've found order_type and poi_entry_order_type in this pattern
+            has_order_type = False
+            has_poi_order_type = False
+            found_order_type = None
+            found_poi_order_type = None
+            
+            # Check each candle in the pattern family
+            for candle in pattern_candles:
+                # Check for order_type field
+                if "order_type" in candle:
+                    has_order_type = True
+                    found_order_type = candle["order_type"]
+                
+                # Check for poi_entry_order_type field
+                if "poi_entry_order_type" in candle:
+                    has_poi_order_type = True
+                    found_poi_order_type = candle["poi_entry_order_type"]
+            
+            # RULE 1: If pattern has no order_type field at all, remove it immediately
+            if not has_order_type:
+                patterns_to_delete.append(pattern_name)
+                patterns_removed = True
+                log(f"    🗑️ Removing pattern {pattern_name} - no order_type field found")
+                continue
+            
+            # RULE 2: If pattern has both order_type and poi_entry_order_type, they must match
+            if has_order_type and has_poi_order_type:
+                if found_order_type != found_poi_order_type:
+                    patterns_to_delete.append(pattern_name)
+                    patterns_removed = True
+                    log(f"    🗑️ Removing pattern {pattern_name} - order_type '{found_order_type}' != poi_entry_order_type '{found_poi_order_type}'")
+                    continue
+            
+            # RULE 3: If pattern has order_type but no poi_entry_order_type, keep it
+            # (this is a valid pattern that just doesn't have POI confirmation)
+            
+            # RULE 4: If pattern has order_type and matching poi_entry_order_type, keep it
+        
+        # Delete all invalid patterns from first pass
+        for pattern_name in patterns_to_delete:
+            if pattern_name in patterns_dict:
+                del patterns_dict[pattern_name]
+        
+        # If patterns dictionary is now empty, remove the entire patterns key
+        if not patterns_dict:
+            del target_data_tf[pattern_key]
+            log(f"    🗑️ Removed empty patterns dictionary {pattern_key}")
+            return patterns_removed
+        
+        # Second pass: Keep only the youngest pattern, delete all older ones
+        if patterns_dict:
+            # Extract pattern numbers and find the youngest (lowest number)
+            pattern_numbers = []
+            pattern_name_mapping = {}
+            
+            for pattern_name in patterns_dict.keys():
+                # Try to extract number from pattern name (assuming format like "pattern_1", "pattern_2", etc.)
+                # Adjust this logic based on your actual pattern naming convention
+                import re
+                number_match = re.search(r'(\d+)', pattern_name)
+                if number_match:
+                    pattern_num = int(number_match.group(1))
+                    pattern_numbers.append(pattern_num)
+                    pattern_name_mapping[pattern_num] = pattern_name
+                else:
+                    # If pattern name doesn't contain a number, keep it as is (don't delete based on age)
+                    # or you could assign a default behavior here
+                    pass
+            
+            if pattern_numbers:
+                # Find the youngest pattern (lowest number)
+                youngest_number = min(pattern_numbers)
+                youngest_pattern = pattern_name_mapping[youngest_number]
+                
+                # Mark all other patterns for deletion
+                patterns_to_delete_old = []
+                for pattern_num, pattern_name in pattern_name_mapping.items():
+                    if pattern_num != youngest_number:
+                        patterns_to_delete_old.append(pattern_name)
+                
+                # Delete older patterns
+                for pattern_name in patterns_to_delete_old:
+                    del patterns_dict[pattern_name]
+                    patterns_removed = True
+                    log(f"    🗑️ Removing older pattern {pattern_name}, keeping youngest pattern {youngest_pattern}")
+        
+        # If patterns dictionary is now empty after second pass, remove the entire patterns key
+        if not patterns_dict:
+            del target_data_tf[pattern_key]
+            log(f"    🗑️ Removed empty patterns dictionary {pattern_key}")
+        
+        return patterns_removed
+        
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
         Deletes the limit_orders.json file inside the specific new_filename folder 
@@ -8363,7 +8922,7 @@ def entries_confirmation(broker_name):
                             modified = True
         
         return modified
-    
+ 
     def process_entry_confirmation_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
@@ -8760,7 +9319,20 @@ def entries_confirmation(broker_name):
                                     img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
                                     record_config = entry_settings.get("record_prices")
                                     if record_config:
-                                        identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                        identify_pending_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                        
+                                        # --- ADDED: Call identify_hitler_prices immediately after identify_prices ---
+                                        patterns_key = f"{new_key}_patterns"
+                                        if patterns_key in target_data[tf]:
+                                            identify_hitler_prices(
+                                                target_data[tf], 
+                                                new_key, 
+                                                record_config,
+                                                dev_base_path, 
+                                                new_folder_name,
+                                                target_data  # Pass the full target_data for cross-timeframe checking
+                                            )
+                                            poi_order_direction_validation(target_data[tf], patterns_key)
                                 
                                 # Draw definition tools NOW that sweepers and flags are in the patterns
                                 if identify_config:
@@ -8784,60 +9356,11 @@ def entries_confirmation(broker_name):
                     json.dump(target_data, f, indent=4)
                 sync_count += 1
 
-        # --- FINAL STEP: Identify and save Hitler/POI prices using the same record_config ---
-        log(f"  🎯 Identifying Hitler/POI entries for {new_folder_name}")
-        record_config = entry_settings.get("record_prices")  # Use the same record_config as limit orders
-        
-        if record_config:
-            # First, clear the existing poi_entry.json to start fresh
-            orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
-            poi_file = os.path.join(orders_dir, "poi_entry.json")
-            if os.path.exists(poi_file):
-                try:
-                    os.remove(poi_file)
-                    log(f"    🧹 Cleared existing poi_entry.json")
-                except:
-                    pass
-            
-            # Iterate through all symbols and timeframes to identify hitler prices
-            for sym in sorted(os.listdir(base_folder)):
-                sym_p = os.path.join(base_folder, sym)
-                if not os.path.isdir(sym_p):
-                    continue
-                    
-                target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
-                target_config_path = os.path.join(target_sym_dir, "config.json")
-                
-                if os.path.exists(target_config_path):
-                    try:
-                        with open(target_config_path, 'r', encoding='utf-8') as f:
-                            target_data = json.load(f)
-                        
-                        # Process each timeframe
-                        for tf in target_data.keys():
-                            if isinstance(target_data[tf], dict):
-                                for key in target_data[tf].keys():
-                                    if key.endswith("_patterns"):
-                                        # Call identify_hitler_prices for each pattern key
-                                        # Pass the FULL target_data so it can check across all timeframes
-                                        identify_hitler_prices(
-                                            target_data[tf], 
-                                            key.replace("_patterns", ""), 
-                                            record_config,
-                                            dev_base_path, 
-                                            new_folder_name,
-                                            target_data  # Pass the full target_data for cross-timeframe checking
-                                        )
-                    except Exception as e:
-                        log(f"Error processing hitler prices for {sym}: {e}")
-        else:
-            log(f"  ⚠️ No record_config found for {new_folder_name}, skipping Hitler/POI identification")
-
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
             
         return sync_count
-
+    
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
@@ -9558,10 +10081,10 @@ def process_single_developer_pipeline(broker_name):
         
         
         # Step 4: POI
-        res_poi = entry_point_of_interest(broker_name)
+        #res_poi = entry_point_of_interest(broker_name)
         
         # Step 4: POI
-        res_poi = entries_confirmation(broker_name)
+        #res_poi = entries_confirmation(broker_name)
         
         
         # Step 5: Cleanup
@@ -9597,5 +10120,5 @@ def main():
     
 
 if __name__ == "__main__":
-   single()
+   main()
 
