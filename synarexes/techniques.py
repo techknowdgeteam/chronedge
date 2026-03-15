@@ -3954,35 +3954,6 @@ def entry_point_of_interest(broker_name):
             except Exception as e:
                 log(f"Could not clear limit orders for {new_folder_name}: {e}")
 
-    def sanitize_symbols_or_files(target_sym_dir, target_data):
-        """
-        Returns (should_delete_whole_folder, list_of_timeframes_to_keep)
-        
-        Note: This function only determines which timeframes have patterns/structures
-        but does NOT remove any data from target_data. The config JSON data is preserved
-        for all timeframes, regardless of whether they have patterns.
-        """
-        tfs_to_keep = []
-        tfs_to_remove = []
-
-        for tf, tf_content in list(target_data.items()):
-            has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
-            
-            if has_patterns:
-                tfs_to_keep.append(tf)
-            else:
-                tfs_to_remove.append(tf)
-
-        # If no timeframes have patterns, the whole symbol is invalid
-        if not tfs_to_keep:
-            return True, []
-
-        # DO NOT delete any timeframe data from target_data
-        # The config JSON should preserve ALL timeframe data, even without patterns
-        # This ensures the original keys and data remain in the config file
-        
-        return False, tfs_to_keep
-
     def identify_paused_symbols(target_data, dev_base_path, new_folder_name):
         """
         Synchronizes all limit orders with their pattern anchors (from/after) 
@@ -4080,7 +4051,6 @@ def entry_point_of_interest(broker_name):
         
         # If no paused symbols file exists, nothing to do
         if not os.path.exists(paused_file):
-            log("No paused symbols file found, skipping limit orders population")
             return 0
         
         # Load paused symbols/orders
@@ -5048,7 +5018,41 @@ def entry_point_of_interest(broker_name):
                             modified = True
         
         return modified
-    
+
+    def filter_empty_symbol_folders(dev_base_path, folder_name):
+        """
+        Remove symbol folders that contain no files (empty directories).
+        
+        Args:
+            dev_base_path: Base development path
+            folder_name: Name of the folder containing symbol subfolders
+            
+        Returns:
+            int: Number of empty folders deleted
+        """
+        folder_path = os.path.join(dev_base_path, folder_name)
+        if not os.path.exists(folder_path):
+            log(f"Folder {folder_path} does not exist, skipping empty folder filter")
+            return 0
+        
+        deleted_count = 0
+        
+        # Iterate through all items in the folder
+        for item_name in os.listdir(folder_path):
+            item_path = os.path.join(folder_path, item_name)
+            
+            # Only process directories (symbol folders)
+            if os.path.isdir(item_path):
+                # Check if directory is empty (no files/subdirectories)
+                if not os.listdir(item_path):
+                    try:
+                        shutil.rmtree(item_path)
+                        deleted_count += 1
+                    except Exception as e:
+                        log(f"  ❌ Error deleting empty folder {item_name}: {e}")
+        
+        return deleted_count
+
     def process_entry_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
@@ -5269,13 +5273,30 @@ def entry_point_of_interest(broker_name):
                 except Exception as e:
                     log(f"Error processing ticks for {sym}: {e}")
             
-            # --- STEP 3: Sanitize and identify orders ---
-            should_delete_folder, tfs_to_keep = sanitize_symbols_or_files(target_sym_dir, target_data)
+            # =================================================================
+            # INTEGRATED SANITIZE LOGIC (replaces sanitize_symbols_or_files call)
+            # =================================================================
+            # Determine which timeframes have patterns
+            tfs_to_keep = []
+            tfs_to_remove = []
 
-            if should_delete_folder:
+            for tf, tf_content in list(target_data.items()):
+                has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
+                
+                if has_patterns:
+                    tfs_to_keep.append(tf)
+                else:
+                    tfs_to_remove.append(tf)
+
+            # If no timeframes have patterns, the whole symbol is invalid - delete the folder
+            if not tfs_to_keep:
                 if os.path.exists(target_sym_dir):
                     shutil.rmtree(target_sym_dir)
-                continue 
+                continue  # Skip to next symbol
+
+            # =================================================================
+            # END INTEGRATED SANITIZE LOGIC
+            # =================================================================
 
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
@@ -5439,11 +5460,10 @@ def entry_point_of_interest(broker_name):
 
         # --- FINAL STEP: Clear limit orders at the END if confirmation is enabled ---
         if entry_confirmation_enabled:
-            log(f"  🧹 Clearing old limit orders for {new_folder_name} (confirmation enabled)")
             #do nothing until decision
             
             # --- NEW: Identify and save Hitler/POI prices using the same record_config ---
-            log(f"  🎯 Identifying Hitler/POI entries for {new_folder_name}")
+            log(f"  🎯 Identifying POI Zone for {new_folder_name} entries")
             record_config = entry_settings.get("record_prices")  # Use the same record_config as limit orders
             
             if record_config:
@@ -5491,6 +5511,7 @@ def entry_point_of_interest(broker_name):
             else:
                 log(f"  ⚠️ No record_config found for {new_folder_name}, skipping Hitler/POI identification")
         else:
+            filter_empty_symbol_folders(dev_base_path, new_folder_name)
             log(f"  💾 Preserving limit orders for {new_folder_name} (confirmation disabled)")
 
         # --- NEW: Log summary of filtered processing ---
@@ -5498,7 +5519,7 @@ def entry_point_of_interest(broker_name):
             log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
         return sync_count
-    
+
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
@@ -7541,8 +7562,6 @@ def entries_confirmation(broker_name):
                 if has_both_types:
                     # If both exist, they must match - otherwise skip this order
                     if order_data["order_type"] != order_data["poi_entry_order_type"]:
-                        log(f"    🗑️ Filtering out order for {order_data['symbol']} at {order_data.get('pattern_time_id_with_poi', 'unknown')} - "
-                            f"order_type '{order_data['order_type']}' != poi_entry_order_type '{order_data['poi_entry_order_type']}'")
                         continue  # Skip adding this order to pending_list
                 
                 # If order has only order_type (no POI), keep it
@@ -7763,7 +7782,6 @@ def entries_confirmation(broker_name):
             if not has_order_type:
                 patterns_to_delete.append(pattern_name)
                 patterns_removed = True
-                log(f"    🗑️ Removing pattern {pattern_name} - no order_type field found")
                 continue
             
             # RULE 2: If pattern has both order_type and poi_entry_order_type, they must match
@@ -7771,7 +7789,6 @@ def entries_confirmation(broker_name):
                 if found_order_type != found_poi_order_type:
                     patterns_to_delete.append(pattern_name)
                     patterns_removed = True
-                    log(f"    🗑️ Removing pattern {pattern_name} - order_type '{found_order_type}' != poi_entry_order_type '{found_poi_order_type}'")
                     continue
             
             # RULE 3: If pattern has order_type but no poi_entry_order_type, keep it
@@ -7786,7 +7803,6 @@ def entries_confirmation(broker_name):
         # If patterns dictionary is now empty, remove the entire patterns key
         if not patterns_dict:
             del target_data_tf[pattern_key]
-            log(f"    🗑️ Removed empty patterns dictionary {pattern_key}")
         
         return patterns_removed
 
@@ -7801,35 +7817,6 @@ def entries_confirmation(broker_name):
                 os.remove(orders_file)
             except Exception as e:
                 log(f"Could not clear limit orders for {new_folder_name}: {e}")
-
-    def sanitize_symbols_or_files(target_sym_dir, target_data):
-        """
-        Returns (should_delete_whole_folder, list_of_timeframes_to_keep)
-        
-        Note: This function only determines which timeframes have patterns/structures
-        but does NOT remove any data from target_data. The config JSON data is preserved
-        for all timeframes, regardless of whether they have patterns.
-        """
-        tfs_to_keep = []
-        tfs_to_remove = []
-
-        for tf, tf_content in list(target_data.items()):
-            has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
-            
-            if has_patterns:
-                tfs_to_keep.append(tf)
-            else:
-                tfs_to_remove.append(tf)
-
-        # If no timeframes have patterns, the whole symbol is invalid
-        if not tfs_to_keep:
-            return True, []
-
-        # DO NOT delete any timeframe data from target_data
-        # The config JSON should preserve ALL timeframe data, even without patterns
-        # This ensures the original keys and data remain in the config file
-        
-        return False, tfs_to_keep
 
     def identify_paused_symbols(target_data, dev_base_path, new_folder_name):
         """
@@ -7928,7 +7915,6 @@ def entries_confirmation(broker_name):
         
         # If no paused symbols file exists, nothing to do
         if not os.path.exists(paused_file):
-            log("No paused symbols file found, skipping limit orders population")
             return 0
         
         # Load paused symbols/orders
@@ -8240,7 +8226,6 @@ def entries_confirmation(broker_name):
         # -----------------------------------------------------------------
         if not poi_confirmation_timeframes:
             # No configuration provided - don't generate any charts
-            log(f"  ℹ️ No POI confirmation rules configured - skipping confirmation charts for {sym}")
             return
         
         # Determine which timeframes to process
@@ -8914,7 +8899,42 @@ def entries_confirmation(broker_name):
                             modified = True
         
         return modified
- 
+    
+    def filter_empty_symbol_folders(dev_base_path, folder_name):
+        """
+        Remove symbol folders that contain no files (empty directories).
+        
+        Args:
+            dev_base_path: Base development path
+            folder_name: Name of the folder containing symbol subfolders
+            
+        Returns:
+            int: Number of empty folders deleted
+        """
+        folder_path = os.path.join(dev_base_path, folder_name)
+        if not os.path.exists(folder_path):
+            log(f"Folder {folder_path} does not exist, skipping empty folder filter")
+            return 0
+        
+        deleted_count = 0
+        
+        # Iterate through all items in the folder
+        for item_name in os.listdir(folder_path):
+            item_path = os.path.join(folder_path, item_name)
+            
+            # Only process directories (symbol folders)
+            if os.path.isdir(item_path):
+                # Check if directory is empty (no files/subdirectories)
+                if not os.listdir(item_path):
+                    try:
+                        shutil.rmtree(item_path)
+                        deleted_count += 1
+                    except Exception as e:
+                        log(f"  ❌ Error deleting empty folder {item_name}: {e}")
+        
+        
+        return deleted_count
+
     def process_entry_confirmation_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
@@ -9161,13 +9181,30 @@ def entries_confirmation(broker_name):
                 except Exception as e:
                     log(f"Error processing ticks for {sym}: {e}")
             
-            # Sanitize and identify orders - this only determines which timeframes have patterns
-            should_delete_folder, tfs_to_keep = sanitize_symbols_or_files(target_sym_dir, target_data)
+            # =================================================================
+            # INTEGRATED SANITIZE LOGIC (replaces sanitize_symbols_or_files call)
+            # =================================================================
+            # Determine which timeframes have patterns
+            tfs_to_keep = []
+            tfs_to_remove = []
 
-            if should_delete_folder:
+            for tf, tf_content in list(target_data.items()):
+                has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
+                
+                if has_patterns:
+                    tfs_to_keep.append(tf)
+                else:
+                    tfs_to_remove.append(tf)
+
+            # If no timeframes have patterns, the whole symbol is invalid - delete the folder
+            if not tfs_to_keep:
                 if os.path.exists(target_sym_dir):
                     shutil.rmtree(target_sym_dir)
-                continue 
+                continue  # Skip to next symbol
+
+            # =================================================================
+            # END INTEGRATED SANITIZE LOGIC
+            # =================================================================
 
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
@@ -9342,7 +9379,7 @@ def entries_confirmation(broker_name):
             for img_name, (tf, img_data, new_key) in pending_images.items():
                 img_path = os.path.join(target_sym_dir, img_name)
                 cv2.imwrite(img_path, img_data)
-                log(f"  💾 [{sym}] {img_name} updated")
+                log(f"  💾 [{sym}] {img_name} confirmation completed")
 
             if modified:
                 with open(target_config_path, 'w', encoding='utf-8') as f:
@@ -9351,9 +9388,10 @@ def entries_confirmation(broker_name):
 
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
+        filter_empty_symbol_folders(dev_base_path, new_folder_name)
             
         return sync_count
-    
+
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
