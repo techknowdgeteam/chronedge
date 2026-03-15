@@ -478,7 +478,7 @@ def label_objects(
         cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
 
-def swing_pointss(broker_name):
+def swing_points(broker_name):
 
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
@@ -696,7 +696,7 @@ def swing_pointss(broker_name):
     log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
     return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"  
 
-def swing_points(broker_name):
+def swing_pointtts(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -3160,7 +3160,7 @@ def entry_point_of_interest(broker_name):
                 continue
 
             # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler")), None)
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler") or c.get("point_of_interest")), None)
             
             # 2. Determine X boundaries and Update Flags
             start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
@@ -5099,7 +5099,7 @@ def entry_point_of_interest(broker_name):
         identify_paused_symbols_poi(dev_base_path, new_folder_name)
         cleanup_non_paused_symbols(dev_base_path, new_folder_name)
 
-        # REMOVED: limit_orders_old_record_cleanup from here - moved to end
+        limit_orders_old_record_cleanup(dev_base_path, new_folder_name)
 
         # 2. Identify which symbols should be skipped (Paused Symbols)
         paused_symbols_file = os.path.join(dev_base_path, new_folder_name, "paused_symbols_folder", "paused_symbols.json")
@@ -5277,8 +5277,6 @@ def entry_point_of_interest(broker_name):
                     shutil.rmtree(target_sym_dir)
                 continue 
 
-            # REMOVED: ensure_full_candles_data_for_all_timeframes is no longer called
-
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
             
@@ -5442,7 +5440,7 @@ def entry_point_of_interest(broker_name):
         # --- FINAL STEP: Clear limit orders at the END if confirmation is enabled ---
         if entry_confirmation_enabled:
             log(f"  🧹 Clearing old limit orders for {new_folder_name} (confirmation enabled)")
-            limit_orders_old_record_cleanup(dev_base_path, new_folder_name)
+            #do nothing until decision
             
             # --- NEW: Identify and save Hitler/POI prices using the same record_config ---
             log(f"  🎯 Identifying Hitler/POI entries for {new_folder_name}")
@@ -6658,7 +6656,6 @@ def entries_confirmation(broker_name):
                 continue
 
             hitler_record = None
-            pending_entry = None
 
             # Search for the violator candle after 'after_subject'
             for oc in original_candles:
@@ -6689,6 +6686,7 @@ def entries_confirmation(broker_name):
                 
                 from_candle[label] = True
                 hitler_record["point_of_interest"] = True
+                hitler_record["is_hitler_poi"] = True
                 # Enrich coordinates for visualization
                 coordinate_keys = [
                     "candle_x", "candle_y", "candle_width", "candle_height",
@@ -7023,7 +7021,7 @@ def entries_confirmation(broker_name):
                 continue
 
             # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler")), None)
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler") or c.get("point_of_interest")), None)
             
             # 2. Determine X boundaries and Update Flags
             start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
@@ -7052,6 +7050,7 @@ def entries_confirmation(broker_name):
                 end_x = img_width
                 color = (0, 255, 0)  # Green for active
                 from_candle["pending_entry_level"] = True
+                
 
             # 3. Handle Drawing Tools
             
@@ -7392,6 +7391,7 @@ def entries_confirmation(broker_name):
         Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
         Also adds order_type flag to the entry candle in the original data structure
         Also checks poi_entry.json for existing POI orders and adds POI flags to matching patterns
+        Also filters out orders where order_type doesn't match poi_entry_order_type
         """
         if not record_config:
             return
@@ -7435,15 +7435,25 @@ def entries_confirmation(broker_name):
             # Check if this pattern has a POI origin time matching any POI order
             found_poi = None
             poi_origin_time = None
+            pattern_time_id_with_poi = None
+            poi_entry_order_type = None
             
-            # Scan all candles in the family to find poi_origin_time
+            # Scan all candles in the family to find poi_origin_time and POI-related fields
             for candle in family:
                 if candle.get("poi_origin_time"):
                     poi_origin_time = candle.get("poi_origin_time")
                     # Check if this poi_origin_time exists in our POI orders
                     if poi_origin_time in poi_by_time:
                         found_poi = poi_by_time[poi_origin_time]
-                        break
+                        # Don't break - continue scanning to get all POI fields
+                
+                # Check for pattern_time_id_with_poi directly
+                if candle.get("pattern_time_id_with_poi") and not pattern_time_id_with_poi:
+                    pattern_time_id_with_poi = candle.get("pattern_time_id_with_poi")
+                
+                # Check for poi_entry_order_type directly
+                if candle.get("poi_entry_order_type") and not poi_entry_order_type:
+                    poi_entry_order_type = candle.get("poi_entry_order_type")
             
             # First determine the order type for this pattern
             if origin_candle:
@@ -7456,6 +7466,20 @@ def entries_confirmation(broker_name):
                     "exit": 0,
                     "target": 0
                 }
+
+                # Add pattern_time_id_with_poi if it exists
+                if pattern_time_id_with_poi:
+                    order_data["pattern_time_id_with_poi"] = pattern_time_id_with_poi
+                elif poi_origin_time:
+                    # Fallback to using poi_origin_time if pattern_time_id_with_poi not found
+                    order_data["pattern_time_id_with_poi"] = poi_origin_time
+                
+                # Add poi_entry_order_type if it exists
+                if poi_entry_order_type:
+                    order_data["poi_entry_order_type"] = poi_entry_order_type
+                elif found_poi:
+                    # Fallback to using found_poi order_type
+                    order_data["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
 
                 for role in ["entry", "exit", "target"]:
                     role_cfg = record_config.get(role, {})
@@ -7509,6 +7533,21 @@ def entries_confirmation(broker_name):
                         origin_candle["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
                         origin_candle["pattern_time_id_with_poi"] = poi_origin_time
 
+                # ===== NEW FILTERING LOGIC =====
+                # Check if order has both order_type and poi_entry_order_type and they must match
+                has_both_types = (order_data.get("order_type") != "unknown" and 
+                                 order_data.get("poi_entry_order_type") not in [None, "unknown"])
+                
+                if has_both_types:
+                    # If both exist, they must match - otherwise skip this order
+                    if order_data["order_type"] != order_data["poi_entry_order_type"]:
+                        log(f"    🗑️ Filtering out order for {order_data['symbol']} at {order_data.get('pattern_time_id_with_poi', 'unknown')} - "
+                            f"order_type '{order_data['order_type']}' != poi_entry_order_type '{order_data['poi_entry_order_type']}'")
+                        continue  # Skip adding this order to pending_list
+                
+                # If order has only order_type (no POI), keep it
+                # If order has matching types, keep it
+
                 pending_list.append(order_data)
 
         if pending_list:
@@ -7523,7 +7562,7 @@ def entries_confirmation(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
-
+                             
     def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
         """
         Saves hitler/POI entry information into a poi_entry.json file.
@@ -7672,13 +7711,10 @@ def entries_confirmation(broker_name):
     def poi_order_direction_validation(target_data_tf, pattern_key):
         """
         Validates patterns based on order_type and poi_entry_order_type.
-        Also keeps only the youngest pattern and removes older ones.
-        
         Rules:
         1. If a pattern has no order_type field at all, it's invalid and removed immediately
         2. If a pattern has both order_type and poi_entry_order_type, they must match
         3. Only patterns that satisfy these conditions remain
-        4. After validation, keep only the youngest pattern (lowest number, e.g., 1) and delete older ones (2-10)
         
         Args:
             target_data_tf: The timeframe data dictionary containing patterns
@@ -7697,7 +7733,7 @@ def entries_confirmation(broker_name):
         patterns_removed = False
         patterns_to_delete = []
         
-        # First pass: Validate patterns based on order_type rules
+        # Iterate through each pattern in the patterns dictionary
         for pattern_name, pattern_candles in patterns_dict.items():
             if not isinstance(pattern_candles, list):
                 patterns_to_delete.append(pattern_name)
@@ -7743,61 +7779,17 @@ def entries_confirmation(broker_name):
             
             # RULE 4: If pattern has order_type and matching poi_entry_order_type, keep it
         
-        # Delete all invalid patterns from first pass
+        # Delete all invalid patterns
         for pattern_name in patterns_to_delete:
-            if pattern_name in patterns_dict:
-                del patterns_dict[pattern_name]
+            del patterns_dict[pattern_name]
         
         # If patterns dictionary is now empty, remove the entire patterns key
         if not patterns_dict:
             del target_data_tf[pattern_key]
             log(f"    🗑️ Removed empty patterns dictionary {pattern_key}")
-            return patterns_removed
-        
-        # Second pass: Keep only the youngest pattern, delete all older ones
-        if patterns_dict:
-            # Extract pattern numbers and find the youngest (lowest number)
-            pattern_numbers = []
-            pattern_name_mapping = {}
-            
-            for pattern_name in patterns_dict.keys():
-                # Try to extract number from pattern name (assuming format like "pattern_1", "pattern_2", etc.)
-                # Adjust this logic based on your actual pattern naming convention
-                import re
-                number_match = re.search(r'(\d+)', pattern_name)
-                if number_match:
-                    pattern_num = int(number_match.group(1))
-                    pattern_numbers.append(pattern_num)
-                    pattern_name_mapping[pattern_num] = pattern_name
-                else:
-                    # If pattern name doesn't contain a number, keep it as is (don't delete based on age)
-                    # or you could assign a default behavior here
-                    pass
-            
-            if pattern_numbers:
-                # Find the youngest pattern (lowest number)
-                youngest_number = min(pattern_numbers)
-                youngest_pattern = pattern_name_mapping[youngest_number]
-                
-                # Mark all other patterns for deletion
-                patterns_to_delete_old = []
-                for pattern_num, pattern_name in pattern_name_mapping.items():
-                    if pattern_num != youngest_number:
-                        patterns_to_delete_old.append(pattern_name)
-                
-                # Delete older patterns
-                for pattern_name in patterns_to_delete_old:
-                    del patterns_dict[pattern_name]
-                    patterns_removed = True
-                    log(f"    🗑️ Removing older pattern {pattern_name}, keeping youngest pattern {youngest_pattern}")
-        
-        # If patterns dictionary is now empty after second pass, remove the entire patterns key
-        if not patterns_dict:
-            del target_data_tf[pattern_key]
-            log(f"    🗑️ Removed empty patterns dictionary {pattern_key}")
         
         return patterns_removed
-        
+
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
         Deletes the limit_orders.json file inside the specific new_filename folder 
@@ -9333,6 +9325,7 @@ def entries_confirmation(broker_name):
                                                 target_data  # Pass the full target_data for cross-timeframe checking
                                             )
                                             poi_order_direction_validation(target_data[tf], patterns_key)
+                                        
                                 
                                 # Draw definition tools NOW that sweepers and flags are in the patterns
                                 if identify_config:
@@ -10081,10 +10074,10 @@ def process_single_developer_pipeline(broker_name):
         
         
         # Step 4: POI
-        #res_poi = entry_point_of_interest(broker_name)
+        res_poi = entry_point_of_interest(broker_name)
         
         # Step 4: POI
-        #res_poi = entries_confirmation(broker_name)
+        res_poi = entries_confirmation(broker_name)
         
         
         # Step 5: Cleanup
@@ -10120,5 +10113,5 @@ def main():
     
 
 if __name__ == "__main__":
-   main()
+   single()
 

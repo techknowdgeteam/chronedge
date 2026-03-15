@@ -200,7 +200,6 @@ def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
         log_and_print(f"Failed to identify PH/PL: {str(e)}", "ERROR")
         return [], [], error_log
 
-
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     """
     Fetch OHLCV data including the currently forming candle (index 0).
@@ -319,6 +318,74 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
     chart_path = os.path.join(timeframe_folder, "chart.png")
     
     try:
+        # -----------------------------------------------------------------
+        # DYNAMIC WIDTH CALCULATION
+        # -----------------------------------------------------------------
+        num_candles = len(df)
+        
+        # Configuration for readable candles
+        MIN_CANDLE_WIDTH = 20  # Minimum pixels per candle for readability
+        MAX_CANDLE_WIDTH = 40  # Maximum pixels per candle (prevents extremely wide images)
+        MIN_CANDLE_SPACING = 10  # Minimum pixels between candles
+        BASE_HEIGHT = 100  # Base height in inches (original was 10)
+        MAX_IMAGE_WIDTH = 90000000  # Maximum width to prevent insane image sizes
+        
+        # Determine optimal candle width based on number of candles
+        if num_candles <= 50:
+            # Few candles - make them larger for better visibility
+            base_candle_width = 30
+            base_spacing_multiplier = 1.8
+        elif num_candles <= 200:
+            # Medium number of candles - moderate size
+            base_candle_width = 20
+            base_spacing_multiplier = 1.6
+        elif num_candles <= 1000:
+            # Many candles - smaller but still readable
+            base_candle_width = 12
+            base_spacing_multiplier = 1.4
+        else:
+            # Very many candles - minimum readable size
+            base_candle_width = MIN_CANDLE_WIDTH
+            base_spacing_multiplier = 1.3
+        
+        # Apply constraints to candle width
+        target_candle_width = max(base_candle_width, MIN_CANDLE_WIDTH)
+        target_candle_width = min(target_candle_width, MAX_CANDLE_WIDTH)
+        
+        # Calculate spacing based on candle width and multiplier
+        desired_spacing = target_candle_width * base_spacing_multiplier
+        
+        # Apply minimum spacing constraint
+        actual_spacing = max(desired_spacing, MIN_CANDLE_SPACING)
+        
+        # Calculate total width needed in pixels
+        if num_candles > 1:
+            total_width_pixels = actual_spacing * (num_candles - 1) + target_candle_width
+        else:
+            total_width_pixels = target_candle_width * 2  # For single candle, give it some space
+        
+        # Add padding for margins (left and right)
+        padding_pixels = 200  # Extra space for labels, titles, etc.
+        img_width_pixels = int(total_width_pixels + padding_pixels)
+        
+        # Cap width to prevent insane image sizes
+        img_width_pixels = min(img_width_pixels, MAX_IMAGE_WIDTH)
+        
+        # If width is less than minimum, use minimum
+        min_width_pixels = 800
+        if img_width_pixels < min_width_pixels:
+            img_width_pixels = min_width_pixels
+        
+        # Convert pixels to inches for matplotlib (assuming 100 dpi as base)
+        # Original was 25 inches width for ~2500 pixels, so roughly 100 pixels per inch
+        img_width_inches = img_width_pixels / 100
+        
+        # Log the dynamic sizing
+        log_and_print(f"Dynamic sizing for {symbol} {timeframe_str}: {num_candles} candles → {img_width_pixels}px ({img_width_inches:.1f}in) width, {BASE_HEIGHT}in height", "INFO")
+        
+        # -----------------------------------------------------------------
+        # ORIGINAL CHART GENERATION WITH DYNAMIC WIDTH
+        # -----------------------------------------------------------------
         custom_style = mpf.make_mpf_style(
             base_mpl_style="default",
             marketcolors=mpf.make_marketcolors(
@@ -327,44 +394,77 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
             )
         )
 
-        # Generate and save only the full chart
+        # Check DataFrame columns to handle different naming conventions
+        required_cols = ['Open', 'High', 'Low', 'Close']
+        df_cols = df.columns.tolist()
+        
+        # Check if required columns exist (case-insensitive)
+        col_mapping = {}
+        for req_col in required_cols:
+            found = False
+            for df_col in df_cols:
+                if df_col.lower() == req_col.lower():
+                    col_mapping[req_col] = df_col
+                    found = True
+                    break
+            if not found:
+                # If column not found, raise error with helpful message
+                raise KeyError(f"Required column '{req_col}' not found in DataFrame. Available columns: {df_cols}")
+        
+        # Rename columns if necessary to match expected format
+        if col_mapping:
+            df_plot = df.rename(columns={v: k for k, v in col_mapping.items()})
+        else:
+            df_plot = df
+
+        # Generate and save only the full chart with dynamic size
         fig, axlist = mpf.plot(
-            df, 
+            df_plot, 
             type='candle', 
             style=custom_style, 
             volume=False,
-            title=f"{symbol} ({timeframe_str})", 
+            title=f"{symbol} ({timeframe_str}) - {num_candles} candles", 
             returnfig=True,
-            warn_too_much_data=5000
+            warn_too_much_data=5000,
+            figsize=(img_width_inches, BASE_HEIGHT),  # Dynamic width, fixed height
+            scale_padding={'left': 0.5, 'right': 1.5, 'top': 0.5, 'bottom': 0.5}  # Add padding
         )
         
-        fig.set_size_inches(25, 10)
+        # Set size explicitly (redundant but safe)
+        fig.set_size_inches(img_width_inches, BASE_HEIGHT)
+        
+        # Customize the plot
         for ax in axlist:
             ax.grid(False)
             for line in ax.get_lines():
                 if line.get_label() == '':
                     line.set_linewidth(0.5)
 
-        fig.savefig(chart_path, bbox_inches="tight", dpi=200)
+        # Save with appropriate DPI - NO CROPPING, save directly
+        fig.savefig(chart_path, bbox_inches="tight", dpi=100)  # 100 DPI gives good quality
         plt.close(fig)
 
-        log_and_print(f"SAVED: chart.png for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"SAVED: chart.png for {symbol} {timeframe_str} (Dynamic size: {img_width_pixels}px)", "SUCCESS")
 
         return chart_path, error_log
 
+    except KeyError as e:
+        log_and_print(f"Error in chart generation - column error: {e}", "ERROR")
+        error_log.append(str(e))
+        return None, error_log
     except Exception as e:
         log_and_print(f"Error in chart generation: {e}", "ERROR")
         error_log.append(str(e))
         return None, error_log
-        
-def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
-    """Generate sliced charts + return list of slice counts actually generated"""
+
+def generate_and_save_chart_slice(symbol, timeframe_str, timeframe_folder):
+    """Generate sliced charts with dynamic sizing + return list of slice counts actually generated"""
     error_log = []
 
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
     json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
-    candle_slices = [300, 2000]
+    candle_slices = [500]
 
     generated_slice_counts = []  # To pass to JSON slicers
 
@@ -403,6 +503,70 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
             if len(df) >= count:
                 df_slice = df.iloc[-count:]
                 slice_path = os.path.join(timeframe_folder, f"chart_{count}.png")
+                
+                # -----------------------------------------------------------------
+                # DYNAMIC WIDTH CALCULATION FOR SLICED CHART
+                # -----------------------------------------------------------------
+                num_candles = len(df_slice)
+                
+                # Configuration for readable candles
+                MIN_CANDLE_WIDTH = 20  # Minimum pixels per candle for readability
+                MAX_CANDLE_WIDTH = 40  # Maximum pixels per candle (prevents extremely wide images)
+                MIN_CANDLE_SPACING = 10  # Minimum pixels between candles
+                BASE_HEIGHT = 50  # Base height in inches (original was 10)
+                MAX_IMAGE_WIDTH = 90000000  # Maximum width to prevent insane image sizes
+                
+                # Determine optimal candle width based on number of candles
+                if num_candles <= 50:
+                    # Few candles - make them larger for better visibility
+                    base_candle_width = 30
+                    base_spacing_multiplier = 1.8
+                elif num_candles <= 200:
+                    # Medium number of candles - moderate size
+                    base_candle_width = 20
+                    base_spacing_multiplier = 1.6
+                elif num_candles <= 1000:
+                    # Many candles - smaller but still readable
+                    base_candle_width = 12
+                    base_spacing_multiplier = 1.4
+                else:
+                    # Very many candles - minimum readable size
+                    base_candle_width = MIN_CANDLE_WIDTH
+                    base_spacing_multiplier = 1.3
+                
+                # Apply constraints to candle width
+                target_candle_width = max(base_candle_width, MIN_CANDLE_WIDTH)
+                target_candle_width = min(target_candle_width, MAX_CANDLE_WIDTH)
+                
+                # Calculate spacing based on candle width and multiplier
+                desired_spacing = target_candle_width * base_spacing_multiplier
+                
+                # Apply minimum spacing constraint
+                actual_spacing = max(desired_spacing, MIN_CANDLE_SPACING)
+                
+                # Calculate total width needed in pixels
+                if num_candles > 1:
+                    total_width_pixels = actual_spacing * (num_candles - 1) + target_candle_width
+                else:
+                    total_width_pixels = target_candle_width * 2  # For single candle, give it some space
+                
+                # Add padding for margins (left and right)
+                padding_pixels = 200  # Extra space for labels, titles, etc.
+                img_width_pixels = int(total_width_pixels + padding_pixels)
+                
+                # Cap width to prevent insane image sizes
+                img_width_pixels = min(img_width_pixels, MAX_IMAGE_WIDTH)
+                
+                # If width is less than minimum, use minimum
+                min_width_pixels = 800
+                if img_width_pixels < min_width_pixels:
+                    img_width_pixels = min_width_pixels
+                
+                # Convert pixels to inches for matplotlib (assuming 100 dpi as base)
+                img_width_inches = img_width_pixels / 100
+                
+                # Log the dynamic sizing
+                log_and_print(f"Dynamic sizing for {symbol} {timeframe_str} - Last {count}: {num_candles} candles → {img_width_pixels}px ({img_width_inches:.1f}in) width, {BASE_HEIGHT}in height", "INFO")
 
                 fig, axlist = mpf.plot(
                     df_slice,
@@ -410,21 +574,27 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
                     style=custom_style,
                     title=f"{symbol} ({timeframe_str}) - Last {count}",
                     returnfig=True,
-                    warn_too_much_data=5000
+                    warn_too_much_data=5000,
+                    figsize=(img_width_inches, BASE_HEIGHT),  # Dynamic width, fixed height
+                    scale_padding={'left': 0.5, 'right': 1.5, 'top': 0.5, 'bottom': 0.5}  # Add padding
                 )
 
-                fig.set_size_inches(25, 10)
+                fig.set_size_inches(img_width_inches, BASE_HEIGHT)
+                
                 for ax in axlist:
                     ax.grid(False)
                     for line in ax.get_lines():
                         if line.get_label() == '':
                             line.set_linewidth(0.5)
 
+                # Save with appropriate DPI - NO CROPPING, save directly
                 fig.savefig(slice_path, bbox_inches="tight", dpi=100)
                 plt.close(fig)
 
                 generated_slice_counts.append(count)
                 generated_slices += 1
+                
+                log_and_print(f"SAVED: chart_{count}.png for {symbol} {timeframe_str} (Dynamic size: {img_width_pixels}px)", "SUCCESS")
 
         log_and_print(f"SAVED: {generated_slices} sliced charts (from JSON) for {symbol} {timeframe_str}", "SUCCESS")
         return generated_slice_counts, error_log
@@ -639,24 +809,42 @@ def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     return error_log
 
 def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
-    """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions."""
+    """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions.
+    Skips cropping for very large images to avoid decompression bomb errors."""
     error_log = []
     
     # List of all images to crop: the main ones and all the slices
     images_to_crop = [f for f in os.listdir(timeframe_folder) if f.endswith(".png") and "chart" in f]
 
     try:
+        cropped_count = 0
+        skipped_count = 0
+        
         for filename in images_to_crop:
             full_path = os.path.join(timeframe_folder, filename)
-            with Image.open(full_path) as img:
-                # Set your crop margins here if needed (currently 0)
-                left, top, right, bottom = 0, 0, 0, 0 
-                crop_box = (left, top, img.width - right, img.height - bottom)
-                cropped_img = img.crop(crop_box)
-                cropped_img.save(full_path, "PNG")
+            
+            try:
+                with Image.open(full_path) as img:
+                    # Check if image exceeds Pillow's safe limit (leave some margin)
+                    if img.width * img.height > 150000000:  # 150 million pixels (under Pillow's 179M limit)
+                        log_and_print(f"SKIPPED cropping for {filename} - image too large ({img.width}×{img.height} = {img.width * img.height} pixels)", "WARNING")
+                        skipped_count += 1
+                        continue
+                    
+                    # Set your crop margins here if needed (currently 0)
+                    left, top, right, bottom = 0, 0, 0, 0 
+                    crop_box = (left, top, img.width - right, img.height - bottom)
+                    cropped_img = img.crop(crop_box)
+                    cropped_img.save(full_path, "PNG")
+                    cropped_count += 1
+                    
+            except Exception as e:
+                log_and_print(f"Failed to crop {filename}: {str(e)}", "WARNING")
+                skipped_count += 1
+                continue
         
-        log_and_print(f"All {len(images_to_crop)} charts cropped for {symbol} ({timeframe_str})", "SUCCESS")
-
+        log_and_print(f"Chart cropping for {symbol} ({timeframe_str}): {cropped_count} cropped, {skipped_count} skipped (too large)", "SUCCESS")
+        
     except Exception as e:
         err_msg = f"Failed to crop charts: {str(e)}"
         log_and_print(err_msg, "ERROR")
@@ -931,13 +1119,15 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
                 if df is not None and not df.empty:
                     df["symbol"] = symbol
                     save_newest_oldest_df(df, symbol, tf_str, tf_folder)
+                    
+                    # Generate charts directly without cropping
                     chart_path, _ = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
-                    slice_counts, _ = generate_and_save_chart(symbol, tf_str, tf_folder)
+                    slice_counts, _ = generate_and_save_chart_slice(symbol, tf_str, tf_folder)
                     
                     if slice_counts:
                         save_sliced_newest_oldest_json(symbol, tf_str, tf_folder, slice_counts)
-                    if chart_path:
-                        crop_chart(chart_path, symbol, tf_str, tf_folder)
+                    
+                    # CROP CHART REMOVED - Charts are saved as-is without cropping
             
             # Pass account_key as the broker name for identification
             ticks_value(symbol, sym_folder, account_key, account_cfg["BASE_FOLDER"], [symbol])
@@ -1037,7 +1227,7 @@ def fetch_charts_all_brokers(bars):
 
 def main():
     success = fetch_charts_all_brokers(
-        bars=2001
+        bars=500
     )
 
     if success:
