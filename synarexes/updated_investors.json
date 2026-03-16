@@ -205,9 +205,9 @@
         "login": "32092095",
         "password": "@Techknowdge12#",
         "application_status": "approved",
-        "broker_balance": 7542.53,
+        "broker_balance": 7476.42,
         "profitandloss": -313.53,
-        "contract_days_left": "24",
+        "contract_days_left": "17",
         "execution_start_date": "March 03, 2026",
         "trades": {
             "summary": {
@@ -871,6 +871,321 @@
                     "profit": 0.0,
                     "time": "2026-03-09 16:01:42",
                     "reason": "Trade NOT in tradeshistory.json (Ticket: 8470875871)"
+                },
+                {
+                    "ticket": 8470906930,
+                    "symbol": "GBPJPY",
+                    "type": "BUY",
+                    "volume": 2.27,
+                    "profit": 414.89,
+                    "time": "2026-03-09 16:31:45",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8470906930)"
+                },
+                {
+                    "ticket": 8470906931,
+                    "symbol": "GBPJPY",
+                    "type": "BUY",
+                    "volume": 2.2800000000000002,
+                    "profit": 416.72,
+                    "time": "2026-03-09 16:31:45",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8470906931)"
+                },
+                {
+                    "ticket": 8470915188,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.19,
+                    "profit": 0.0,
+                    "time": "2026-03-09 16:39:43",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8470915188)"
+                },
+                {
+                    "ticket": 8471023026,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.26,
+                    "profit": 0.0,
+                    "time": "2026-03-09 18:32:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471023026)"
+                },
+                {
+                    "ticket": 8471064202,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.26,
+                    "profit": 405.34,
+                    "time": "2026-03-09 19:23:51",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471064202)"
+                },
+                {
+                    "ticket": 8471076109,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.19,
+                    "profit": 390.26,
+                    "time": "2026-03-09 19:36:49",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471076109)"
+                },
+                {
+                    "ticket": 8471115998,
+                    "symbol": "GBPCHF",
+                    "type": "SELL",
+                    "volume": 1.25,
+                    "profit": 0.0,
+                    "time": "2026-03-09 20:19:28",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471115998)"
+                },
+                {
+                    "ticket": 8471166407,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.04,
+                    "profit": 392.44,
+                    "time": "2026-03-09 20:59:35",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471166407)"
+                },
+                {
+                    "ticket": 8471172755,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.03,
+                    "profit": 298.68,
+                    "time": "2026-03-09 21:06:29",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471172755)"
+                },
+                {
+                    "ticket": 8471213728,
+                    "symbol": "GBPCHF",
+                    "type": "BUY",
+                    "volume": 1.25,
+                    "profit": -290.7,
+                    "time": "2026-03-09 22:10:00",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471213728)"
+                },
+                {
+                    "ticket": 8471238104,
+                    "symbol": "EURJPY",
+                    "type": "BUY",
+                    "volume": 0.66,
+                    "profit": -209.64,
+                    "time": "2026-03-09 23:01:35",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471238104)"
+                },
+                {
+                    "ticket": 8471238105,
+                    "symbol": "EURJPY",
+                    "type": "BUY",
+                    "volume": 0.67,
+                    "profit": -212.83,
+                    "time": "2026-03-09 23:01:35",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471238105)"
+                },
+                {
+                    "ticket": 8471238106,
+                    "symbol": "EURJPY",
+                    "type": "BUY",
+                    "volume": 0.67,
+                    "profit": -213.25,
+                    "time": "2026-03-09 23:01:35",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471238106)"
+                },
+                {
+                    "ticket": 8471674932,
+                    "symbol": "AUDCAD",
+                    "type": "SELL",
+                    "volume": 3.23,
+                    "profit": 0.0,
+                    "time": "2026-03-10 11:14:07",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471674932)"
+                },
+                {
+                    "ticket": 8471696326,
+                    "symbol": "AUDCAD",
+                    "type": "BUY",
+                    "volume": 3.23,
+                    "profit": 401.81,
+                    "time": "2026-03-10 11:37:55",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471696326)"
+                },
+                {
+                    "ticket": 8471848698,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.08,
+                    "profit": 0.0,
+                    "time": "2026-03-10 14:18:24",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471848698)"
+                },
+                {
+                    "ticket": 8471848700,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.11,
+                    "profit": 0.0,
+                    "time": "2026-03-10 14:18:24",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471848700)"
+                },
+                {
+                    "ticket": 8471853887,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.02,
+                    "profit": 295.1,
+                    "time": "2026-03-10 14:21:57",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471853887)"
+                },
+                {
+                    "ticket": 8471853889,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.02,
+                    "profit": 301.16,
+                    "time": "2026-03-10 14:21:57",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471853889)"
+                },
+                {
+                    "ticket": 8471853891,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.02,
+                    "profit": 295.56,
+                    "time": "2026-03-10 14:21:57",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471853891)"
+                },
+                {
+                    "ticket": 8471853893,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.02,
+                    "profit": 295.3,
+                    "time": "2026-03-10 14:21:57",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471853893)"
+                },
+                {
+                    "ticket": 8471860490,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.11,
+                    "profit": -185.35,
+                    "time": "2026-03-10 14:26:16",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471860490)"
+                },
+                {
+                    "ticket": 8471998918,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.08,
+                    "profit": -186.16,
+                    "time": "2026-03-10 16:33:58",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8471998918)"
+                },
+                {
+                    "ticket": 8474350989,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.02,
+                    "profit": 0.0,
+                    "time": "2026-03-12 21:30:25",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474350989)"
+                },
+                {
+                    "ticket": 8474567481,
+                    "symbol": "USDCHF",
+                    "type": "SELL",
+                    "volume": 1.24,
+                    "profit": 0.0,
+                    "time": "2026-03-13 04:14:11",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474567481)"
+                },
+                {
+                    "ticket": 8474599545,
+                    "symbol": "USDCHF",
+                    "type": "SELL",
+                    "volume": 0.64,
+                    "profit": 0.0,
+                    "time": "2026-03-13 05:34:26",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474599545)"
+                },
+                {
+                    "ticket": 8474610334,
+                    "symbol": "EURNZD",
+                    "type": "SELL",
+                    "volume": 0.73,
+                    "profit": 0.0,
+                    "time": "2026-03-13 05:59:28",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474610334)"
+                },
+                {
+                    "ticket": 8474686824,
+                    "symbol": "USDCHF",
+                    "type": "BUY",
+                    "volume": 1.24,
+                    "profit": -198.31,
+                    "time": "2026-03-13 07:59:32",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474686824)"
+                },
+                {
+                    "ticket": 8474753116,
+                    "symbol": "USDCHF",
+                    "type": "BUY",
+                    "volume": 0.64,
+                    "profit": -196.99,
+                    "time": "2026-03-13 09:29:29",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8474753116)"
+                },
+                {
+                    "ticket": 8475098715,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.03,
+                    "profit": 0.0,
+                    "time": "2026-03-13 15:55:26",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8475098715)"
+                },
+                {
+                    "ticket": 8475100565,
+                    "symbol": "XAUUSD",
+                    "type": "BUY",
+                    "volume": 0.04,
+                    "profit": 0.0,
+                    "time": "2026-03-13 15:56:13",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8475100565)"
+                },
+                {
+                    "ticket": 8476891264,
+                    "symbol": "EURNZD",
+                    "type": "BUY",
+                    "volume": 0.73,
+                    "profit": -197.45,
+                    "time": "2026-03-15 22:27:09",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8476891264)"
+                },
+                {
+                    "ticket": 8476962110,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.03,
+                    "profit": -179.67,
+                    "time": "2026-03-16 00:20:15",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8476962110)"
+                },
+                {
+                    "ticket": 8476962111,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.04,
+                    "profit": -208.64,
+                    "time": "2026-03-16 00:20:15",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8476962111)"
+                },
+                {
+                    "ticket": 8476962113,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.02,
+                    "profit": -153.76,
+                    "time": "2026-03-16 00:20:15",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 8476962113)"
                 }
             ],
             "unauthorized_withdrawals": []
@@ -932,9 +1247,9 @@
         "login": "5996427",
         "password": "@Techknowdge12#",
         "application_status": "approved",
-        "broker_balance": 10003.92,
+        "broker_balance": 9961.97,
         "profitandloss": 0.0,
-        "contract_days_left": "24",
+        "contract_days_left": "17",
         "execution_start_date": "March 03, 2026",
         "trades": {
             "summary": {
@@ -947,7 +1262,7 @@
             "authorized_closed_trades": []
         },
         "unauthorized_actions": {
-            "detected": true,
+            "detected": false,
             "bypass_active": true,
             "autotrading_active": true,
             "type": [
@@ -1124,6 +1439,240 @@
                     "profit": 0.0,
                     "time": "2026-03-09 02:05:06",
                     "reason": "Trade NOT in tradeshistory.json (Ticket: 5481358349)"
+                },
+                {
+                    "ticket": 5482236885,
+                    "symbol": "GBPCHF",
+                    "type": "SELL",
+                    "volume": 1.25,
+                    "profit": 0.0,
+                    "time": "2026-03-09 20:19:28",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482236885)"
+                },
+                {
+                    "ticket": 5482321816,
+                    "symbol": "GBPCHF",
+                    "type": "BUY",
+                    "volume": 1.25,
+                    "profit": -300.33,
+                    "time": "2026-03-09 22:10:00",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482321816)"
+                },
+                {
+                    "ticket": 5482342056,
+                    "symbol": "NZDUSD",
+                    "type": "SELL",
+                    "volume": 0.5,
+                    "profit": 298.5,
+                    "time": "2026-03-09 22:57:59",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482342056)"
+                },
+                {
+                    "ticket": 5482527580,
+                    "symbol": "AUDNZD",
+                    "type": "SELL",
+                    "volume": 1.6,
+                    "profit": 0.0,
+                    "time": "2026-03-10 05:14:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482527580)"
+                },
+                {
+                    "ticket": 5482527581,
+                    "symbol": "AUDNZD",
+                    "type": "SELL",
+                    "volume": 1.6099999999999999,
+                    "profit": 0.0,
+                    "time": "2026-03-10 05:14:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482527581)"
+                },
+                {
+                    "ticket": 5482527582,
+                    "symbol": "AUDNZD",
+                    "type": "SELL",
+                    "volume": 0.01,
+                    "profit": 0.0,
+                    "time": "2026-03-10 05:14:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482527582)"
+                },
+                {
+                    "ticket": 5482527583,
+                    "symbol": "AUDNZD",
+                    "type": "SELL",
+                    "volume": 3.41,
+                    "profit": 0.0,
+                    "time": "2026-03-10 05:14:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482527583)"
+                },
+                {
+                    "ticket": 5482527584,
+                    "symbol": "AUDNZD",
+                    "type": "SELL",
+                    "volume": 2.05,
+                    "profit": 0.0,
+                    "time": "2026-03-10 05:14:53",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482527584)"
+                },
+                {
+                    "ticket": 5482573831,
+                    "symbol": "AUDNZD",
+                    "type": "BUY",
+                    "volume": 3.41,
+                    "profit": -201.57,
+                    "time": "2026-03-10 06:50:55",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482573831)"
+                },
+                {
+                    "ticket": 5482574603,
+                    "symbol": "AUDNZD",
+                    "type": "BUY",
+                    "volume": 2.05,
+                    "profit": -201.22,
+                    "time": "2026-03-10 06:52:22",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482574603)"
+                },
+                {
+                    "ticket": 5482577250,
+                    "symbol": "AUDNZD",
+                    "type": "BUY",
+                    "volume": 1.6,
+                    "profit": -201.42,
+                    "time": "2026-03-10 06:56:59",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482577250)"
+                },
+                {
+                    "ticket": 5482577251,
+                    "symbol": "AUDNZD",
+                    "type": "BUY",
+                    "volume": 1.6099999999999999,
+                    "profit": -202.68,
+                    "time": "2026-03-10 06:56:59",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482577251)"
+                },
+                {
+                    "ticket": 5482630037,
+                    "symbol": "AUDUSD",
+                    "type": "SELL",
+                    "volume": 0.72,
+                    "profit": 0.0,
+                    "time": "2026-03-10 08:24:24",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482630037)"
+                },
+                {
+                    "ticket": 5482630038,
+                    "symbol": "AUDUSD",
+                    "type": "SELL",
+                    "volume": 0.05,
+                    "profit": 0.0,
+                    "time": "2026-03-10 08:24:24",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482630038)"
+                },
+                {
+                    "ticket": 5482680610,
+                    "symbol": "XAUUSD",
+                    "type": "SELL",
+                    "volume": 0.01,
+                    "profit": 0.0,
+                    "time": "2026-03-10 09:39:34",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482680610)"
+                },
+                {
+                    "ticket": 5482744314,
+                    "symbol": "AUDCAD",
+                    "type": "SELL",
+                    "volume": 3.23,
+                    "profit": 0.0,
+                    "time": "2026-03-10 11:15:49",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482744314)"
+                },
+                {
+                    "ticket": 5482846749,
+                    "symbol": "AUDCAD",
+                    "type": "BUY",
+                    "volume": 3.23,
+                    "profit": 600.35,
+                    "time": "2026-03-10 13:20:27",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482846749)"
+                },
+                {
+                    "ticket": 5482985297,
+                    "symbol": "AUDUSD",
+                    "type": "BUY",
+                    "volume": 0.72,
+                    "profit": -200.88,
+                    "time": "2026-03-10 15:43:27",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5482985297)"
+                },
+                {
+                    "ticket": 5483117750,
+                    "symbol": "AUDCAD",
+                    "type": "SELL",
+                    "volume": 0.99,
+                    "profit": 0.0,
+                    "time": "2026-03-10 18:19:27",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5483117750)"
+                },
+                {
+                    "ticket": 5483945172,
+                    "symbol": "AUDCAD",
+                    "type": "BUY",
+                    "volume": 0.99,
+                    "profit": -201.88,
+                    "time": "2026-03-11 15:00:55",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5483945172)"
+                },
+                {
+                    "ticket": 5485586121,
+                    "symbol": "EURNZD",
+                    "type": "SELL",
+                    "volume": 0.73,
+                    "profit": 0.0,
+                    "time": "2026-03-13 06:11:43",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5485586121)"
+                },
+                {
+                    "ticket": 5486050220,
+                    "symbol": "USDCAD",
+                    "type": "SELL",
+                    "volume": 0.34,
+                    "profit": 0.0,
+                    "time": "2026-03-13 16:02:37",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5486050220)"
+                },
+                {
+                    "ticket": 5486050221,
+                    "symbol": "USDCAD",
+                    "type": "SELL",
+                    "volume": 0.8,
+                    "profit": 0.0,
+                    "time": "2026-03-13 16:02:37",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5486050221)"
+                },
+                {
+                    "ticket": 5486050222,
+                    "symbol": "USDCAD",
+                    "type": "SELL",
+                    "volume": 0.67,
+                    "profit": 0.0,
+                    "time": "2026-03-13 16:02:37",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5486050222)"
+                },
+                {
+                    "ticket": 5486050223,
+                    "symbol": "USDCAD",
+                    "type": "SELL",
+                    "volume": 0.08,
+                    "profit": 0.0,
+                    "time": "2026-03-13 16:02:37",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5486050223)"
+                },
+                {
+                    "ticket": 5487638803,
+                    "symbol": "EURNZD",
+                    "type": "BUY",
+                    "volume": 0.73,
+                    "profit": -200.39,
+                    "time": "2026-03-15 22:27:09",
+                    "reason": "Trade NOT in tradeshistory.json (Ticket: 5487638803)"
                 }
             ],
             "unauthorized_withdrawals": []

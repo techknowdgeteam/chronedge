@@ -120,7 +120,6 @@ def initialize_mt5(terminal_path, login_id, password, server):
             mt5.shutdown()
             return False, error_log
 
-        log_and_print(f"MT5 initialized and logged in successfully (loginid={login_id}, server={server})", "SUCCESS")
         return True, error_log
     except Exception as e:
         error_log.append({
@@ -301,7 +300,7 @@ def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        log_and_print(f"SAVED: newest_oldest.json for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"✓ {symbol} {timeframe_str} | JSON saved | {len(all_candles)} candles", "SUCCESS")
 
     except Exception as e:
         err = f"save_newest_oldest_df failed: {str(e)}"
@@ -377,11 +376,10 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
             img_width_pixels = min_width_pixels
         
         # Convert pixels to inches for matplotlib (assuming 100 dpi as base)
-        # Original was 25 inches width for ~2500 pixels, so roughly 100 pixels per inch
         img_width_inches = img_width_pixels / 100
         
         # Log the dynamic sizing
-        log_and_print(f"Dynamic sizing for {symbol} {timeframe_str}: {num_candles} candles → {img_width_pixels}px ({img_width_inches:.1f}in) width, {BASE_HEIGHT}in height", "INFO")
+        log_and_print(f"📊 {symbol} {timeframe_str} | {num_candles} candles → {img_width_pixels}px", "INFO")
         
         # -----------------------------------------------------------------
         # ORIGINAL CHART GENERATION WITH DYNAMIC WIDTH
@@ -444,7 +442,7 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
         fig.savefig(chart_path, bbox_inches="tight", dpi=100)  # 100 DPI gives good quality
         plt.close(fig)
 
-        log_and_print(f"SAVED: chart.png for {symbol} {timeframe_str} (Dynamic size: {img_width_pixels}px)", "SUCCESS")
+        log_and_print(f"✓ {symbol} {timeframe_str} | Chart saved | {num_candles} candles", "SUCCESS")
 
         return chart_path, error_log
 
@@ -566,7 +564,7 @@ def generate_and_save_chart_slice(symbol, timeframe_str, timeframe_folder):
                 img_width_inches = img_width_pixels / 100
                 
                 # Log the dynamic sizing
-                log_and_print(f"Dynamic sizing for {symbol} {timeframe_str} - Last {count}: {num_candles} candles → {img_width_pixels}px ({img_width_inches:.1f}in) width, {BASE_HEIGHT}in height", "INFO")
+                log_and_print(f"📊 {symbol} {timeframe_str} | Last {count}: {num_candles} candles → {img_width_pixels}px", "INFO")
 
                 fig, axlist = mpf.plot(
                     df_slice,
@@ -594,9 +592,10 @@ def generate_and_save_chart_slice(symbol, timeframe_str, timeframe_folder):
                 generated_slice_counts.append(count)
                 generated_slices += 1
                 
-                log_and_print(f"SAVED: chart_{count}.png for {symbol} {timeframe_str} (Dynamic size: {img_width_pixels}px)", "SUCCESS")
+                log_and_print(f"✓ {symbol} {timeframe_str} | chart_{count}.png saved | {num_candles} candles", "SUCCESS")
 
-        log_and_print(f"SAVED: {generated_slices} sliced charts (from JSON) for {symbol} {timeframe_str}", "SUCCESS")
+        if generated_slices > 0:
+            log_and_print(f"✓ {symbol} {timeframe_str} | {generated_slices} sliced charts saved", "SUCCESS")
         return generated_slice_counts, error_log
 
     except Exception as e:
@@ -664,7 +663,7 @@ def save_sliced_newest_oldest_json(symbol, timeframe_str, timeframe_folder, slic
             generated += 1
 
         if generated > 0:
-            log_and_print(f"SAVED: {generated} sliced new_old_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
+            log_and_print(f"✓ {symbol} {timeframe_str} | {generated} sliced JSONs saved", "SUCCESS")
 
     except Exception as e:
         err = f"save_sliced_newest_oldest_json failed: {str(e)}"
@@ -859,8 +858,6 @@ def backup_developers_dictionary():
     main_path.parent.mkdir(parents=True, exist_ok=True)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     
-    print(f"Main file   : {main_path}")
-    print(f"Backup file : {backup_path}")
 
     def read_json_safe(path: Path) -> dict | None:
         if not path.exists() or path.stat().st_size == 0:
@@ -886,7 +883,6 @@ def backup_developers_dictionary():
         # Main has real data → copy to backup (and make backup pretty)
         print("Main has valid data → syncing to backup")
         write_json(backup_path, main_data)
-        print(f"Copied valid data: {main_path} → {backup_path}")
         return
 
     # Step 2: Main is empty {} or invalid → check backup
@@ -1092,6 +1088,17 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
     """
     processed_count = 0
     
+    # Group symbols by category for cleaner logging
+    categories = {}
+    for symbol, cat in symbol_chunk:
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(symbol)
+    
+    # Log the workload for this account
+    total_in_chunk = len(symbol_chunk)
+    log_and_print(f"\n  ⚙️  {account_key.upper()} | Starting | {total_in_chunk} symbols", "INFO")
+    
     for symbol, cat in symbol_chunk:
         # Initialize MT5 for this specific terminal
         ok, _ = initialize_mt5(
@@ -1102,11 +1109,11 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
         )
         
         if not ok:
-            log_and_print(f"  [!] {account_key.upper()} failed to connect for {symbol}", "ERROR")
+            log_and_print(f"  ⚠️  {account_key.upper()} | Connection failed | {symbol}", "ERROR")
             continue
 
         try:
-            log_and_print(f"  [→] {account_key.upper()} | Processing: {symbol} ({cat})", "INFO")
+            log_and_print(f"  📈 {account_key.upper()} | Processing | {symbol} ({cat})", "INFO")
             
             sym_folder = os.path.join(account_cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
             os.makedirs(sym_folder, exist_ok=True)
@@ -1132,21 +1139,23 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
             # Pass account_key as the broker name for identification
             ticks_value(symbol, sym_folder, account_key, account_cfg["BASE_FOLDER"], [symbol])
             processed_count += 1
+            log_and_print(f"  ✅ {account_key.upper()} | Completed | {symbol}", "SUCCESS")
             
         except Exception as e:
-            log_and_print(f"  [!] {account_key.upper()} Error on {symbol}: {e}", "ERROR")
+            log_and_print(f"  ❌ {account_key.upper()} | Error on {symbol}: {str(e)[:50]}", "ERROR")
         finally:
             mt5.shutdown()
     
     result_dict[account_key] = processed_count
+    log_and_print(f"  🏁 {account_key.upper()} | Finished | {processed_count}/{total_in_chunk} symbols processed\n", "SUCCESS")
 
 def fetch_charts_all_brokers(bars):
     backup_developers_dictionary()
     category_path = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 
-    log_and_print("\n" + "="*60, "INFO")
-    log_and_print("🚀 SYNCHRONIZING MULTI-ACCOUNT ENGINE", "INFO")
-    log_and_print("="*60 + "\n", "INFO")
+    log_and_print("\n" + "╔" + "═"*58 + "╗", "INFO")
+    log_and_print("║           🚀 MULTI-ACCOUNT SYNCHRONIZATION ENGINE           ║", "INFO")
+    log_and_print("╚" + "═"*58 + "╝\n", "INFO")
 
     try:
         # 1. Load symbols
@@ -1154,14 +1163,18 @@ def fetch_charts_all_brokers(bars):
             categories_data = json.load(f)
 
         # 2. Get the master list of all symbols to process
+        log_and_print("📡 Discovering available symbols...", "INFO")
+        
         # We use the first available terminal to see what symbols are actually on the server
-        master_symbol_list = []
         first_cfg = list(ohlcdictionary.values())[0]
         
         ok, _ = initialize_mt5(first_cfg["TERMINAL_PATH"], first_cfg["LOGIN_ID"], first_cfg["PASSWORD"], first_cfg["SERVER"])
         if ok:
             mt5_available, _ = get_symbols()
             mt5.shutdown()
+            
+            # Build master list with validation
+            master_symbol_list = []
             for cat, symbol_list in categories_data.items():
                 for sym in symbol_list:
                     if sym in mt5_available:
@@ -1169,11 +1182,11 @@ def fetch_charts_all_brokers(bars):
         
         total_symbols = len(master_symbol_list)
         if total_symbols == 0:
-            log_and_print("No symbols found to process.", "WARNING")
+            log_and_print("⚠️  No symbols found to process.", "WARNING")
             return True
 
         # 3. Split symbols equally across all accounts in ohlcdictionary
-        accounts = list(ohlcdictionary.items()) # [('deriv_terminal_1', cfg), ('deriv_terminal_2', cfg)...]
+        accounts = list(ohlcdictionary.items())
         num_accounts = len(accounts)
         
         # Math to divide symbols into chunks
@@ -1186,8 +1199,19 @@ def fetch_charts_all_brokers(bars):
             chunks.append(master_symbol_list[start:end])
             start = end
 
-        log_and_print(f"📋 WORKLOAD DISTRIBUTION ({total_symbols} symbols total):", "INFO")
+        log_and_print("\n" + "─"*60, "INFO")
+        log_and_print("📋 WORKLOAD DISTRIBUTION", "INFO")
+        log_and_print("─"*60, "INFO")
         
+        for i, (acc_key, _) in enumerate(accounts):
+            chunk_size = len(chunks[i])
+            percentage = (chunk_size / total_symbols) * 100
+            bar = "█" * int(percentage/5) + "░" * (20 - int(percentage/5))
+            log_and_print(f"   {acc_key:20} | {bar} | {chunk_size:3} symbols ({percentage:5.1f}%)", "SUCCESS")
+        
+        log_and_print("─"*60 + "\n", "INFO")
+        log_and_print(f"🚀 Launching {num_accounts} parallel processes...\n", "INFO")
+
         # 4. Launch Processes
         manager = multiprocessing.Manager()
         final_counts = manager.dict()
@@ -1195,8 +1219,6 @@ def fetch_charts_all_brokers(bars):
 
         for i, (acc_key, acc_cfg) in enumerate(accounts):
             chunk = chunks[i]
-            log_and_print(f"   ➤ {acc_key}: Assigned {len(chunk)} symbols", "SUCCESS")
-            
             if not chunk: continue
             
             p = multiprocessing.Process(
@@ -1206,34 +1228,55 @@ def fetch_charts_all_brokers(bars):
             processes.append(p)
             p.start()
 
-        print("-" * 60)
-
         # Wait for all accounts to finish their work
         for p in processes:
             p.join()
 
         # 5. Final Summary
-        log_and_print("\n" + "="*60, "SUCCESS")
-        log_and_print("🏁 ALL ACCOUNTS FINISHED PROCESSING", "SUCCESS")
+        total_processed = sum(final_counts.values())
+        
+        log_and_print("\n" + "╔" + "═"*58 + "╗", "SUCCESS")
+        log_and_print("║                    🏁 PROCESSING COMPLETE                    ║", "SUCCESS")
+        log_and_print("╠" + "═"*58 + "╣", "SUCCESS")
+        
         for acc_key, count in final_counts.items():
-            log_and_print(f"   ✔ {acc_key}: Processed {count} symbols", "SUCCESS")
-        log_and_print("="*60 + "\n", "SUCCESS")
+            percentage = (count / total_processed) * 100 if total_processed > 0 else 0
+            log_and_print(f"║ {acc_key:30} │ {count:3} symbols │ {percentage:5.1f}%", "SUCCESS")
+        
+        log_and_print("╠" + "═"*58 + "╣", "SUCCESS")
+        log_and_print(f"║ {'TOTAL':30} │ {total_processed:3} symbols │ 100.0%", "SUCCESS")
+        log_and_print("╚" + "═"*58 + "╝\n", "SUCCESS")
 
         return True
 
     except Exception as e:
-        log_and_print(f"💥 SYSTEM ERROR: {e}", "CRITICAL")
+        log_and_print("\n" + "╔" + "═"*58 + "╗", "CRITICAL")
+        log_and_print("║                    💥 SYSTEM ERROR                            ║", "CRITICAL")
+        log_and_print("╠" + "═"*58 + "╣", "CRITICAL")
+        log_and_print(f"║ {str(e):56}", "CRITICAL")
+        log_and_print("╚" + "═"*58 + "╝\n", "CRITICAL")
         return False
 
 def main():
-    success = fetch_charts_all_brokers(
-        bars=500
-    )
+    log_and_print("\n" + "┌" + "─"*58 + "┐", "INFO")
+    log_and_print("│                 🔄 SYNAREX DATA PIPELINE                   │", "INFO")
+    log_and_print("└" + "─"*58 + "┘\n", "INFO")
+    
+    success = fetch_charts_all_brokers(bars=500)
 
     if success:
-        log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
+        log_and_print("\n" + "┌" + "─"*58 + "┐", "SUCCESS")
+        log_and_print("│                   ✅ PIPELINE COMPLETED                     │", "SUCCESS")
+        log_and_print("├" + "─"*58 + "┤", "SUCCESS")
+        log_and_print("│ • Charts generated                • Candle data saved        │", "SUCCESS")
+        log_and_print("│ • PH/PL analysis completed        • Arrow detection done     │", "SUCCESS")
+        log_and_print("└" + "─"*58 + "┘\n", "SUCCESS")
     else:
-        log_and_print("Process failed. Check error log for details.", "ERROR")   
+        log_and_print("\n" + "┌" + "─"*58 + "┐", "ERROR")
+        log_and_print("│                   ❌ PIPELINE FAILED                        │", "ERROR")
+        log_and_print("├" + "─"*58 + "┤", "ERROR")
+        log_and_print("│ Check error log for details                                  │", "ERROR")
+        log_and_print("└" + "─"*58 + "┘\n", "ERROR")
 
 if __name__ == "__main__":
     main()

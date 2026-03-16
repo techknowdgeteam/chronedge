@@ -479,10 +479,10 @@ def label_objects(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
 
 def swing_points(broker_name):
-
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] {msg}")
 
     dev_dict = load_developers_dictionary()
     cfg = dev_dict.get(broker_name)
@@ -514,7 +514,11 @@ def swing_points(broker_name):
         if "dot" in raw: return "dot", False
         return raw, False
 
-    log(f"--- STARTING HH/ll ANALYSIS: {broker_name} ---")
+    # Aesthetic print header
+    print("\n" + "="*80)
+    print(f"🚀 SWING POINTS ANALYSIS - {broker_name}".center(80))
+    print("="*80)
+    log(f"Starting HH/LL analysis for {broker_name}")
 
     for config_key, hlll_cfg in matching_configs:
         bars = hlll_cfg.get("BARS", 101)
@@ -540,9 +544,15 @@ def swing_points(broker_name):
         hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("swing_highs_contourmaker_marker", ""))
         ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("swing_lows_contourmaker_marker", ""))
 
+
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
             if not os.path.isdir(sym_p): continue
+            
+            # Symbol header with nice formatting
+            symbol_swings_high = 0
+            symbol_swings_low = 0
+            symbol_timeframes = []
             
             for tf in sorted(os.listdir(sym_p)):
                 paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
@@ -552,7 +562,6 @@ def swing_points(broker_name):
                     continue
                 
                 try:
-                    # Logging specific pair and timeframe
                     with open(paths["source_json"], 'r', encoding='utf-8') as f:
                         data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
                     
@@ -591,6 +600,8 @@ def swing_points(broker_name):
 
                     n = len(data)
                     swing_count_in_chart = 0
+                    swing_highs_in_chart = 0
+                    swing_lows_in_chart = 0
                     start_idx = neighbor_left
                     end_idx = n - neighbor_right
 
@@ -610,6 +621,14 @@ def swing_points(broker_name):
                         
                         swing_count_in_chart += 1
                         is_bull = is_ll
+                        
+                        if is_bull:
+                            swing_lows_in_chart += 1
+                            symbol_swings_low += 1
+                        else:
+                            swing_highs_in_chart += 1
+                            symbol_swings_high += 1
+                            
                         active_color = ll_col if is_bull else hh_col
                         custom_text = ll_text if is_bull else hh_text
                         obj_type = ll_obj if is_bull else hh_obj
@@ -685,345 +704,39 @@ def swing_points(broker_name):
                     with open(config_path, 'w', encoding='utf-8') as f:
                         json.dump(config_json, f, indent=4)
                     
-                    log(f"{sym} | {tf} | Key: {config_key} Swings found: {swing_count_in_chart}")
+                    # Aesthetic print for each timeframe
+                    if swing_count_in_chart > 0:
+                        swings_display = f"🔴 HH:{swing_highs_in_chart:3d} | 🟢 LL:{swing_lows_in_chart:3d} | Total:{swing_count_in_chart:3d}"
+                    else:
+                        swings_display = "⚪ No swings found"
                     
+                    #print(f"   📈 {sym:<10} | {tf:<6} | {swings_display}")
+                    
+                    symbol_timeframes.append(tf)
                     processed_charts_all += 1
                     total_marked_all += swing_count_in_chart
 
                 except Exception as e:
                     log(f"   [ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
+            
+            # Symbol summary with nice formatting
+            if symbol_timeframes:
+                total_symbol_swings = symbol_swings_high + symbol_swings_low
+                if total_symbol_swings > 0:
+                    print(f"\n {sym} SWING POINTS:")
+                    print(f"   ├─ Timeframes processed: {len(symbol_timeframes)}")
+                    print(f"   ├─ 🔴 SWING HIGHS: {symbol_swings_high}")
+                    print(f"   ├─ 🟢 SWING LOWS: {symbol_swings_low}")
+                    print(f"   └─ 📊 TOTAL SWINGS: {total_symbol_swings}")
+                    print(f"   {'.' * 50}")
 
-    log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
-    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"  
-
-def swing_pointtts(broker_name):
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg:
-        return f"[{broker_name}] Error: Broker not in dictionary."
+    # Final summary with beautiful formatting
+    print("\n" + "="*80)
+    print("🎯 SWING POINTS COMPLETED".center(80))
+    print("="*80)
     
-    base_folder = cfg.get("BASE_FOLDER")
-    am_data = get_account_management(broker_name)
-    if not am_data:
-        return f"[{broker_name}] Error: accountmanagement.json missing."
-    
-    define_candles = am_data.get("chart", {}).get("define_candles", {})
-    keyword = "swing_points"
-    matching_configs = [(k, v) for k, v in define_candles.items() if keyword in k.lower()]
-    if not matching_configs:
-        return f"[{broker_name}] Error: No configuration found for '{keyword}'."
-    
-    total_marked_all, processed_charts_all = 0, 0
+    return
 
-    def resolve_marker(raw):
-        if not raw: return None, False
-        raw = str(raw).lower().strip()
-        if raw in ["arrow", "arrows", "singlearrow"]: return "arrow", False
-        if raw in ["doublearrow", "doublearrows"]: return "arrow", True
-        if raw in ["reverse_arrow", "reversearrow"]: return "reverse_arrow", False
-        if raw in ["reverse_doublearrow", "reverse_doublearrows"]: return "reverse_arrow", True
-        if raw in ["rightarrow", "right_arrow"]: return "rightarrow", False
-        if raw in ["leftarrow", "left_arrow"]: return "leftarrow", False
-        if "dot" in raw: return "dot", False
-        return raw, False
-
-    def process_image_tile(img, tile_start, tile_width, data_segment, 
-                          neighbor_left, neighbor_right, 
-                          ll_col, hh_col, ll_text, hh_text, cm_text,
-                          ll_obj, hh_obj, ll_dbl, hh_dbl,
-                          ll_cm_obj, hh_cm_obj, ll_cm_dbl, hh_cm_dbl,
-                          ll_pos, hh_pos):
-        """
-        Process a single tile of the image with corresponding data segment
-        Returns: modified tile, swing_count_in_tile, processed_data_segment
-        """
-        tile_end = min(tile_start + tile_width, img.shape[1])
-        tile = img[:, tile_start:tile_end].copy()
-        
-        # Adjust x-coordinates for this tile
-        for idx, candle in enumerate(data_segment):
-            if 'candle_x' in candle:
-                # Store original global x for reference
-                candle['global_x'] = candle['candle_x']
-                # Adjust to tile-local coordinates
-                candle['candle_x'] = candle['candle_x'] - tile_start
-                if candle['candle_x'] < 0 or candle['candle_x'] > tile_width:
-                    continue
-        
-        n = len(data_segment)
-        swing_count_in_tile = 0
-        start_idx = neighbor_left
-        end_idx = n - neighbor_right
-        
-        swing_data = []
-        
-        for i in range(start_idx, end_idx):
-            curr_h, curr_l = data_segment[i]['high'], data_segment[i]['low']
-            
-            l_h = [d['high'] for d in data_segment[i - neighbor_left:i]]
-            l_l = [d['low'] for d in data_segment[i - neighbor_left:i]]
-            r_h = [d['high'] for d in data_segment[i + 1:i + 1 + neighbor_right]]
-            r_l = [d['low'] for d in data_segment[i + 1:i + 1 + neighbor_right]]
-            
-            is_hh = curr_h > max(l_h) and curr_h > max(r_h)
-            is_ll = curr_l < min(l_l) and curr_l < min(r_l)
-            
-            if not (is_hh or is_ll):
-                continue
-            
-            swing_count_in_tile += 1
-            is_bull = is_ll
-            active_color = ll_col if is_bull else hh_col
-            custom_text = ll_text if is_bull else hh_text
-            obj_type = ll_obj if is_bull else hh_obj
-            dbl_arrow = ll_dbl if is_bull else hh_dbl
-            position = ll_pos if is_bull else hh_pos
-            
-            # Draw on tile
-            label_objects_and_text(
-                tile, data_segment[i]["candle_x"], data_segment[i]["candle_y"], 
-                data_segment[i]["candle_height"],
-                fvg_swing_type=data_segment[i]['candle_number'],
-                custom_text=custom_text,
-                object_type=obj_type,
-                is_bullish_arrow=is_bull,
-                is_marked=True,
-                double_arrow=dbl_arrow,
-                arrow_color=active_color,
-                label_position=position
-            )
-            
-            # Handle contour maker
-            m_idx = i + neighbor_right
-            contour_maker_entry = None
-            if m_idx < n:
-                cm_obj = ll_cm_obj if is_bull else hh_cm_obj
-                cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
-                
-                label_objects_and_text(
-                    tile, data_segment[m_idx]["candle_x"], data_segment[m_idx]["candle_y"], 
-                    data_segment[m_idx]["candle_height"],
-                    custom_text=cm_text,
-                    object_type=cm_obj,
-                    is_bullish_arrow=is_bull,
-                    is_marked=True,
-                    double_arrow=cm_dbl,
-                    arrow_color=active_color,
-                    label_position=position
-                )
-                
-                data_segment[m_idx]["is_contour_maker"] = True
-                contour_maker_entry = data_segment[m_idx].copy()
-            
-            # Update data with swing info (use global coordinates)
-            swing_info = {
-                "swing_type": "swing_low" if is_bull else "swing_high",
-                "is_swing": True,
-                "active_color": active_color,
-                "contour_maker": contour_maker_entry,
-                "m_idx": data_segment[i].get('global_idx', i) + neighbor_right if m_idx < n else None
-            }
-            
-            # Restore global x for output
-            if 'global_x' in data_segment[i]:
-                data_segment[i]['draw_x'] = data_segment[i]['global_x']
-            else:
-                data_segment[i]['draw_x'] = data_segment[i].get('candle_x', 0) + tile_start
-            
-            data_segment[i].update(swing_info)
-        
-        return tile, swing_count_in_tile, data_segment
-
-    log(f"--- STARTING HH/ll ANALYSIS: {broker_name} ---")
-
-    for config_key, hlll_cfg in matching_configs:
-        bars = hlll_cfg.get("BARS", 101)
-        output_filename_base = hlll_cfg.get("filename", "highers.json")
-        direction = hlll_cfg.get("read_candles_from", "new_old")
-        
-        neighbor_left = hlll_cfg.get("NEIGHBOR_LEFT", 5)
-        neighbor_right = hlll_cfg.get("NEIGHBOR_RIGHT", 5)
-        
-        # Tile processing settings
-        TILE_WIDTH = 10000  # Process 10,000 pixels at a time
-        TILE_OVERLAP = max(neighbor_left, neighbor_right) * 50  # Overlap to handle swing detection across tile boundaries
-        
-        label_cfg = hlll_cfg.get("label", {})
-        hh_text = label_cfg.get("swinghighs_text", "HH")
-        ll_text = label_cfg.get("swinglows_text", "ll")
-        cm_text = label_cfg.get("contourmaker_text", "")
-        label_at = label_cfg.get("label_at", {})
-        hh_pos = label_at.get("swing_highs", "high").lower()
-        ll_pos = label_at.get("swing_lows", "low").lower()
-        
-        color_map = {"green": (0, 255, 0), "red": (255, 0, 0), "blue": (0, 0, 255)}
-        hh_col = color_map.get(label_at.get("swing_highs_color", "red").lower(), (255, 0, 0))
-        ll_col = color_map.get(label_at.get("swing_lows_color", "green").lower(), (0, 255, 0))
-        
-        hh_obj, hh_dbl = resolve_marker(label_at.get("swing_highs_marker", "arrow"))
-        ll_obj, ll_dbl = resolve_marker(label_at.get("swing_lows_marker", "arrow"))
-        hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("swing_highs_contourmaker_marker", ""))
-        ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("swing_lows_contourmaker_marker", ""))
-
-        for sym in sorted(os.listdir(base_folder)):
-            sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
-            
-            for tf in sorted(os.listdir(sym_p)):
-                paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
-                config_path = os.path.join(paths["output_dir"], "config.json")
-                
-                if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
-                    continue
-                
-                try:
-                    # Load data
-                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
-                        data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
-                    
-                    # Load image with memory mapping for large files
-                    log(f"Loading large image: {paths['source_chart']}")
-                    img = cv2.imread(paths["source_chart"])
-                    if img is None: 
-                        log(f"   Skipping: Could not load image {paths['source_chart']}", "WARNING")
-                        continue
-                    
-                    img_height, img_width = img.shape[:2]
-                    log(f"   Image dimensions: {img_width}x{img_height} pixels")
-                    
-                    # Process candles to get x-coordinates
-                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if len(contours) == 0: 
-                        log(f"   No contours found for {sym} {tf}")
-                        continue
-
-                    contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-                    
-                    if len(data) != len(contours):
-                        min_len = min(len(data), len(contours))
-                        data = data[:min_len]
-                        contours = contours[:min_len]
-
-                    # Extract candle positions
-                    for idx, contour in enumerate(contours):
-                        x, y, w, h = cv2.boundingRect(contour)
-                        data[idx].update({
-                            "candle_x": x + (w // 2),
-                            "candle_y": y,
-                            "candle_width": w,
-                            "candle_height": h,
-                            "candle_left": x,
-                            "candle_right": x + w,
-                            "candle_top": y,
-                            "candle_bottom": y + h,
-                            "global_idx": idx  # Store original index
-                        })
-
-                    # Create output image (copy of original to draw on)
-                    output_img = img.copy()
-                    
-                    # Process in tiles
-                    total_swings_in_chart = 0
-                    
-                    for tile_start in range(0, img_width, TILE_WIDTH - TILE_OVERLAP):
-                        tile_end = min(tile_start + TILE_WIDTH, img_width)
-                        
-                        # Find candles in this tile (with overlap)
-                        tile_candles = []
-                        for candle in data:
-                            candle_x = candle.get('candle_x', 0)
-                            # Include candles that are in the tile or within overlap region
-                            if (candle_x >= tile_start - TILE_OVERLAP and 
-                                candle_x <= tile_end + TILE_OVERLAP):
-                                # Make a copy for this tile processing
-                                candle_copy = candle.copy()
-                                candle_copy['tile_idx'] = len(tile_candles)
-                                tile_candles.append(candle_copy)
-                        
-                        if len(tile_candles) < neighbor_left + neighbor_right + 1:
-                            continue  # Not enough candles in this tile
-                        
-                        log(f"   Processing tile {tile_start}-{tile_end}: {len(tile_candles)} candles")
-                        
-                        # Process this tile
-                        tile_img, swings_in_tile, processed_tile_data = process_image_tile(
-                            output_img, tile_start, TILE_WIDTH, tile_candles,
-                            neighbor_left, neighbor_right,
-                            ll_col, hh_col, ll_text, hh_text, cm_text,
-                            ll_obj, hh_obj, ll_dbl, hh_dbl,
-                            ll_cm_obj, hh_cm_obj, ll_cm_dbl, hh_cm_dbl,
-                            ll_pos, hh_pos
-                        )
-                        
-                        # Copy the processed tile back to the output image
-                        output_img[:, tile_start:tile_end] = tile_img
-                        
-                        # Update original data with swing information
-                        for processed_candle in processed_tile_data:
-                            if 'global_idx' in processed_candle:
-                                idx = processed_candle['global_idx']
-                                if idx < len(data):
-                                    # Merge swing info without overwriting existing data
-                                    if 'is_swing' in processed_candle:
-                                        data[idx].update({
-                                            k: v for k, v in processed_candle.items() 
-                                            if k in ['swing_type', 'is_swing', 'active_color', 
-                                                    'contour_maker', 'm_idx']
-                                        })
-                        
-                        total_swings_in_chart += swings_in_tile
-                        
-                        # Clear tile data to free memory
-                        del tile_img
-                        del processed_tile_data
-                        
-                        # Force garbage collection for large images
-                        import gc
-                        gc.collect()
-
-                    # Finalize outputs for this specific TF
-                    os.makedirs(paths["output_dir"], exist_ok=True)
-                    cv2.imwrite(paths["output_chart"], output_img)
-
-                    config_json = {}
-                    if os.path.exists(config_path):
-                        try:
-                            with open(config_path, 'r', encoding='utf-8') as f:
-                                config_json = json.load(f)
-                        except:
-                            config_json = {}
-                    
-                    config_json[config_key] = data
-                    config_json[f"{config_key}_candle_list"] = data 
-
-                    with open(config_path, 'w', encoding='utf-8') as f:
-                        json.dump(config_json, f, indent=4)
-                    
-                    log(f"{sym} | {tf} | Key: {config_key} Swings found: {total_swings_in_chart}")
-                    
-                    processed_charts_all += 1
-                    total_marked_all += total_swings_in_chart
-                    
-                    # Clean up large image
-                    del img
-                    del output_img
-                    gc.collect()
-
-                except Exception as e:
-                    log(f"   [ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
-                    import traceback
-                    traceback.print_exc()
-
-    log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
-    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"
 
 def fair_value_gaps(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -5440,8 +5153,6 @@ def entry_point_of_interest(broker_name):
                     # --- STEP 9: Populate other timeframes with confirmation entry data (ONLY IF ENABLED) ---
                     if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
                         modified = True
-            else:
-                log(f"  ⏭️ Skipping POI confirmation processing for {sym} (disabled)")
 
             # --- STEP 10: Final Write (Images) ---
             # Write Images (only for timeframes that are kept)
@@ -9545,14 +9256,17 @@ def move_verified_investors():
     Strategy name is extracted by splitting INVESTED_WITH on first underscore
     e.g., "deriv6_double-levels" → strategy = "double-levels"
     
+    SUPPORTS MULTI-STRATEGY: INVESTED_WITH can contain comma-separated values
+    e.g., "deriv6_strat1, deriv6_strat2, deriv6_strat3"
+    
     For Step 2, only proceeds if the strategy folder already exists for the investor.
     
     NOTE: Investors are NOT removed from verified_investors.json after processing
     """
     
-    print("\n" + "="*80)
-    print("📦 MOVING VERIFIED INVESTORS TO INVESTOR USERS AND STRATEGY FOLDERS")
-    print("="*80)
+    print(f"\n{'='*70}")
+    print(f"📦 MOVE VERIFIED INVESTORS TO INVESTOR USERS".center(70))
+    print(f"{'='*70}")
     
     # Default activities template
     DEFAULT_ACTIVITIES = {
@@ -9587,9 +9301,9 @@ def move_verified_investors():
     # ============================================
     # STEP 1: Move to investors.json with limited fields
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 1: MOVING TO INVESTORS.JSON")
-    print("="*80)
+    print(f"\n{'─'*70}")
+    print(f"🔹 STEP 1: ADDING TO INVESTORS.JSON")
+    print(f"{'─'*70}")
     
     # Load existing investors.json if it exists
     investors_data = {}
@@ -9602,328 +9316,217 @@ def move_verified_investors():
             print(f"⚠️ Error loading existing investors.json: {e}")
             investors_data = {}
     
-    investors_updated_count = 0
-    investors_skipped_count = 0
-    investors_error_count = 0
+    investors_updated = []
+    investors_skipped = []
     
     for inv_id, investor_data in verified_data.items():
-        print(f"\n{'='*50}")
-        print(f"👤 Processing Investor ID: {inv_id} for investors.json")
-        print(f"{'='*50}")
-        
-        # CASE INSENSITIVE: Create a case-insensitive lookup by converting all keys to uppercase for comparison
+        # Case-insensitive lookup
         investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
         
-        # Check if investor has all required fields (using case-insensitive lookup)
+        # Check required fields
         invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
         execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
         contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
         terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
-        
-        # Also check for login, password, server (case-insensitive)
         login_id = investor_data_upper.get('LOGIN_ID') or investor_data_upper.get('LOGIN', '')
         password = investor_data_upper.get('PASSWORD', '').strip()
         server = investor_data_upper.get('SERVER', '').strip()
         
         missing_fields = []
-        if not invested_with:
-            missing_fields.append('INVESTED_WITH')
-        if not execution_start:
-            missing_fields.append('execution_start_date')
-        if not contract_days:
-            missing_fields.append('contract_days_left')
-        if not terminal_path:
-            missing_fields.append('TERMINAL_PATH')
-        if not login_id:
-            missing_fields.append('LOGIN_ID/LOGIN')
-        if not password:
-            missing_fields.append('PASSWORD')
-        if not server:
-            missing_fields.append('SERVER')
+        if not invested_with: missing_fields.append('INVESTED_WITH')
+        if not execution_start: missing_fields.append('execution_start_date')
+        if not contract_days: missing_fields.append('contract_days_left')
+        if not terminal_path: missing_fields.append('TERMINAL_PATH')
+        if not login_id: missing_fields.append('LOGIN_ID')
+        if not password: missing_fields.append('PASSWORD')
+        if not server: missing_fields.append('SERVER')
         
         if missing_fields:
-            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
-            print(f"      INVESTED_WITH: '{invested_with}'")
-            print(f"      execution_start_date: '{execution_start}'")
-            print(f"      contract_days_left: '{contract_days}'")
-            print(f"      TERMINAL_PATH: '{terminal_path}'")
-            print(f"      LOGIN_ID: '{login_id}'")
-            print(f"      PASSWORD: {'*' * len(password) if password else 'empty'}")
-            print(f"      SERVER: '{server}'")
-            investors_skipped_count += 1
+            investors_skipped.append(f"{inv_id} (missing: {', '.join(missing_fields)})")
             continue
         
-        # Extract required fields for investors.json
-        try:
-            # Create minimal investor record
-            minimal_investor = {
-                "LOGIN_ID": str(login_id).strip(),
-                "PASSWORD": password,
-                "SERVER": server,
-                "INVESTED_WITH": invested_with,
-                "TERMINAL_PATH": terminal_path
-            }
-            
-            # Update investors.json data
-            investors_data[inv_id] = minimal_investor
-            print(f"  ✅ Added/Updated in investors.json")
-            print(f"      LOGIN_ID: {minimal_investor['LOGIN_ID']}")
-            print(f"      SERVER: {minimal_investor['SERVER']}")
-            print(f"      INVESTED_WITH: {minimal_investor['INVESTED_WITH']}")
-            print(f"      TERMINAL_PATH: {minimal_investor['TERMINAL_PATH'][:50]}...")  # Truncate for display
-            
-            investors_updated_count += 1
-            
-        except Exception as e:
-            print(f"  ❌ Error creating minimal investor record: {e}")
-            investors_error_count += 1
-            continue
+        # Create minimal investor record
+        minimal_investor = {
+            "LOGIN_ID": str(login_id).strip(),
+            "PASSWORD": password,
+            "SERVER": server,
+            "INVESTED_WITH": invested_with,
+            "TERMINAL_PATH": terminal_path
+        }
+        
+        investors_data[inv_id] = minimal_investor
+        investors_updated.append(inv_id)
     
     # Save updated investors.json
-    if investors_updated_count > 0:
-        try:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(INVESTOR_USERS), exist_ok=True)
-            
-            with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
-                json.dump(investors_data, f, indent=4)
-            print(f"\n✅ Successfully saved {investors_updated_count} investors to {INVESTOR_USERS}")
-        except Exception as e:
-            print(f"\n❌ Error saving investors.json: {e}")
-            return False
+    if investors_updated:
+        os.makedirs(os.path.dirname(INVESTOR_USERS), exist_ok=True)
+        with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
+            json.dump(investors_data, f, indent=4)
+        
+        print(f"\n  ✅ Added/Updated: {len(investors_updated)} investors")
+        if investors_updated:
+            print(f"     {', '.join(investors_updated[:5])}{'...' if len(investors_updated) > 5 else ''}")
+        if investors_skipped:
+            print(f"  ⏭️  Skipped: {len(investors_skipped)} investors")
     
     # ============================================
     # STEP 2: Create activities.json in existing strategy folders
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 2: CREATING ACTIVITIES.JSON IN EXISTING STRATEGY FOLDERS")
-    print("="*80)
+    print(f"\n{'─'*70}")
+    print(f"🔹 STEP 2: CREATING ACTIVITIES.JSON IN STRATEGY FOLDERS")
+    print(f"{'─'*70}")
     
-    processed_count = 0
-    skipped_count = 0
-    error_count = 0
-    no_strategy_folder_count = 0
+    processed_summary = []
+    skipped_summary = []
+    missing_folders_summary = []
     
     for inv_id, investor_data in verified_data.items():
-        print(f"\n{'='*50}")
-        print(f"👤 Processing Investor ID: {inv_id} for strategy folders")
-        print(f"{'='*50}")
-        
-        # CASE INSENSITIVE: Create a case-insensitive lookup
+        # Case-insensitive lookup
         investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
         
-        # Check if investor has all required fields (using case-insensitive lookup)
         invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
         execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
         contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
         terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
         
-        missing_fields = []
-        if not invested_with:
-            missing_fields.append('INVESTED_WITH')
-        if not execution_start:
-            missing_fields.append('execution_start_date')
-        if not contract_days:
-            missing_fields.append('contract_days_left')
-        if not terminal_path:
-            missing_fields.append('TERMINAL_PATH')
-        
-        if missing_fields:
-            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
-            print(f"      INVESTED_WITH: '{invested_with}'")
-            print(f"      execution_start_date: '{execution_start}'")
-            print(f"      contract_days_left: '{contract_days}'")
-            print(f"      TERMINAL_PATH: '{terminal_path}'")
-            skipped_count += 1
+        # Skip if missing required fields
+        if not all([invested_with, execution_start, contract_days, terminal_path]):
+            skipped_summary.append(inv_id)
             continue
         
-        # Extract strategy name by splitting on first underscore
+        # Split INVESTED_WITH by comma to handle multiple strategies
+        strategies = [s.strip() for s in invested_with.split(",") if s.strip()]
+        
+        # Format execution start date
+        formatted_start_date = execution_start
         try:
-            # Split on first underscore only
-            underscore_index = invested_with.find('_')
-            if underscore_index == -1:
-                print(f"  ❌ INVESTED_WITH format invalid: '{invested_with}' - no underscore found")
-                error_count += 1
-                continue
-            
-            strategy_name = invested_with[underscore_index + 1:]  # e.g., "structural-liquidity"
-            
-            print(f"  📊 INVESTED_WITH: '{invested_with}'")
-            print(f"  📁 Target Strategy: '{strategy_name}'")
-            
-        except Exception as e:
-            print(f"  ❌ Error parsing INVESTED_WITH '{invested_with}': {e}")
-            error_count += 1
-            continue
+            date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
+            formatted_start_date = date_obj.strftime("%B %d, %Y")
+        except:
+            pass
         
-        # Check if strategy folder exists before proceeding
-        inv_root = Path(INV_PATH) / inv_id
-        strategy_folder = inv_root / strategy_name
-        pending_orders_folder = strategy_folder / "pending_orders"
-        
-        if not strategy_folder.exists():
-            print(f"  ⚠️  Strategy folder does not exist: {strategy_folder}")
-            print(f"      You need to create this folder structure for the investor")
-            print(f"      Skipping activities.json creation for this investor")
-            no_strategy_folder_count += 1
-            continue
-        
-        print(f"  ✅ Strategy folder exists: {strategy_folder}")
-        
+        # Calculate contract duration and expiry
+        contract_duration_val = 30
+        expiry_date_str = ""
         try:
-            # Create pending_orders folder if it doesn't exist
-            pending_orders_folder.mkdir(parents=True, exist_ok=True)
-            print(f"  📁 Created/Verified folder: {pending_orders_folder}")
-            
-            # Path to activities.json
-            activities_path = pending_orders_folder / "activities.json"
-            
-            # Format execution start date from YYYY-MM-DD to "Month DD, YYYY"
-            formatted_start_date = execution_start
+            contract_duration_val = int(contract_days)
+            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
+            expiry_date = start_date + timedelta(days=contract_duration_val)
+            expiry_date_str = expiry_date.strftime("%B %d, %Y")
+        except:
+            pass
+        
+        investor_strategies_found = []
+        investor_strategies_missing = []
+        
+        for strat_full in strategies:
+            # Extract strategy name by splitting on first underscore
             try:
-                # Try to parse YYYY-MM-DD format
-                date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
-                formatted_start_date = date_obj.strftime("%B %d, %Y")
-                print(f"  📅 Formatted date: {execution_start} → {formatted_start_date}")
+                underscore_index = strat_full.find('_')
+                if underscore_index == -1:
+                    continue
+                strategy_name = strat_full[underscore_index + 1:]
             except:
-                print(f"  ⚠️  Could not parse date '{execution_start}', using as-is")
-            
-            # Load existing activities.json if it exists
-            existing_activities = {}
-            if activities_path.exists():
-                try:
-                    with open(activities_path, 'r', encoding='utf-8') as f:
-                        existing_activities = json.load(f)
-                    print(f"  📄 Found existing activities.json")
-                except Exception as e:
-                    print(f"  ⚠️  Error reading existing activities.json: {e}")
-                    existing_activities = {}
-            
-            # Determine which fields need to be updated
-            updated_activities = existing_activities.copy()
-            fields_updated = []
-            
-            # Check each field from DEFAULT_ACTIVITIES
-            for field, default_value in DEFAULT_ACTIVITIES.items():
-                current_value = existing_activities.get(field)
-                
-                if field == "execution_start_date":
-                    # Special handling for execution_start_date
-                    expected_value = formatted_start_date
-                    if current_value != expected_value:
-                        if current_value is None or current_value == "":
-                            updated_activities[field] = expected_value
-                            fields_updated.append(field)
-                        else:
-                            print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
-                
-                elif field == "contract_duration":
-                    # Convert contract_days_left to integer
-                    try:
-                        expected_value = int(contract_days)
-                        if current_value != expected_value:
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = expected_value
-                                fields_updated.append(field)
-                            else:
-                                print(f"      ℹ️  {field} already set to {current_value} (not changing)")
-                    except ValueError:
-                        print(f"  ⚠️  Invalid contract_days_left value: '{contract_days}'")
-                        expected_value = default_value
-                        if current_value != expected_value:
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = expected_value
-                                fields_updated.append(field)
-                
-                elif field == "contract_expiry_date":
-                    # Calculate expiry date based on contract_duration
-                    try:
-                        duration = int(contract_days)
-                        # Parse execution start date
-                        try:
-                            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
-                            expiry_date = start_date + timedelta(days=duration)
-                            expected_value = expiry_date.strftime("%B %d, %Y")
-                            
-                            if current_value != expected_value:
-                                if current_value is None or current_value == "":
-                                    updated_activities[field] = expected_value
-                                    fields_updated.append(field)
-                                else:
-                                    print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
-                        except:
-                            # If can't calculate, leave as empty string
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = ""
-                                fields_updated.append(field)
-                    except:
-                        if current_value is None or current_value == "":
-                            updated_activities[field] = ""
-                            fields_updated.append(field)
-                
-                elif field in ["unauthorized_trades", "unauthorized_withdrawals"]:
-                    # These should always be empty dictionaries initially
-                    if current_value is None or current_value == "" or not isinstance(current_value, dict):
-                        updated_activities[field] = {}
-                        fields_updated.append(field)
-                
-                elif field == "unauthorized_action_detected":
-                    # This should always be False initially
-                    if current_value is None or current_value == "" or current_value is True:
-                        updated_activities[field] = False
-                        fields_updated.append(field)
-                
-                else:
-                    # For other fields (activate_autotrading, bypass_restriction)
-                    if current_value is None or current_value == "":
-                        updated_activities[field] = default_value
-                        fields_updated.append(field)
-                    else:
-                        print(f"      ℹ️  {field} already set to {current_value} (not changing)")
-            
-            # If no fields were updated and file exists, skip writing
-            if not fields_updated and activities_path.exists():
-                print(f"  ✅ activities.json is already complete and up to date")
-                processed_count += 1
                 continue
             
-            # Write updated activities.json
-            with open(activities_path, 'w', encoding='utf-8') as f:
-                json.dump(updated_activities, f, indent=4)
+            # Check if strategy folder exists
+            inv_root = Path(INV_PATH) / inv_id
+            strategy_folder = inv_root / strategy_name
+            pending_orders_folder = strategy_folder / "pending_orders"
             
-            if fields_updated:
-                print(f"  ✅ Updated activities.json with fields: {', '.join(fields_updated)}")
-            else:
-                print(f"  ✅ Created new activities.json")
+            if not strategy_folder.exists():
+                investor_strategies_missing.append(strategy_name)
+                continue
             
-            processed_count += 1
+            investor_strategies_found.append(strategy_name)
             
-        except Exception as e:
-            print(f"  ❌ Error processing investor {inv_id}: {e}")
-            error_count += 1
+            try:
+                # Create pending_orders folder if needed
+                pending_orders_folder.mkdir(parents=True, exist_ok=True)
+                
+                # Path to activities.json
+                activities_path = pending_orders_folder / "activities.json"
+                
+                # Load existing activities.json if it exists
+                existing_activities = {}
+                if activities_path.exists():
+                    try:
+                        with open(activities_path, 'r', encoding='utf-8') as f:
+                            existing_activities = json.load(f)
+                    except:
+                        existing_activities = {}
+                
+                # Prepare activities data
+                activities_data = existing_activities.copy()
+                
+                # Set execution_start_date
+                if activities_data.get("execution_start_date") != formatted_start_date:
+                    activities_data["execution_start_date"] = formatted_start_date
+                
+                # Set contract_duration
+                if activities_data.get("contract_duration") != contract_duration_val:
+                    activities_data["contract_duration"] = contract_duration_val
+                
+                # Set contract_expiry_date
+                if activities_data.get("contract_expiry_date") != expiry_date_str:
+                    activities_data["contract_expiry_date"] = expiry_date_str
+                
+                # Set default values for other fields if missing
+                for field, default_value in DEFAULT_ACTIVITIES.items():
+                    if field not in activities_data or activities_data[field] is None:
+                        activities_data[field] = default_value
+                
+                # Save activities.json
+                with open(activities_path, 'w', encoding='utf-8') as f:
+                    json.dump(activities_data, f, indent=4)
+                
+            except Exception as e:
+                print(f"  ⚠️ Error processing {inv_id}/{strategy_name}: {e}")
+        
+        # Track investor result
+        if investor_strategies_found:
+            processed_summary.append(f"{inv_id}({len(investor_strategies_found)} strat)")
+        elif investor_strategies_missing:
+            missing_folders_summary.append(f"{inv_id}(missing: {', '.join(investor_strategies_missing[:2])}{'...' if len(investor_strategies_missing) > 2 else ''})")
     
     # ============================================
-    # STEP 3: REMOVED - Investors are NOT removed from verified_investors.json
+    # STEP 3: Summary
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 3: VERIFIED INVESTORS FILE PRESERVED")
-    print("="*80)
-    print("  ✅ All investors remain in verified_investors.json (no removal)")
+    print(f"\n{'─'*70}")
+    print(f"📊 SUMMARY")
+    print(f"{'─'*70}")
     
-    # Print summary
-    print("\n" + "="*80)
-    print("📊 MOVE VERIFIED INVESTORS SUMMARY")
-    print("="*80)
-    print("🔹 STEP 1 - INVESTORS.JSON:")
-    print(f"   ✅ Successfully added/updated: {investors_updated_count}")
-    print(f"   ⏭️  Skipped (missing fields): {investors_skipped_count}")
-    print("\n🔹 STEP 2 - STRATEGY FOLDERS:")
-    print(f"   ✅ Successfully processed: {processed_count}")
-    print(f"   ⏭️  Skipped (missing fields): {skipped_count}")
-    print(f"   🚫 Skipped (strategy folder missing): {no_strategy_folder_count}")
-    print("\n🔹 STEP 3 - VERIFIED LIST STATUS:")
-    print(f"   📁 All investors remain in verified list: {len(verified_data)}")
-    print("="*80)
+    print(f"\n🔹 STEP 1 - INVESTORS.JSON:")
+    print(f"   ✅ Added/Updated: {len(investors_updated)}")
+    if investors_updated:
+        print(f"      {', '.join(investors_updated[:3])}{'...' if len(investors_updated) > 3 else ''}")
+    if investors_skipped:
+        print(f"   ⏭️  Skipped: {len(investors_skipped)}")
+        for skip in investors_skipped[:2]:
+            print(f"      • {skip}")
+    
+    print(f"\n🔹 STEP 2 - STRATEGY FOLDERS:")
+    print(f"   ✅ Processed: {len(processed_summary)} investors")
+    if processed_summary:
+        for inv in processed_summary[:5]:
+            print(f"      • {inv}")
+        if len(processed_summary) > 5:
+            print(f"      ... and {len(processed_summary)-5} more")
+    
+    if missing_folders_summary:
+        print(f"   ⚠️  Missing folders: {len(missing_folders_summary)} investors")
+        for inv in missing_folders_summary[:3]:
+            print(f"      • {inv}")
+    
+    if skipped_summary:
+        print(f"   ⏭️  Skipped (missing fields): {len(skipped_summary)}")
+    
+    print(f"\n🔹 STEP 3 - VERIFIED LIST:")
+    print(f"   📁 All {len(verified_data)} investors remain in verified_investors.json")
+    
+    print(f"\n{'='*70}")
+    print(f"✅ MOVE COMPLETE".center(70))
+    print(f"{'='*70}")
     
     return True
 
@@ -9932,6 +9535,7 @@ def sync_dev_investors(dev_broker_id):
     Worker: Synchronizes investor strategy folders with developer data.
     Creates a requirements.json in the investor folder containing the 
     developer's minimum_balance setting.
+    Supports multi-strategy (comma-separated INVESTED_WITH values).
     """
     move_verified_investors()
     try:
@@ -9951,135 +9555,196 @@ def sync_dev_investors(dev_broker_id):
         with open(DEV_USERS, 'r', encoding='utf-8') as f:
             developers_data = json.load(f)
 
-        print(f"\n{'='*10} SYNCING STRATEGY DATA FOR DEVELOPER: {dev_broker_id} {'='*10}")
+        print(f"\n{'='*60}")
+        print(f"🔄 SYNCING INVESTORS FOR DEVELOPER: {dev_broker_id}")
+        print(f"{'='*60}")
 
-        # 2. Find investors linked to this developer
+        # 2. Find investors linked to this developer (with multi-strategy support)
         linked_investors = []
         for inv_broker_id, inv_info in investors_data.items():
             invested_string = inv_info.get("INVESTED_WITH", "")
-            if "_" in invested_string:
-                parts = invested_string.split("_", 1)
-                if parts[0] == dev_broker_id:
-                    linked_investors.append((inv_broker_id, inv_info))
+            if invested_string:  # Only process if there's an INVESTED_WITH value
+                # Split by comma to handle multiple strategies
+                strategies = [s.strip() for s in invested_string.split(",")]
+                for strat in strategies:
+                    if "_" in strat:
+                        parts = strat.split("_", 1)
+                        if parts[0] == dev_broker_id:
+                            # Store investor info along with the specific strategy name
+                            linked_investors.append({
+                                "inv_broker_id": inv_broker_id,
+                                "inv_info": inv_info,
+                                "target_strat_name": parts[1]
+                            })
 
         if not linked_investors:
+            print(f"  No linked investors found for developer {dev_broker_id}")
+            print(f"{'='*60}")
             return f" [{dev_broker_id}] 🔘 No linked investors found."
 
         total_synced = 0
-        synced_investors = [] 
+        synced_summary = []  # Track which investors+strategies were synced
+        
+        # Group by investor for cleaner output
+        investors_grouped = {}
+        for link in linked_investors:
+            inv_id = link["inv_broker_id"]
+            if inv_id not in investors_grouped:
+                investors_grouped[inv_id] = []
+            investors_grouped[inv_id].append(link)
 
-        # 3. Process each linked investor
-        for inv_broker_id, inv_info in linked_investors:
+        print(f"\n📊 Found {len(linked_investors)} strategy links across {len(investors_grouped)} investors\n")
+
+        # 3. Process each investor and their strategies
+        for inv_broker_id, links in investors_grouped.items():
+            inv_info = links[0]["inv_info"]  # Same investor info for all links
             inv_name = inv_info.get("NAME", inv_broker_id)
-            print(f" [{dev_broker_id}] 🔄 Syncing Strategy for: {inv_name} ({inv_broker_id})...")
-
             invested_string = inv_info.get("INVESTED_WITH", "")
             inv_server = inv_info.get("SERVER", "")
             
-            parts = invested_string.split("_", 1)
-            target_strat_name = parts[1]
-
-            # Broker Matching Logic
+            print(f"\n┌─{'─'*50}─┐")
+            print(f"│  👤 INVESTOR: {inv_name} ({inv_broker_id})")
+            print(f"├─{'─'*50}─┤")
+            
+            # Broker Matching Check
             dev_broker_name = developers_data[dev_broker_id].get("BROKER", "").lower()
             if dev_broker_name not in inv_server.lower():
-                print(f"  └─ ❌ Broker Mismatch: Dev requires {dev_broker_name.upper()}")
+                print(f"│  ❌ Broker Mismatch: Dev requires {dev_broker_name.upper()}, Investor has {inv_server}")
+                print(f"└─{'─'*50}─┘")
                 continue
-
-            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
-            inv_user_folder = os.path.join(INV_PATH, inv_broker_id)
             
-            # Paths
+            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
+            
+            # Load developer's minimum_balance once for all strategies
+            min_balance = 0
             dev_acc_mgmt_path = os.path.join(dev_user_folder, "accountmanagement.json")
-            dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
-            inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
-
-            # --- LOGIC: Create requirements.json from Developer's Account Management ---
-            requirements_data = {"minimum_balance": 0}
             if os.path.exists(dev_acc_mgmt_path):
                 try:
                     with open(dev_acc_mgmt_path, 'r', encoding='utf-8') as am_file:
                         am_data = json.load(am_file)
-                        # Extract minimum_balance from the developer's settings
-                        min_val = am_data.get("settings", {}).get("minimum_balance", 0)
-                        requirements_data["minimum_balance"] = min_val
+                        min_balance = am_data.get("settings", {}).get("minimum_balance", 0)
                 except Exception as e:
-                    print(f"  └─ ⚠️ Could not read Dev accountmanagement.json: {e}")
-
-            # 4. Strategy Logic: Update vs Clone
-            if os.path.exists(dev_strat_path):
+                    print(f"│  ⚠️ Could not read Dev accountmanagement.json: {e}")
+            
+            requirements_data = {"minimum_balance": min_balance}
+            
+            # Track synced strategies for this investor
+            investor_synced = []
+            
+            # Process each strategy for this investor
+            for link in links:
+                target_strat_name = link["target_strat_name"]
+                
+                print(f"│  \n│  📁 Strategy: {target_strat_name}")
+                
+                dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
+                inv_strat_path = os.path.join(INV_PATH, inv_broker_id, target_strat_name)
+                
+                if not os.path.exists(dev_strat_path):
+                    print(f"│     ❌ Dev strategy folder missing")
+                    continue
+                
                 try:
-                    # Determine if we need to full clone or just update folders
-                    if not os.path.exists(inv_strat_path):
-                        print(f"  └─ 🆕 New strategy folder. Performing clean clone...")
-                        
-                        # Create a temporary directory for cleaned strategy
-                        import tempfile
-                        temp_dir = tempfile.mkdtemp()
-                        
-                        # Copy the entire strategy to temp directory
-                        shutil.copytree(dev_strat_path, os.path.join(temp_dir, target_strat_name))
-                        temp_strat_path = os.path.join(temp_dir, target_strat_name)
-                        
-                        # Remove all subfolders except pending_orders
-                        for item in os.listdir(temp_strat_path):
-                            item_path = os.path.join(temp_strat_path, item)
-                            if os.path.isdir(item_path) and item != "pending_orders":
-                                shutil.rmtree(item_path)
-                                print(f"  └─ 🗑️ Removed folder: {item}")
-                        
-                        # Copy the cleaned strategy to investor folder
-                        shutil.copytree(temp_strat_path, inv_strat_path)
-                        
-                        # Clean up temp directory
-                        shutil.rmtree(temp_dir)
-                        
-                    else:
-                        print(f"  └─ 📂 Folder exists. Updating only pending_orders files...")
-                        # Sync ONLY pending_orders folder
-                        dev_pending_path = os.path.join(dev_strat_path, "pending_orders")
-                        inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
-                        
-                        if os.path.exists(dev_pending_path):
-                            # Create pending_orders folder if it doesn't exist
-                            os.makedirs(inv_pending_path, exist_ok=True)
-                            
-                            # Copy only files from pending_orders (no subfolders)
-                            for file in os.listdir(dev_pending_path):
-                                s = os.path.join(dev_pending_path, file)
-                                d = os.path.join(inv_pending_path, file)
-                                if os.path.isfile(s):
-                                    shutil.copy2(s, d)
-                                    print(f"  └─ 📄 Updated pending order file: {file}")
-
-                    # --- SYNC CORE FILES ---
-                    # 1. Copy limit orders as-is (no injection)
+                    # ALWAYS perform clean clone (overwrite existing)
+                    print(f"│     🔄 Performing clean sync (overwriting)...")
+                    
+                    # Create a temporary directory for cleaned strategy
+                    import tempfile
+                    temp_dir = tempfile.mkdtemp()
+                    
+                    # Copy the entire strategy to temp directory
+                    temp_strat_path = os.path.join(temp_dir, target_strat_name)
+                    shutil.copytree(dev_strat_path, temp_strat_path)
+                    
+                    # Remove all subfolders except pending_orders
+                    removed_folders = []
+                    for item in os.listdir(temp_strat_path):
+                        item_path = os.path.join(temp_strat_path, item)
+                        if os.path.isdir(item_path) and item != "pending_orders":
+                            shutil.rmtree(item_path)
+                            removed_folders.append(item)
+                    
+                    if removed_folders:
+                        folder_summary = ', '.join(removed_folders[:3])
+                        if len(removed_folders) > 3:
+                            folder_summary += f" and {len(removed_folders)-3} more"
+                    
+                    # Remove existing investor strategy folder if it exists (for clean overwrite)
+                    if os.path.exists(inv_strat_path):
+                        shutil.rmtree(inv_strat_path)
+                    
+                    # Copy the cleaned strategy to investor folder
+                    shutil.copytree(temp_strat_path, inv_strat_path)
+                    
+                    # Clean up temp directory
+                    shutil.rmtree(temp_dir)
+                    
+                    # --- COPY CORE FILES ---
+                    copied_files = []
                     files_to_copy = ["limit_orders.json", "limit_orders_backup.json"]
                     for json_file in files_to_copy:
                         src_json = os.path.join(dev_strat_path, json_file)
                         dest_json = os.path.join(inv_strat_path, json_file)
                         if os.path.exists(src_json):
                             shutil.copy2(src_json, dest_json)
-                            print(f"  └─ 📄 Copied: {json_file}")
-
-                    # 2. Create/Overwrite requirements.json in the SAME destination
+                            copied_files.append(json_file)
+                    
+                    if copied_files:
+                        print(f"│     📄 Copied core files: {', '.join(copied_files)}")
+                    
+                    # Create/Overwrite requirements.json
                     req_dest_path = os.path.join(inv_strat_path, "requirements.json")
                     with open(req_dest_path, 'w', encoding='utf-8') as req_file:
                         json.dump(requirements_data, req_file, indent=4)
                     
+                    # Check pending_orders files after sync (for reporting)
+                    inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
+                    if os.path.exists(inv_pending_path):
+                        pending_files = [f for f in os.listdir(inv_pending_path) if os.path.isfile(os.path.join(inv_pending_path, f))]
+                        if pending_files:
+                            file_summary = ', '.join(pending_files[:3])
+                            if len(pending_files) > 3:
+                                file_summary += f" and {len(pending_files)-3} more"
+                            print(f"│     📁 Pending orders: {file_summary}")
+                    
+                    # Track successful sync
+                    investor_synced.append(target_strat_name)
                     total_synced += 1
-                    synced_investors.append(inv_name)
-                    print(f"  └─ ✅ Strategy '{target_strat_name}' synced with only pending_orders folder.")
+                    print(f"│     ✅ Synced successfully")
                     
                 except Exception as e:
-                    print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
+                    print(f"│     ❌ Error: {e}")
+            
+            # Investor summary
+            if investor_synced:
+                synced_summary.append(f"{inv_name}({len(investor_synced)} strat)")
+                print(f"│  \n│  ✅ Investor complete: {len(investor_synced)} strategies synced")
             else:
-                print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing")
+                print(f"│  ⚠️ No strategies synced for this investor")
+            
+            print(f"└─{'─'*50}─┘")
+        
         move_verified_investors()
-        return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} investors updated: {', '.join(synced_investors)}"
+        
+        # Final summary
+        print(f"\n{'='*60}")
+        if total_synced > 0:
+            summary_str = ', '.join(synced_summary)
+            print(f"✅ SYNC COMPLETE: {total_synced} strategies updated for {len(investors_grouped)} investors")
+            print(f"   Investors: {summary_str}")
+            print(f"{'='*60}")
+            return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} strategies updated for investors: {summary_str}"
+        else:
+            print(f"⚠️ No strategies were synced")
+            print(f"{'='*60}")
+            return f" [{dev_broker_id}] ⚠️ No strategies were synced."
     
     except Exception as e:
-        return f" [{dev_broker_id}] ❌ Sync Error: {e}"
-           
+        error_msg = f" [{dev_broker_id}] ❌ Sync Error: {e}"
+        print(f"\n{error_msg}")
+        print(f"{'='*60}")
+        return error_msg
+               
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -10092,10 +9757,14 @@ def single():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
+        #sync_results = pool.map(swing_points, broker_names)
+        #for r in sync_results: print(r)
         sync_results = pool.map(entry_point_of_interest, broker_names)
         for r in sync_results: print(r)
         sync_results = pool.map(entries_confirmation, broker_names)
         for r in sync_results: print(r)
+        #sync_results = pool.map(sync_dev_investors, broker_names)
+        #for r in sync_results: print(r)
 
 def process_single_developer_pipeline(broker_name):
     """
@@ -10119,10 +9788,10 @@ def process_single_developer_pipeline(broker_name):
         
         
         # Step 5: Cleanup
-        #res_clean = clear_unathorized_entries_folders(broker_name)
+        res_clean = clear_unathorized_entries_folders(broker_name)
         
         # Step 6: Investor Sync
-        #res_sync = sync_dev_investors(broker_name)
+        res_sync = sync_dev_investors(broker_name)
         
     except Exception as e:
         return f"--- [{broker_name}] PIPELINE FAILED: {e} ---"
