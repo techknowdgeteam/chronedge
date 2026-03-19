@@ -2026,7 +2026,60 @@ def entry_point_of_interest(broker_name):
                     break
         
         #log(f"  ✅ LIQUIDITY SWEEP: Found {len(sweeper_to_victims)} sweepers, marked {victims_marked} victims and {sweepers_marked} sweepers for {new_key}")
-     
+    
+    def sanitize_pattern_definitions(patterns_dict):
+        """
+        Sanitizes each pattern in the dictionary.
+        Ensures that the N-th candle in a pattern family only contains 'define_N' metadata.
+        """
+        if not patterns_dict:
+            return {}
+
+        sanitized_patterns = {}
+
+        for p_name, family in patterns_dict.items():
+            new_family = []
+            
+            # The family is ordered [define_1, define_2, ..., define_max]
+            for idx, candle in enumerate(family):
+                if not isinstance(candle, dict):
+                    new_family.append(candle)
+                    continue
+                
+                # Create a shallow copy to avoid modifying the original list in-place
+                clean_candle = candle.copy()
+                current_rank = idx + 1  # 1-based indexing for define_n
+                
+                # Identify keys to keep:
+                # 1. Standard OHLCV and technical data
+                # 2. 'define_N' keys specific to this candle's position in the pattern
+                keys_to_delete = []
+                
+                for key in clean_candle.keys():
+                    # If the key is a 'define_X' key
+                    if key.startswith("define_"):
+                        # Extract the number from 'define_N...'
+                        try:
+                            parts = key.split('_')
+                            def_num = int(parts[1])
+                            
+                            # Logic: If this is the 2nd candle in the list, 
+                            # it should ONLY have define_2 related keys.
+                            if def_num != current_rank:
+                                keys_to_delete.append(key)
+                        except (ValueError, IndexError):
+                            continue
+                
+                # Remove the non-relevant define keys
+                for k in keys_to_delete:
+                    del clean_candle[k]
+                    
+                new_family.append(clean_candle)
+                
+            sanitized_patterns[p_name] = new_family
+            
+        return sanitized_patterns
+   
     def identify_definitions(candle_data, identify_config, source_def_name, raw_filename_base):
         if not identify_config:
             return candle_data
@@ -2225,7 +2278,6 @@ def entry_point_of_interest(broker_name):
                         target_candle[f"{conn_key}_met"] = True
 
         # --- SECTION 2: EXTRACTION (The "Grouping") ---
-        # (Rest of the function remains the same)
         def_nums = [int(k.split('_')[1]) for k in identify_config.keys() if k.startswith("define_")]
         max_def = max(def_nums) if def_nums else 0
         patterns_dict = {}
@@ -2265,8 +2317,393 @@ def entry_point_of_interest(broker_name):
                     pattern_idx += 1
 
         patterns_dict = sanitize_pattern_definitions(patterns_dict)
+        patterns_dict = apply_optional_extreme(patterns_dict, identify_config, candles)
+        
+        # --- SECTION 3: FINAL PATTERN VALIDATION ---
+        validated_patterns = {}
+        
+        # Create a lookup for ALL candles to check collective beyond
+        candle_lookup = {c.get('candle_number'): c for c in candles if isinstance(c, dict) and c.get('candle_number')}
+        candle_indices = {c.get('candle_number'): idx for idx, c in enumerate(candles) if isinstance(c, dict) and c.get('candle_number')}
+        
+        for pattern_key, pattern_candles in patterns_dict.items():
+            if not pattern_candles:
+                continue
+                
+            print(f"\nValidating final pattern: {pattern_key}")
+            pattern_valid = True
+            
+            # Collect definition candles
+            definition_candles = {}
+            for candle in pattern_candles:
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        try:
+                            parts = key.split('_')
+                            if len(parts) >= 2 and parts[1].isdigit():
+                                def_num = int(parts[1])
+                                if def_num not in definition_candles:
+                                    definition_candles[def_num] = candle
+                                    print(f"  def_{def_num}: c{def_num==1 and '✅' or '⬆️'}{candle.get('candle_number')} ({candle.get('swing_type','')})")
+                        except (ValueError, IndexError):
+                            continue
+            
+            sorted_def_nums = sorted(definition_candles.keys())
+            
+            # Check each definition's conditions
+            for def_num in sorted_def_nums:
+                if def_num == 1:
+                    continue
+                    
+                def_cfg = identify_config.get(f"define_{def_num}", {})
+                condition_cfg = def_cfg.get("condition", "").lower()
+                
+                if not condition_cfg:
+                    continue
+                
+                # Parse condition
+                mode = "behind" if "behind" in condition_cfg else "beyond"
+                target_match = re.search(r'define_(\d+)', condition_cfg)
+                if not target_match:
+                    continue
+                    
+                ref_def_num = int(target_match.group(1))
+                
+                current_candle = definition_candles.get(def_num)
+                ref_candle = definition_candles.get(ref_def_num)
+                
+                if not current_candle or not ref_candle:
+                    print(f"  ✗ def_{def_num}: missing reference def_{ref_def_num}")
+                    pattern_valid = False
+                    continue
+                
+                # Get prices and types
+                curr_h, curr_l = current_candle.get("high"), current_candle.get("low")
+                curr_type = current_candle.get("swing_type", "").lower()
+                
+                ref_h, ref_l = ref_candle.get("high"), ref_candle.get("low")
+                ref_type = ref_candle.get("swing_type", "").lower()
+                
+                # Check price relationship
+                def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                    if mode == "behind":
+                        if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                        if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                        if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                        if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
+                    elif mode == "beyond":
+                        if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                        if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                        if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                        if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
+                    return False
+                
+                logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
+                
+                # DEBUG: Print the price comparison
+                price_comparison = ""
+                if curr_type == "swing_high" and ref_type == "swing_high":
+                    price_comparison = f"{curr_h:.5f} {'>' if mode=='beyond' else '<'} {ref_h:.5f}"
+                elif curr_type == "swing_low" and ref_type == "swing_low":
+                    price_comparison = f"{curr_l:.5f} {'<' if mode=='beyond' else '>'} {ref_l:.5f}"
+                elif curr_type == "swing_high" and ref_type == "swing_low":
+                    price_comparison = f"{curr_h:.5f} {'>' if mode=='beyond' else '?'} {ref_h:.5f}"
+                elif curr_type == "swing_low" and ref_type == "swing_high":
+                    price_comparison = f"{curr_l:.5f} {'<' if mode=='beyond' else '?'} {ref_l:.5f}"
+                
+                # Check collective beyond using ORIGINAL candle data, not just pattern
+                min_collective = def_cfg.get("minimum_collectivebeyondcandles")
+                collective_valid = True
+                collective_msg = ""
+                
+                if logic_met and mode == "beyond" and isinstance(min_collective, int) and min_collective > 0:
+                    # Find position of current candle in ORIGINAL data
+                    curr_candle_num = current_candle.get('candle_number')
+                    curr_idx = candle_indices.get(curr_candle_num)
+                    
+                    if curr_idx is not None:
+                        collective_valid = True
+                        collective_failures = []
+                        
+                        for i in range(1, min_collective + 1):
+                            check_idx = curr_idx - i
+                            if check_idx < 0:
+                                collective_valid = False
+                                collective_failures.append(f"no candle {-i}")
+                                break
+                            
+                            check_candle = candles[check_idx]
+                            check_h, check_l = check_candle.get("high"), check_candle.get("low")
+                            check_num = check_candle.get('candle_number')
+                            
+                            if not check_logic(curr_type, check_h, check_l, ref_type, ref_h, ref_l, mode):
+                                collective_valid = False
+                                collective_failures.append(f"c{check_num}")
+                        
+                        if collective_failures:
+                            collective_msg = f" ❌ collective beyond failed at {', '.join(collective_failures)}"
+                        else:
+                            collective_msg = f" ✅ {min_collective} candles beyond OK"
+                    else:
+                        collective_valid = False
+                        collective_msg = " ❌ can't find candle position"
+                
+                # Print concise validation result
+                if logic_met and collective_valid:
+                    print(f"  ✓ def_{def_num}: {curr_type} c{current_candle.get('candle_number')} {mode} def_{ref_def_num} {price_comparison}{collective_msg}")
+                else:
+                    if not logic_met:
+                        print(f"  ✗ def_{def_num}: {curr_type} c{current_candle.get('candle_number')} NOT {mode} def_{ref_def_num} {price_comparison}")
+                    if not collective_valid and logic_met:
+                        print(f"  ✗ def_{def_num}: {collective_msg}")
+                    pattern_valid = False
+            
+            if pattern_valid:
+                print(f"  ✅ Pattern {pattern_key} PASSED")
+                validated_patterns[pattern_key] = pattern_candles
+            else:
+                print(f"  ❌ Pattern {pattern_key} FAILED")
+        
+        patterns_dict = validated_patterns
         return candles, patterns_dict
 
+    def apply_optional_extreme(patterns_dict, identify_config, all_candles):
+        """
+        For definitions with find_optional_extreme=True, find more extreme candles
+        between current definition and next definition (or to the end if no next definition)
+        Using the ORIGINAL full candle data (all_candles) to search for extreme candles,
+        not just the limited pattern data.
+        """
+        if not patterns_dict or not identify_config:
+            return patterns_dict
+        
+        # Find which definitions have optional extreme enabled
+        extreme_defs = {}
+        for def_key, def_config in identify_config.items():
+            if def_config.get("find_optional_extreme") is True:
+                # Extract definition number (e.g., "define_3" -> 3)
+                def_num = int(def_key.split('_')[1])
+                extreme_defs[def_num] = def_config
+        
+        if not extreme_defs:
+            return patterns_dict
+        
+        print(f"Extreme definitions enabled: {list(extreme_defs.keys())}")
+        
+        # Build a quick lookup dictionary for all candles by candle_number
+        candle_lookup = {candle.get('candle_number'): candle for candle in all_candles if isinstance(candle, dict) and candle.get('candle_number')}
+        
+        # Process each pattern
+        for pattern_key, pattern_candles in patterns_dict.items():
+            if not pattern_candles:
+                continue
+            
+            
+            # First, collect ALL definition candles from the pattern
+            all_definition_candles = {}  # def_num -> {'candle': candle, 'index': index, 'candle_number': num}
+            
+            for i, candle in enumerate(pattern_candles):
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        try:
+                            parts = key.split('_')
+                            if len(parts) >= 2 and parts[1].isdigit():
+                                def_num = int(parts[1])
+                                if def_num not in all_definition_candles:
+                                    all_definition_candles[def_num] = {
+                                        'candle': candle,
+                                        'index': i,
+                                        'candle_number': candle.get('candle_number')
+                                    }
+                        except (ValueError, IndexError):
+                            continue
+            
+            if not all_definition_candles:
+                print("  No definition candles found in pattern")
+                continue
+            
+            # Filter to only definitions that have extreme enabled
+            definition_candles = {}
+            for def_num in extreme_defs.keys():
+                if def_num in all_definition_candles:
+                    definition_candles[def_num] = all_definition_candles[def_num]
+            
+            if not definition_candles:
+                continue
+            
+            # Sort definition numbers to process in order
+            sorted_def_nums = sorted(definition_candles.keys())
+            
+            # For each definition that needs extreme substitution
+            for def_num in sorted_def_nums:
+                def_config = extreme_defs[def_num]
+                def_info = definition_candles[def_num]
+                def_candle = def_info['candle']
+                def_candle_index = def_info['index']
+                def_candle_number = def_info['candle_number']
+                
+                # Find the next definition that exists in this pattern (ANY definition)
+                next_def_num = None
+                next_def_candle_number = None
+                next_def_index = None
+                
+                all_sorted_nums = sorted(all_definition_candles.keys())
+                for higher_def in all_sorted_nums:
+                    if higher_def > def_num:
+                        next_def_num = higher_def
+                        next_def_candle_number = all_definition_candles[higher_def]['candle_number']
+                        next_def_index = all_definition_candles[higher_def]['index']
+                        break
+                
+                # Determine search range using candle numbers in the ORIGINAL data
+                start_candle_number = def_candle_number + 1
+                end_candle_number = next_def_candle_number - 1 if next_def_candle_number else float('inf')
+                
+                
+                # Get current candle's swing type and price
+                swing_type = def_candle.get("swing_type", "").lower()
+                is_swing_high = "high" in swing_type
+                is_swing_low = "low" in swing_type
+                
+                if not is_swing_high and not is_swing_low:
+                    continue
+                
+                current_price = def_candle.get("high") if is_swing_high else def_candle.get("low")
+                
+                # Find the most extreme candle in the ORIGINAL candle data
+                extreme_candidate = None
+                extreme_price = current_price
+                extreme_candle_number = None
+                
+                # Get all candles in range from the lookup
+                max_candle_num = max(candle_lookup.keys()) if candle_lookup else 0
+                for candle_num in range(start_candle_number, int(end_candle_number) + 1 if next_def_candle_number else max_candle_num + 1):
+                    candle = candle_lookup.get(candle_num)
+                    if not candle:
+                        continue
+                    
+                    # Only consider candles of the same swing type
+                    candle_swing_type = candle.get("swing_type", "").lower()
+                    
+                    if is_swing_high and "high" in candle_swing_type:
+                        # Look for higher high
+                        candle_high = candle.get("high")
+                        if candle_high and candle_high > extreme_price:
+                            extreme_price = candle_high
+                            extreme_candidate = candle
+                            extreme_candle_number = candle_num
+                    
+                    elif is_swing_low and "low" in candle_swing_type:
+                        # Look for lower low
+                        candle_low = candle.get("low")
+                        if candle_low and candle_low < extreme_price:
+                            extreme_price = candle_low
+                            extreme_candidate = candle
+                            extreme_candle_number = candle_num
+                
+                # If we found a more extreme candle
+                if extreme_candidate is not None:
+                    
+                    # NOW we need to find or create this candle in the pattern
+                    # Check if extreme candle already exists in pattern
+                    extreme_in_pattern_idx = None
+                    for i, c in enumerate(pattern_candles):
+                        if c.get('candle_number') == extreme_candle_number:
+                            extreme_in_pattern_idx = i
+                            extreme_candidate = c  # Use the pattern's version
+                            break
+                    
+                    # Define the base fields that should be kept in the candle
+                    base_candle_fields = [
+                        "open", "high", "low", "close", "volume", "spread", 
+                        "real_volume", "symbol", "time", "candle_number", "timeframe",
+                        "candle_x", "candle_y", "candle_width", "candle_height",
+                        "candle_left", "candle_right", "candle_top", "candle_bottom",
+                        "swing_type", "is_swing", "active_color", "draw_x", "draw_y",
+                        "draw_w", "draw_h", "draw_left", "draw_right", "draw_top", 
+                        "draw_bottom", "m_idx"
+                    ]
+                    
+                    # Also keep swept_by related fields if they exist
+                    swept_fields = ["swept_by_liquidity", "swept_by_candle_number", "swept_by_candles"]
+                    
+                    if extreme_in_pattern_idx is None:
+                        # Extreme candle not in pattern yet - we need to add it
+                        # First, determine where to insert it (between def_candle and next_def)
+                        insert_idx = def_candle_index + 1
+                        
+                        # Create a clean candle with only the base fields
+                        import copy
+                        new_candle = {}
+                        
+                        # Copy only the base fields from the extreme candidate
+                        for field in base_candle_fields + swept_fields:
+                            if field in extreme_candidate:
+                                new_candle[field] = extreme_candidate[field]
+                        
+                        # Insert it into the pattern
+                        pattern_candles.insert(insert_idx, new_candle)
+                        extreme_candidate = new_candle
+                        extreme_in_pattern_idx = insert_idx
+                        
+                        # Update indices in all_definition_candles for definitions after insertion point
+                        for other_def_num, other_info in all_definition_candles.items():
+                            if other_info['index'] >= insert_idx:
+                                other_info['index'] += 1
+                        
+                        # Also update next_def_index if it exists
+                        if next_def_index is not None and next_def_index >= insert_idx:
+                            next_def_index += 1
+                    else:
+                        # Extreme candle already exists in pattern
+                        # Clean the existing candle to remove any extra flags
+                        cleaned_candle = {}
+                        for field in base_candle_fields + swept_fields:
+                            if field in extreme_candidate:
+                                cleaned_candle[field] = extreme_candidate[field]
+                        
+                        # Replace the candle in the pattern with the cleaned version
+                        pattern_candles[extreme_in_pattern_idx] = cleaned_candle
+                        extreme_candidate = cleaned_candle
+                    
+                    # Collect all define_{def_num} related flags from the original candle
+                    keys_to_transfer = []
+                    for key in list(def_candle.keys()):
+                        if key.startswith(f"define_{def_num}"):
+                            keys_to_transfer.append(key)
+                    
+                    # Also collect other important keys that should be transferred
+                    additional_keys = ["pattern_entry", "from", "after", "drawn_and_stopped_on_hitler210"]
+                    for key in additional_keys:
+                        if key in def_candle:
+                            keys_to_transfer.append(key)
+                    
+                    # Remove these keys from original candle
+                    for key in keys_to_transfer:
+                        if key in def_candle:
+                            del def_candle[key]
+                    
+                    # Add them to extreme candle
+                    for key in keys_to_transfer:
+                        extreme_candidate[key] = def_candle.get(key, True)
+                    
+                    # Mark that substitution happened (this is the only extra flag we add)
+                    extreme_candidate[f"define_{def_num}_extreme_substituted"] = True
+                    extreme_candidate[f"define_{def_num}_extreme_from_candle"] = def_candle_number
+                    
+                    # Update the definition_candles dictionary with the new location
+                    definition_candles[def_num] = {
+                        'candle': extreme_candidate,
+                        'index': extreme_in_pattern_idx,
+                        'candle_number': extreme_candle_number
+                    }
+                    
+                    # Also update all_definition_candles
+                    all_definition_candles[def_num] = definition_candles[def_num]
+                    
+        
+        return patterns_dict
+    
     def add_liquidity_sweepers_to_patterns(target_data_tf, new_key, original_candles):
         """
         Adds sweeper candle details to victim candles in patterns.
@@ -2510,59 +2947,6 @@ def entry_point_of_interest(broker_name):
                         #print(f"  🏷️ Added '{liquidity_flag}: true' to sweeper candle #{sweeper.get('candle_number')} for define #{candle_num}")
         
         return flags_added
-    
-    def sanitize_pattern_definitions(patterns_dict):
-        """
-        Sanitizes each pattern in the dictionary.
-        Ensures that the N-th candle in a pattern family only contains 'define_N' metadata.
-        """
-        if not patterns_dict:
-            return {}
-
-        sanitized_patterns = {}
-
-        for p_name, family in patterns_dict.items():
-            new_family = []
-            
-            # The family is ordered [define_1, define_2, ..., define_max]
-            for idx, candle in enumerate(family):
-                if not isinstance(candle, dict):
-                    new_family.append(candle)
-                    continue
-                
-                # Create a shallow copy to avoid modifying the original list in-place
-                clean_candle = candle.copy()
-                current_rank = idx + 1  # 1-based indexing for define_n
-                
-                # Identify keys to keep:
-                # 1. Standard OHLCV and technical data
-                # 2. 'define_N' keys specific to this candle's position in the pattern
-                keys_to_delete = []
-                
-                for key in clean_candle.keys():
-                    # If the key is a 'define_X' key
-                    if key.startswith("define_"):
-                        # Extract the number from 'define_N...'
-                        try:
-                            parts = key.split('_')
-                            def_num = int(parts[1])
-                            
-                            # Logic: If this is the 2nd candle in the list, 
-                            # it should ONLY have define_2 related keys.
-                            if def_num != current_rank:
-                                keys_to_delete.append(key)
-                        except (ValueError, IndexError):
-                            continue
-                
-                # Remove the non-relevant define keys
-                for k in keys_to_delete:
-                    del clean_candle[k]
-                    
-                new_family.append(clean_candle)
-                
-            sanitized_patterns[p_name] = new_family
-            
-        return sanitized_patterns
 
     def intruder_and_outlaw_check(processed_data):
         for file_key, candles in processed_data.items():
@@ -3070,7 +3454,14 @@ def entry_point_of_interest(broker_name):
     def identify_selected(target_data_tf, new_key, poi_config):
         """
         Filters pattern records based on extreme or non-extreme values of a specific define_n.
-        Config format: "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
+        Config format: 
+            "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
+            "max_selection": 2 (optional) - limits to at most N patterns with the target define_n
+        
+        If max_selection is specified, it will keep at most N patterns, prioritizing the most
+        extreme ones (including ties at the cutoff price level). If there are multiple patterns
+        at the same price level as the Nth pattern, all of them are kept.
+        If max_selection is missing or 0, it keeps only the most extreme pattern(s) (all ties at top).
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return target_data_tf
@@ -3080,17 +3471,25 @@ def entry_point_of_interest(broker_name):
         if not patterns:
             return target_data_tf
 
+        # Get multiple_selection config
         selection_raw = poi_config.get("multiple_selection")
         if not selection_raw:
             return target_data_tf
 
-        # Parse config: e.g., "define_3_extreme" -> target_key="define_3", mode="extreme"
+        # Get max_selection config (default to 0 if not present)
+        max_selection = poi_config.get("max_selection", 0)
+        try:
+            max_selection = int(max_selection)
+        except (ValueError, TypeError):
+            max_selection = 0
+
+        # Parse multiple_selection: e.g., "define_3_extreme" -> target_key="define_3", mode="extreme"
         parts = selection_raw.split("_")
         if len(parts) < 3:
             return target_data_tf
 
-        target_define_key = f"{parts[0]}_{parts[1]}" # e.g., "define_3"
-        mode = parts[2].lower() # "extreme" or "non"
+        target_define_key = f"{parts[0]}_{parts[1]}"  # e.g., "define_3"
+        mode = parts[2].lower()  # "extreme" or "non"
         if mode == "non":
             mode = "non_extreme"
 
@@ -3113,40 +3512,61 @@ def entry_point_of_interest(broker_name):
                     eligible_patterns.append({
                         "name": p_name,
                         "price": price,
-                        "swing_type": swing_type
+                        "swing_type": swing_type,
+                        "candle_number": target_candle.get("candle_number"),
+                        "full_candle": target_candle  # Store reference for potential future use
                     })
 
+        # If no eligible patterns found, return unchanged
         if not eligible_patterns:
             return target_data_tf
 
-        # 2. Determine the winner based on the criteria
-        # We assume all patterns for a specific define_n share the same swing_type category 
-        # (all highs or all lows) for a meaningful comparison.
+        # Determine the swing type category (all should be same, but we'll verify)
         first_swing = eligible_patterns[0]["swing_type"]
         is_high_type = "high" in first_swing
         
-        selected_pattern_name = None
-        
+        # 2. Sort all patterns by how extreme they are (most extreme first)
         if is_high_type:
-            # For Higher Highs: 
-            # Extreme = Highest High | Non-Extreme = Lowest High
             if mode == "extreme":
-                winner = max(eligible_patterns, key=lambda x: x["price"])
-            else: # non_extreme
-                winner = min(eligible_patterns, key=lambda x: x["price"])
+                # For highs in extreme mode: highest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
+            else:  # non_extreme
+                # For highs in non-extreme mode: lowest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
         else:
-            # For Lower Lows: 
-            # Extreme = Lowest Low | Non-Extreme = Highest Low
             if mode == "extreme":
-                winner = min(eligible_patterns, key=lambda x: x["price"])
-            else: # non_extreme
-                winner = max(eligible_patterns, key=lambda x: x["price"])
+                # For lows in extreme mode: lowest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
+            else:  # non_extreme
+                # For lows in non-extreme mode: highest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
 
-        selected_pattern_name = winner["name"]
+        # 3. Apply max_selection logic
+        patterns_to_keep = []
+        
+        if max_selection > 0 and len(sorted_patterns) > max_selection:
+            # We need to limit to at most max_selection patterns
+            
+            # Take the top max_selection patterns
+            top_n_patterns = sorted_patterns[:max_selection]
+            
+            # Get the price of the last pattern we're including
+            last_price = top_n_patterns[-1]["price"]
+            
+            # Include any additional patterns at the same price level as the last included
+            for p in sorted_patterns[max_selection:]:
+                if p["price"] == last_price:
+                    top_n_patterns.append(p)
+                else:
+                    break
+            
+            patterns_to_keep = [p["name"] for p in top_n_patterns]
+        else:
+            # No max_selection or we have fewer than max - keep all patterns
+            patterns_to_keep = [p["name"] for p in sorted_patterns]
 
-        # 3. Remove all patterns that were part of this comparison but didn't win
-        # Note: Patterns NOT containing the define_n are left untouched.
-        patterns_to_remove = [p["name"] for p in eligible_patterns if p["name"] != selected_pattern_name]
+        # 4. Remove all patterns that aren't in our keep list
+        patterns_to_remove = [p_name for p_name in patterns.keys() if p_name not in patterns_to_keep]
         
         for p_name in patterns_to_remove:
             if p_name in patterns:
@@ -9761,8 +10181,8 @@ def single():
         #for r in sync_results: print(r)
         sync_results = pool.map(entry_point_of_interest, broker_names)
         for r in sync_results: print(r)
-        sync_results = pool.map(entries_confirmation, broker_names)
-        for r in sync_results: print(r)
+        #sync_results = pool.map(entries_confirmation, broker_names)
+        #for r in sync_results: print(r)
         #sync_results = pool.map(sync_dev_investors, broker_names)
         #for r in sync_results: print(r)
 
@@ -9788,7 +10208,7 @@ def process_single_developer_pipeline(broker_name):
         
         
         # Step 5: Cleanup
-        res_clean = clear_unathorized_entries_folders(broker_name)
+        #res_clean = clear_unathorized_entries_folders(broker_name)
         
         # Step 6: Investor Sync
         res_sync = sync_dev_investors(broker_name)
