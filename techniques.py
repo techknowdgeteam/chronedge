@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pytz
 from multiprocessing import Pool, cpu_count
+from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import mplfinance as mpf
@@ -104,34 +105,6 @@ def get_analysis_paths(
         "config_json": config_json,
         "comm_paths": comm_paths
     }  
-
-def sync_ticks_data(broker_name):
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-    
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg: return f"[{broker_name}] Ticks Error: Broker not found."
-
-    base_folder = cfg.get("BASE_FOLDER")
-    symbols = [d for d in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, d))]
-    
-    copy_count = 0
-    for sym in symbols:
-        # We use dummy values for tf/bars just to get the pathing logic from the helper
-        paths = get_analysis_paths(base_folder, broker_name, sym, "1m", "new_old", 100, "temp.json")
-        
-        src = paths["source_ticks"]
-        dst = paths["dest_ticks"]
-        
-        if os.path.exists(src):
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(src, dst)
-            copy_count += 1
-            
-    msg = f"[{ts}] [TICKS] {broker_name}: Copied {copy_count} tick files."
-    print(msg)
-    return msg
 
 def copy_full_candle_data(broker_name):
     """
@@ -505,231 +478,12 @@ def label_objects(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
         cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-        
-def lower_highs_higher_lows(broker_name):
+
+def swing_points(broker_name, max_symbols_parallel=5):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
         print(f"[{ts}] [{level}] {msg}")
-
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg: 
-        return f"[{broker_name}] Error: Broker not in dictionary."
-    
-    base_folder = cfg.get("BASE_FOLDER")
-    am_data = get_account_management(broker_name)
-    if not am_data: 
-        return f"[{broker_name}] Error: accountmanagement.json missing."
-    
-    define_candles = am_data.get("chart", {}).get("define_candles", {})
-    
-    # --- CONFIG LOGIC UPDATE ---
-    # We look for the Parent (HH/LL) config specifically to steal its BARS setting
-    parent_keyword = "higherhighsandlowerlows"
-    parent_cfg_list = [v for k, v in define_candles.items() if parent_keyword in k.lower()]
-    parent_bars = parent_cfg_list[0].get("BARS", 101) if parent_cfg_list else 101
-    
-    keyword = "lowerhighsandhigherlows"
-    matching_configs = [(k, v) for k, v in define_candles.items() if keyword in k.lower()]
-
-    if not matching_configs:
-        return f"[{broker_name}] Error: No configuration found for '{keyword}'."
-
-    log(f"--- STARTING IDENTIFICATION (CHILD): {broker_name} ---")
-    log(f"Using Parent BARS: {parent_bars}")
-
-    total_marked_all, processed_charts_all = 0, 0
-
-    def resolve_marker(raw):
-        if not raw: return None, False
-        raw = str(raw).lower().strip()
-        if raw in ["arrow", "arrows", "singlearrow"]: return "arrow", False
-        if raw in ["doublearrow", "doublearrows"]: return "arrow", True
-        if raw in ["reverse_arrow", "reversearrow"]: return "reverse_arrow", False
-        if raw in ["reverse_doublearrow", "reverse_doublearrows"]: return "reverse_arrow", True
-        if raw in ["rightarrow", "right_arrow"]: return "rightarrow", False
-        if raw in ["leftarrow", "left_arrow"]: return "leftarrow", False
-        if "dot" in raw: return "dot", False
-        return raw, False
-
-    for config_key, llhl_cfg in matching_configs:
-        log(f"Processing Config Key: [{config_key}]")
-        # Overriding local BARS with parent_bars as requested
-        bars = parent_bars 
-        output_filename_base = llhl_cfg.get("filename", "lowers.json")
-        direction = llhl_cfg.get("read_candles_from", "new_old")
-        
-        neighbor_left = llhl_cfg.get("NEIGHBOR_LEFT", 5)
-        neighbor_right = llhl_cfg.get("NEIGHBOR_RIGHT", 5)
-
-        label_cfg = llhl_cfg.get("label", {})
-        lh_text = label_cfg.get("lowerhighs_text", "LH")
-        ll_text = label_cfg.get("higherlows_text", "HL")
-        cm_text = label_cfg.get("contourmaker_text", "m")
-
-        label_at = label_cfg.get("label_at", {})
-        lh_pos = label_at.get("lower_highs", "high").lower()
-        ll_pos = label_at.get("higher_lows", "low").lower()
-
-        color_map = {"green": (0, 255, 0), "red": (255, 0, 0), "blue": (0, 0, 255)}
-        lh_col = color_map.get(label_at.get("lower_highs_color", "red").lower(), (255, 0, 0))
-        ll_col = color_map.get(label_at.get("higher_lows_color", "green").lower(), (0, 255, 0))
-
-        lh_obj, lh_dbl = resolve_marker(label_at.get("lower_highs_marker", "arrow"))
-        ll_obj, ll_dbl = resolve_marker(label_at.get("higher_lows_marker", "arrow"))
-        lh_cm_obj, lh_cm_dbl = resolve_marker(label_at.get("lower_highs_contourmaker_marker", ""))
-        ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("higher_lows_contourmaker_marker", ""))
-
-        symbols = sorted([d for d in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, d))])
-        
-        for sym in symbols:
-            sym_p = os.path.join(base_folder, sym)
-            timeframes = sorted(os.listdir(sym_p))
-
-            for tf in timeframes:
-                paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
-                config_path = os.path.join(paths["output_dir"], "config.json")
-
-                if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
-                    continue
-
-                try:
-                    # 1. Load existing config to check for Parent (HH/LL) claims
-                    parent_claimed_candles = set()
-                    if os.path.exists(config_path):
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            existing_cfg_data = json.load(f)
-                            # Look for any key containing "higherhighsandlowerlows"
-                            for k, v in existing_cfg_data.items():
-                                if parent_keyword in k.lower() and isinstance(v, list):
-                                    for candle in v:
-                                        if candle.get("is_swing"):
-                                            parent_claimed_candles.add(candle.get("candle_number"))
-
-                    # 2. Load candle data
-                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
-                        data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
-                    
-                    img = cv2.imread(paths["source_chart"])
-                    if img is None: continue
-
-                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if len(contours) == 0: continue
-
-                    contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-                    if len(data) != len(contours):
-                        min_len = min(len(data), len(contours))
-                        data = data[:min_len]
-                        contours = contours[:min_len]
-
-                    # Map coordinates
-                    for idx, contour in enumerate(contours):
-                        x, y, w, h = cv2.boundingRect(contour)
-                        data[idx].update({
-                            "candle_x": x + (w // 2), "candle_y": y,
-                            "candle_width": w, "candle_height": h,
-                            "candle_left": x, "candle_right": x + w,
-                            "candle_top": y, "candle_bottom": y + h
-                        })
-
-                    n = len(data)
-                    swing_count_in_chart = 0
-                    for i in range(neighbor_left, n - neighbor_right):
-                        fvg_swing_type = data[i].get('candle_number')
-                        
-                        # --- EXCLUSION CHECK ---
-                        # If the Parent already claimed this candle, we skip it
-                        if fvg_swing_type in parent_claimed_candles:
-                            continue
-
-                        curr_h, curr_l = data[i]['high'], data[i]['low']
-                        l_h = [d['high'] for d in data[i-neighbor_left:i]]
-                        l_l = [d['low'] for d in data[i-neighbor_left:i]]
-                        r_h = [d['high'] for d in data[i+1:i+neighbor_right+1]]
-                        r_l = [d['low'] for d in data[i+1:i+neighbor_right+1]]
-
-                        is_peak = curr_h > max(l_h) and curr_h > max(r_h)
-                        is_valley = curr_l < min(l_l) and curr_l < min(r_l)
-
-                        if is_peak or is_valley:
-                            swing_count_in_chart += 1
-                            is_bull = is_valley
-                            active_color = ll_col if is_bull else lh_col
-                            custom_text = ll_text if is_bull else lh_text
-                            obj_type = ll_obj if is_bull else lh_obj
-                            dbl_arrow = ll_dbl if is_bull else lh_dbl
-                            position = ll_pos if is_bull else lh_pos
-
-                            label_objects_and_text(
-                                img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"], 
-                                fvg_swing_type=fvg_swing_type,
-                                custom_text=custom_text, object_type=obj_type,
-                                is_bullish_arrow=is_bull, is_marked=True,
-                                double_arrow=dbl_arrow, arrow_color=active_color,
-                                label_position=position
-                            )
-
-                            # Handle Contour Maker
-                            m_idx = i + neighbor_right
-                            contour_maker_entry = None
-                            if m_idx < n:
-                                cm_obj = ll_cm_obj if is_bull else lh_cm_obj
-                                cm_dbl = ll_cm_dbl if is_bull else lh_cm_dbl
-                                
-                                label_objects_and_text(
-                                    img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"], 
-                                    custom_text=cm_text, object_type=cm_obj,
-                                    is_bullish_arrow=is_bull, is_marked=True,
-                                    double_arrow=cm_dbl, arrow_color=active_color,
-                                    label_position=position
-                                )
-                                contour_maker_entry = data[m_idx].copy()
-                                contour_maker_entry.update({"is_contour_maker": True})
-
-                            data[i].update({
-                                "swing_type": "higher_low" if is_bull else "lower_high",
-                                "is_swing": True, "active_color": active_color,
-                                "draw_x": data[i]["candle_x"], "draw_y": data[i]["candle_y"],
-                                "draw_w": data[i]["candle_width"], "draw_h": data[i]["candle_height"],
-                                "contour_maker": contour_maker_entry,
-                                "m_idx": m_idx if m_idx < n else None
-                            })
-
-                    # Save visual chart and Update config.json
-                    os.makedirs(paths["output_dir"], exist_ok=True)
-                    cv2.imwrite(paths["output_chart"], img)
-
-                    config_content = {}
-                    if os.path.exists(config_path):
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            try: config_content = json.load(f)
-                            except: config_content = {}
-
-                    config_content[config_key] = data
-                    config_content[f"{config_key}_candle_list"] = data
-
-                    with open(config_path, 'w', encoding='utf-8') as f:
-                        json.dump(config_content, f, indent=4)
-                    
-                    processed_charts_all += 1
-                    total_marked_all += swing_count_in_chart
-
-                except Exception as e:
-                    log(f"Error in {sym}/{tf}: {e}", "ERROR")
-
-    summary = f"COMPLETED. Broker: {broker_name} | Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}"
-    log(summary)
-    return summary
-
-def higher_highs_lower_lows(broker_name):
-
-    lagos_tz = pytz.timezone('Africa/Lagos')
-    def log(msg, level="INFO"):
-        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
 
     dev_dict = load_developers_dictionary()
     cfg = dev_dict.get(broker_name)
@@ -742,7 +496,7 @@ def higher_highs_lower_lows(broker_name):
         return f"[{broker_name}] Error: accountmanagement.json missing."
     
     define_candles = am_data.get("chart", {}).get("define_candles", {})
-    keyword = "higherhighsandlowerlows"
+    keyword = "swing_points"
     matching_configs = [(k, v) for k, v in define_candles.items() if keyword in k.lower()]
     if not matching_configs:
         return f"[{broker_name}] Error: No configuration found for '{keyword}'."
@@ -761,8 +515,13 @@ def higher_highs_lower_lows(broker_name):
         if "dot" in raw: return "dot", False
         return raw, False
 
-    log(f"--- STARTING HH/ll ANALYSIS: {broker_name} ---")
+    # Aesthetic print header
+    print("\n" + "="*80)
+    print(f"🚀 SWING POINTS ANALYSIS - {broker_name}".center(80))
+    print("="*80)
+    log(f"Starting HH/LL analysis for {broker_name} with {max_symbols_parallel} symbols parallel processing")
 
+    # Process each config
     for config_key, hlll_cfg in matching_configs:
         bars = hlll_cfg.get("BARS", 101)
         output_filename_base = hlll_cfg.get("filename", "highers.json")
@@ -771,415 +530,250 @@ def higher_highs_lower_lows(broker_name):
         neighbor_left = hlll_cfg.get("NEIGHBOR_LEFT", 5)
         neighbor_right = hlll_cfg.get("NEIGHBOR_RIGHT", 5)
         label_cfg = hlll_cfg.get("label", {})
-        hh_text = label_cfg.get("higherhighs_text", "HH")
-        ll_text = label_cfg.get("lowerlows_text", "ll")
-        cm_text = label_cfg.get("contourmaker_text", "m")
+        hh_text = label_cfg.get("swinghighs_text", "HH")
+        ll_text = label_cfg.get("swinglows_text", "ll")
+        cm_text = label_cfg.get("contourmaker_text", "")
         label_at = label_cfg.get("label_at", {})
-        hh_pos = label_at.get("higher_highs", "high").lower()
-        ll_pos = label_at.get("lower_lows", "low").lower()
+        hh_pos = label_at.get("swing_highs", "high").lower()
+        ll_pos = label_at.get("swing_lows", "low").lower()
         
         color_map = {"green": (0, 255, 0), "red": (255, 0, 0), "blue": (0, 0, 255)}
-        hh_col = color_map.get(label_at.get("higher_highs_color", "red").lower(), (255, 0, 0))
-        ll_col = color_map.get(label_at.get("lower_lows_color", "green").lower(), (0, 255, 0))
+        hh_col = color_map.get(label_at.get("swing_highs_color", "red").lower(), (255, 0, 0))
+        ll_col = color_map.get(label_at.get("swing_lows_color", "green").lower(), (0, 255, 0))
         
-        hh_obj, hh_dbl = resolve_marker(label_at.get("higher_highs_marker", "arrow"))
-        ll_obj, ll_dbl = resolve_marker(label_at.get("lower_lows_marker", "arrow"))
-        hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("higher_highs_contourmaker_marker", ""))
-        ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("lower_lows_contourmaker_marker", ""))
+        hh_obj, hh_dbl = resolve_marker(label_at.get("swing_highs_marker", "arrow"))
+        ll_obj, ll_dbl = resolve_marker(label_at.get("swing_lows_marker", "arrow"))
+        hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("swing_highs_contourmaker_marker", ""))
+        ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("swing_lows_contourmaker_marker", ""))
 
+        # Get all symbols to process
+        symbols = []
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
+            if os.path.isdir(sym_p):
+                symbols.append(sym)
+        
+        if not symbols:
+            log(f"No symbols found in {base_folder}", "WARNING")
+            continue
+
+        # Prepare arguments for parallel processing
+        symbol_args = []
+        for sym in symbols:
+            symbol_args.append((
+                sym, base_folder, broker_name, config_key, hlll_cfg,
+                neighbor_left, neighbor_right, hh_text, ll_text, cm_text,
+                hh_pos, ll_pos, hh_col, ll_col, hh_obj, ll_obj, hh_dbl, ll_dbl,
+                hh_cm_obj, ll_cm_obj, hh_cm_dbl, ll_cm_dbl,
+                bars, direction, output_filename_base
+            ))
+        
+        # Use ThreadPool instead of Pool to avoid nested daemon processes
+        with ThreadPool(processes=max_symbols_parallel) as symbol_pool:
+            symbol_results = symbol_pool.map(process_single_symbol, symbol_args)
             
-            for tf in sorted(os.listdir(sym_p)):
-                paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
-                config_path = os.path.join(paths["output_dir"], "config.json")
+            # Aggregate results
+            for symbol_swings_high, symbol_swings_low, symbol_timeframes, symbol_name in symbol_results:
+                total_marked_all += (symbol_swings_high + symbol_swings_low)
+                processed_charts_all += len(symbol_timeframes)
                 
-                if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
-                    continue
-                
-                try:
-                    # Logging specific pair and timeframe
-                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
-                        data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
-                    
-                    img = cv2.imread(paths["source_chart"])
-                    if img is None: 
-                        log(f"   Skipping: Could not load image {paths['source_chart']}", "WARNING")
-                        continue
-                    
-                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if len(contours) == 0: 
-                        log(f"   No contours found for {sym} {tf}")
-                        continue
+                # Print symbol summary
+                if symbol_timeframes:
+                    total_symbol_swings = symbol_swings_high + symbol_swings_low
+                    if total_symbol_swings > 0:
+                        print(f"\n {symbol_name} SWING POINTS:")
+                        print(f"   ├─ Timeframes processed: {len(symbol_timeframes)}")
+                        print(f"   ├─ 🔴 SWING HIGHS: {symbol_swings_high}")
+                        print(f"   ├─ 🟢 SWING LOWS: {symbol_swings_low}")
+                        print(f"   └─ 📊 TOTAL SWINGS: {total_symbol_swings}")
+                        print(f"   {'.' * 50}")
 
-                    contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-                    
-                    if len(data) != len(contours):
-                        min_len = min(len(data), len(contours))
-                        data = data[:min_len]
-                        contours = contours[:min_len]
-
-                    for idx, contour in enumerate(contours):
-                        x, y, w, h = cv2.boundingRect(contour)
-                        data[idx].update({
-                            "candle_x": x + (w // 2),
-                            "candle_y": y,
-                            "candle_width": w,
-                            "candle_height": h,
-                            "candle_left": x,
-                            "candle_right": x + w,
-                            "candle_top": y,
-                            "candle_bottom": y + h
-                        })
-
-                    n = len(data)
-                    swing_count_in_chart = 0
-                    start_idx = neighbor_left
-                    end_idx = n - neighbor_right
-
-                    for i in range(start_idx, end_idx):
-                        curr_h, curr_l = data[i]['high'], data[i]['low']
-                        
-                        l_h = [d['high'] for d in data[i - neighbor_left:i]]
-                        l_l = [d['low'] for d in data[i - neighbor_left:i]]
-                        r_h = [d['high'] for d in data[i + 1:i + 1 + neighbor_right]]
-                        r_l = [d['low'] for d in data[i + 1:i + 1 + neighbor_right]]
-                        
-                        is_hh = curr_h > max(l_h) and curr_h > max(r_h)
-                        is_ll = curr_l < min(l_l) and curr_l < min(r_l)
-                        
-                        if not (is_hh or is_ll):
-                            continue
-                        
-                        swing_count_in_chart += 1
-                        is_bull = is_ll
-                        active_color = ll_col if is_bull else hh_col
-                        custom_text = ll_text if is_bull else hh_text
-                        obj_type = ll_obj if is_bull else hh_obj
-                        dbl_arrow = ll_dbl if is_bull else hh_dbl
-                        position = ll_pos if is_bull else hh_pos
-
-                        label_objects_and_text(
-                            img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
-                            fvg_swing_type=data[i]['candle_number'],
-                            custom_text=custom_text,
-                            object_type=obj_type,
-                            is_bullish_arrow=is_bull,
-                            is_marked=True,
-                            double_arrow=dbl_arrow,
-                            arrow_color=active_color,
-                            label_position=position
-                        )
-
-                        m_idx = i + neighbor_right
-                        contour_maker_entry = None
-                        if m_idx < n:
-                            cm_obj = ll_cm_obj if is_bull else hh_cm_obj
-                            cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
-                            
-                            label_objects_and_text(
-                                img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
-                                custom_text=cm_text,
-                                object_type=cm_obj,
-                                is_bullish_arrow=is_bull,
-                                is_marked=True,
-                                double_arrow=cm_dbl,
-                                arrow_color=active_color,
-                                label_position=position
-                            )
-
-                            data[m_idx]["is_contour_maker"] = True
-                            contour_maker_entry = data[m_idx].copy()
-                            contour_maker_entry.update({
-                                "draw_x": data[m_idx]["candle_x"], "draw_y": data[m_idx]["candle_y"],
-                                "draw_w": data[m_idx]["candle_width"], "draw_h": data[m_idx]["candle_height"],
-                                "draw_left": data[m_idx]["candle_left"], "draw_right": data[m_idx]["candle_right"],
-                                "draw_top": data[m_idx]["candle_top"], "draw_bottom": data[m_idx]["candle_bottom"],
-                                "is_contour_maker": True
-                            })
-
-                        data[i].update({
-                            "swing_type": "lower_low" if is_bull else "higher_high",
-                            "is_swing": True,
-                            "active_color": active_color,
-                            "draw_x": data[i]["candle_x"], "draw_y": data[i]["candle_y"],
-                            "draw_w": data[i]["candle_width"], "draw_h": data[i]["candle_height"],
-                            "draw_left": data[i]["candle_left"], "draw_right": data[i]["candle_right"],
-                            "draw_top": data[i]["candle_top"], "draw_bottom": data[i]["candle_bottom"],
-                            "contour_maker": contour_maker_entry,
-                            "m_idx": m_idx if m_idx < n else None
-                        })
-
-                    # Finalize outputs for this specific TF
-                    os.makedirs(paths["output_dir"], exist_ok=True)
-                    cv2.imwrite(paths["output_chart"], img)
-
-                    config_json = {}
-                    if os.path.exists(config_path):
-                        try:
-                            with open(config_path, 'r', encoding='utf-8') as f:
-                                config_json = json.load(f)
-                        except:
-                            config_json = {}
-                    
-                    config_json[config_key] = data
-                    config_json[f"{config_key}_candle_list"] = data 
-
-                    with open(config_path, 'w', encoding='utf-8') as f:
-                        json.dump(config_json, f, indent=4)
-                    
-                    log(f"{sym} | {tf} | Key: {config_key} Swings found: {swing_count_in_chart}")
-                    
-                    processed_charts_all += 1
-                    total_marked_all += swing_count_in_chart
-
-                except Exception as e:
-                    log(f"   [ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
-
-    log(f"--- HH/ll COMPLETE --- Total Swings: {total_marked_all} | Total Charts: {processed_charts_all}")
-    return f"Identify Done. Swings: {total_marked_all} | Charts: {processed_charts_all}"  
-
-def directional_bias(broker_name):
-    lagos_tz = pytz.timezone('Africa/Lagos')
+    # Final summary with beautiful formatting
+    print("\n" + "="*80)
+    print("🎯 SWING POINTS COMPLETED".center(80))
+    print(f"📊 Total Swings: {total_marked_all} | Charts Processed: {processed_charts_all}".center(80))
+    print("="*80)
     
+    return f"[{broker_name}] Swing points analysis completed. Total swings: {total_marked_all}"
+
+def process_single_symbol(args):
+    """Process a single symbol across all its timeframes"""
+    (sym, base_folder, broker_name, config_key, hlll_cfg,
+     neighbor_left, neighbor_right, hh_text, ll_text, cm_text,
+     hh_pos, ll_pos, hh_col, ll_col, hh_obj, ll_obj, hh_dbl, ll_dbl,
+     hh_cm_obj, ll_cm_obj, hh_cm_dbl, ll_cm_dbl,
+     bars, direction, output_filename_base) = args
+    
+    lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] {msg}")
-
-    def get_base_type(bias_direction):
-        if not bias_direction: return None
-        return "support" if bias_direction == "upward" else "resistance"
-
-    def resolve_marker(raw):
-        raw = str(raw or "").lower().strip()
-        if not raw: return None, False
-        if "double" in raw: return "arrow", True
-        if "arrow"  in raw: return "arrow", False
-        if "dot" in raw or "circle" in raw: return "dot", False
-        if "pentagon" in raw: return "pentagon", False
-        return raw, False
-
-    dev_dict = load_developers_dictionary()
-    cfg = dev_dict.get(broker_name)
-    if not cfg:
-        return f"[{broker_name}] Error: Broker not in dictionary."
+        print(f"[{ts}] [{level}] [{broker_name}/{sym}] {msg}")
     
-    base_folder = cfg.get("BASE_FOLDER")
-    am_data = get_account_management(broker_name)
-    if not am_data:
-        return f"[{broker_name}] Error: accountmanagement.json missing."
+    symbol_swings_high = 0
+    symbol_swings_low = 0
+    symbol_timeframes = []
     
-    chart_cfg = am_data.get("chart", {})
-    define_candles = chart_cfg.get("define_candles", {})
-    db_section = define_candles.get("directional_bias_candles", {})
+    sym_p = os.path.join(base_folder, sym)
+    if not os.path.isdir(sym_p):
+        return (0, 0, [], sym)
     
-    if not db_section:
-        return f"[{broker_name}] Error: 'directional_bias_candles' section missing."
-
-    total_db_marked = 0
-    total_liq_marked = 0
-
-    self_apprehend_cfg = db_section.get("apprehend_directional_bias_candles", {})
-    self_label_cfg = self_apprehend_cfg.get("label", {}) if self_apprehend_cfg else {}
-    self_db_text = self_label_cfg.get("directional_bias_candles_text", "DB2")
-    self_label_at = self_label_cfg.get("label_at", {})
-    
-    self_up_obj, self_up_dbl = resolve_marker(self_label_at.get("upward_directional_bias_marker"))
-    self_dn_obj, self_dn_dbl = resolve_marker(self_label_at.get("downward_directional_bias_marker"))
-    self_up_pos = self_label_at.get("upward_directional_bias", "high").lower()
-    self_dn_pos = self_label_at.get("downward_directional_bias", "high").lower()
-    has_self_apprehend = bool(self_apprehend_cfg)
-
-    for apprehend_key, apprehend_cfg in db_section.items():
-        if not isinstance(apprehend_cfg, dict) or apprehend_key == "apprehend_directional_bias_candles":
-            continue 
-
-        log(f"Processing directional bias apprehend: '{apprehend_key}'")
-
-        target_type = apprehend_cfg.get("target", "").lower()
-        label_cfg = apprehend_cfg.get("label", {})
-        db_text   = label_cfg.get("directional_bias_candles_text", "DB")
-        label_at  = label_cfg.get("label_at", {})
-        up_obj, up_dbl = resolve_marker(label_at.get("upward_directional_bias_marker"))
-        dn_obj, dn_dbl = resolve_marker(label_at.get("downward_directional_bias_marker"))
-        up_pos = label_at.get("upward_directional_bias", "high").lower()
-        dn_pos = label_at.get("downward_directional_bias", "high").lower()
-
-        # source_config_name is the key in config.json (e.g., "value")
-        source_config_name = apprehend_key.replace("apprehend_", "")
-        source_config = define_candles.get(source_config_name)
-        if not source_config: continue
-
-        bars = source_config.get("BARS", 101)
-        filename = source_config.get("filename", "output.json")
+    for tf in sorted(os.listdir(sym_p)):
+        paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
+        config_path = os.path.join(paths["output_dir"], "config.json")
         
-        is_hlll = "higherhighsandlowerlows" in source_config_name.lower()
-        is_llhl = "lowerhighsandhigherlows"   in source_config_name.lower()
+        if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
+            continue
+        
+        try:
+            with open(paths["source_json"], 'r', encoding='utf-8') as f:
+                data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
+            
+            img = cv2.imread(paths["source_chart"])
+            if img is None: 
+                log(f"Skipping: Could not load image {paths['source_chart']}", "WARNING")
+                continue
+            
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if len(contours) == 0: 
+                log(f"No contours found for {sym} {tf}")
+                continue
 
-        for sym in sorted(os.listdir(base_folder)):
-            sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
+            contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+            
+            if len(data) != len(contours):
+                min_len = min(len(data), len(contours))
+                data = data[:min_len]
+                contours = contours[:min_len]
 
-            for tf in sorted(os.listdir(sym_p)):
-                dev_output_dir = os.path.join(os.path.abspath(os.path.join(base_folder, "..", "developers", broker_name)), sym, tf)
-                config_json_path = os.path.join(dev_output_dir, "config.json")
+            for idx, contour in enumerate(contours):
+                x, y, w, h = cv2.boundingRect(contour)
+                data[idx].update({
+                    "candle_x": x + (w // 2),
+                    "candle_y": y,
+                    "candle_width": w,
+                    "candle_height": h,
+                    "candle_left": x,
+                    "candle_right": x + w,
+                    "candle_top": y,
+                    "candle_bottom": y + h
+                })
+
+            n = len(data)
+            swing_count_in_chart = 0
+            swing_highs_in_chart = 0
+            swing_lows_in_chart = 0
+            start_idx = neighbor_left
+            end_idx = n - neighbor_right
+
+            for i in range(start_idx, end_idx):
+                curr_h, curr_l = data[i]['high'], data[i]['low']
                 
-                # Check if the config file exists
-                if not os.path.exists(config_json_path):
-                    continue
-
-                paths = get_analysis_paths(base_folder, broker_name, sym, tf, "new_old", bars, filename)
+                l_h = [d['high'] for d in data[i - neighbor_left:i]]
+                l_l = [d['low'] for d in data[i - neighbor_left:i]]
+                r_h = [d['high'] for d in data[i + 1:i + 1 + neighbor_right]]
+                r_l = [d['low'] for d in data[i + 1:i + 1 + neighbor_right]]
                 
-                # We still need the chart and source_json (candle prices) to process logic
-                if not os.path.exists(paths.get("source_json")) or not os.path.exists(paths.get("source_chart")):
+                is_hh = curr_h > max(l_h) and curr_h > max(r_h)
+                is_ll = curr_l < min(l_l) and curr_l < min(r_l)
+                
+                if not (is_hh or is_ll):
                     continue
+                
+                swing_count_in_chart += 1
+                is_bull = is_ll
+                
+                if is_bull:
+                    swing_lows_in_chart += 1
+                    symbol_swings_low += 1
+                else:
+                    swing_highs_in_chart += 1
+                    symbol_swings_high += 1
+                    
+                active_color = ll_col if is_bull else hh_col
+                custom_text = ll_text if is_bull else hh_text
+                obj_type = ll_obj if is_bull else hh_obj
+                dbl_arrow = ll_dbl if is_bull else hh_dbl
+                position = ll_pos if is_bull else hh_pos
 
+                # Assuming label_objects_and_text function exists
+                label_objects_and_text(
+                    img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
+                    fvg_swing_type=data[i]['candle_number'],
+                    custom_text=custom_text,
+                    object_type=obj_type,
+                    is_bullish_arrow=is_bull,
+                    is_marked=True,
+                    double_arrow=dbl_arrow,
+                    arrow_color=active_color,
+                    label_position=position
+                )
+
+                m_idx = i + neighbor_right
+                contour_maker_entry = None
+                if m_idx < n:
+                    cm_obj = ll_cm_obj if is_bull else hh_cm_obj
+                    cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
+                    
+                    label_objects_and_text(
+                        img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
+                        custom_text=cm_text,
+                        object_type=cm_obj,
+                        is_bullish_arrow=is_bull,
+                        is_marked=True,
+                        double_arrow=cm_dbl,
+                        arrow_color=active_color,
+                        label_position=position
+                    )
+
+                    data[m_idx]["is_contour_maker"] = True
+                    contour_maker_entry = data[m_idx].copy()
+                    contour_maker_entry.update({
+                        "draw_x": data[m_idx]["candle_x"], "draw_y": data[m_idx]["candle_y"],
+                        "draw_w": data[m_idx]["candle_width"], "draw_h": data[m_idx]["candle_height"],
+                        "draw_left": data[m_idx]["candle_left"], "draw_right": data[m_idx]["candle_right"],
+                        "draw_top": data[m_idx]["candle_top"], "draw_bottom": data[m_idx]["candle_bottom"],
+                        "is_contour_maker": True
+                    })
+
+                data[i].update({
+                    "swing_type": "swing_low" if is_bull else "swing_high",
+                    "is_swing": True,
+                    "active_color": active_color,
+                    "draw_x": data[i]["candle_x"], "draw_y": data[i]["candle_y"],
+                    "draw_w": data[i]["candle_width"], "draw_h": data[i]["candle_height"],
+                    "draw_left": data[i]["candle_left"], "draw_right": data[i]["candle_right"],
+                    "draw_top": data[i]["candle_top"], "draw_bottom": data[i]["candle_bottom"],
+                    "contour_maker": contour_maker_entry,
+                    "m_idx": m_idx if m_idx < n else None
+                })
+
+            # Finalize outputs for this specific TF
+            os.makedirs(paths["output_dir"], exist_ok=True)
+            cv2.imwrite(paths["output_chart"], img)
+
+            config_json = {}
+            if os.path.exists(config_path):
                 try:
-                    # 1. Load Price Data (for calculations)
-                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
-                        full_data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
-                    
-                    # 2. Load the developer config.json (The actual Target)
-                    with open(config_json_path, 'r', encoding='utf-8') as f:
-                        local_config = json.load(f)
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_json = json.load(f)
+                except:
+                    config_json = {}
+            
+            config_json[config_key] = data
+            config_json[f"{config_key}_candle_list"] = data 
 
-                    # Get the list data (e.g., local_config["value"])
-                    input_structures = local_config.get(source_config_name, [])
-                    if not input_structures:
-                        continue
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config_json, f, indent=4)
+            
+            symbol_timeframes.append(tf)
 
-                    # 3. Setup CV2 Images
-                    clean_img  = cv2.imread(paths["source_chart"])
-                    marked_img = cv2.imread(paths["output_chart"]) if os.path.exists(paths["output_chart"]) else clean_img.copy()
-                    if clean_img is None: continue
-
-                    hsv = cv2.cvtColor(clean_img, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, (35,50,50), (85,255,255)) | cv2.inRange(hsv, (0,50,50),(10,255,255))
-                    raw_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    contours = sorted(raw_contours, key=lambda c: cv2.boundingRect(c)[0])
-                    n_candles = len(full_data)
-
-                    final_flat_list = []
-                    for structure in input_structures:
-                        # Extract the base Marker
-                        marker_candle = {k: v for k, v in structure.items() if k not in ["contour_maker", "directional_bias"]}
-                        final_flat_list.append(marker_candle)
-
-                        reference_idx = None
-                        reference_high = None
-                        reference_low = None
-                        active_color = tuple(structure.get("active_color", [0,255,0]))
-
-                        # Process Contour Maker
-                        if (is_hlll or is_llhl) and target_type == "contourmaker":
-                            cm_data = structure.get("contour_maker")
-                            if cm_data:
-                                cm_only = {k: v for k, v in cm_data.items() if k != "contour_maker_liquidity_candle"}
-                                cm_only["is_contour_maker"] = True
-                                final_flat_list.append(cm_only)
-                                reference_idx = structure.get("m_idx")
-                                reference_high, reference_low = cm_data["high"], cm_data["low"]
-
-                        if reference_idx is None or reference_idx >= n_candles:
-                            continue
-
-                        # Process Level 1 Directional Bias
-                        first_db_info = None
-                        for k in range(reference_idx + 1, n_candles):
-                            candle = full_data[k]
-                            if candle['high'] < reference_low:
-                                first_db_info = {**candle, "idx": k, "type": "downward", "level": 1, "is_directional_bias": True}
-                                break
-                            if candle['low'] > reference_high:
-                                first_db_info = {**candle, "idx": k, "type": "upward", "level": 1, "is_directional_bias": True}
-                                break
-
-                        if first_db_info:
-                            db_idx = first_db_info["idx"]
-                            base_type = get_base_type(first_db_info["type"])
-                            first_db_info["base_type"] = base_type
-                            final_flat_list.append(first_db_info)
-
-                            # Process Contour Maker Liquidity Sweep
-                            for l_idx in range(db_idx + 1, n_candles):
-                                l_candle = full_data[l_idx]
-                                if (base_type == "support" and l_candle['low'] < reference_low) or \
-                                   (base_type == "resistance" and l_candle['high'] > reference_high):
-                                    liq_obj = {**l_candle, "idx": l_idx, "is_contour_maker_liquidity": True}
-                                    final_flat_list.append(liq_obj)
-                                    total_liq_marked += 1
-                                    break
-
-                            # Visual Marking
-                            x, y, w, h = cv2.boundingRect(contours[db_idx])
-                            is_up = first_db_info["type"] == "upward"
-                            label_objects_and_text(
-                                img=marked_img, cx=x + w // 2, y_rect=y, h_rect=h,
-                                custom_text=db_text, object_type=up_obj if is_up else dn_obj,
-                                is_bullish_arrow=is_up, is_marked=True,
-                                double_arrow=up_dbl if is_up else dn_dbl,
-                                arrow_color=active_color, label_position=up_pos if is_up else dn_pos
-                            )
-                            total_db_marked += 1
-
-                            # Process Level 2 Bias (Self Apprehend)
-                            if has_self_apprehend and db_idx + 1 < n_candles:
-                                s_ref_h, s_ref_l = first_db_info["high"], first_db_info["low"]
-                                second_db_info = None
-                                for m in range(db_idx + 1, n_candles):
-                                    c2 = full_data[m]
-                                    if c2['high'] < s_ref_l:
-                                        second_db_info = {**c2, "idx": m, "type": "downward", "level": 2, "is_next_bias_candle": True}
-                                        break
-                                    if c2['low'] > s_ref_h:
-                                        second_db_info = {**c2, "idx": m, "type": "upward", "level": 2, "is_next_bias_candle": True}
-                                        break
-                                
-                                if second_db_info:
-                                    s_idx = second_db_info["idx"]
-                                    next_base_type = get_base_type(second_db_info["type"])
-                                    final_flat_list.append(second_db_info)
-
-                                    for dl_idx in range(s_idx + 1, n_candles):
-                                        dl_candle = full_data[dl_idx]
-                                        if (next_base_type == "support" and dl_candle['low'] < s_ref_l) or \
-                                           (next_base_type == "resistance" and dl_candle['high'] > s_ref_h):
-                                            final_flat_list.append({**dl_candle, "idx": dl_idx, "directional_bias_liquidity_candle": True})
-                                            total_liq_marked += 1
-                                            break
-
-                                    sx, sy, sw, sh = cv2.boundingRect(contours[s_idx])
-                                    s_is_up = second_db_info["type"] == "upward"
-                                    label_objects_and_text(
-                                        img=marked_img, cx=sx + sw // 2, y_rect=sy, h_rect=sh,
-                                        custom_text=self_db_text, object_type=self_up_obj if s_is_up else self_dn_obj,
-                                        is_bullish_arrow=s_is_up, is_marked=True,
-                                        double_arrow=self_up_dbl if s_is_up else self_dn_dbl,
-                                        arrow_color=active_color, label_position=self_up_pos if s_is_up else self_dn_pos
-                                    )
-                                    total_db_marked += 1
-
-                    # Save visual chart
-                    cv2.imwrite(paths["output_chart"], marked_img)
-                    
-                    # Update ONLY the specific key in local_config
-                    local_config[source_config_name] = final_flat_list
-                    # Optional: keep price data for other functions to use
-                    local_config[f"{source_config_name}_candle_list"] = full_data
-                    
-                    with open(config_json_path, 'w', encoding='utf-8') as f:
-                        json.dump(local_config, f, indent=4)
-                    
-                    log(f"Successfully finalized {sym} {tf}")
-
-                except Exception as e:
-                    log(f"Error processing {sym}/{tf}: {e}", "ERROR")
-
-    return f"Directional Bias Done. DB Markers: {total_db_marked}, Liq Sweeps: {total_liq_marked}"
+        except Exception as e:
+            log(f"[ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
+    
+    return (symbol_swings_high, symbol_swings_low, symbol_timeframes, sym)
 
 def fair_value_gaps(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -1526,7 +1120,7 @@ def fair_value_gaps(broker_name):
 
     return f"Done (all FVG configs). Total FVGs: {total_marked_all} | Total Charts: {processed_charts_all}"
 
-def fvg_higherhighsandlowerlows(broker_name):
+def fvg_swing_points(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
     
     def log(msg, level="INFO"):
@@ -1651,7 +1245,7 @@ def fvg_higherhighsandlowerlows(broker_name):
 
                     swing_entry = {
                         "candle_number": data[i].get('candle_number'),
-                        "swing_type": "higher_low" if is_bullish_swing else "higher_high",
+                        "swing_type": "higher_low" if is_bullish_swing else "swing_high",
                         "high": curr_h,
                         "low": curr_l
                     }
@@ -1672,7 +1266,7 @@ def fvg_higherhighsandlowerlows(broker_name):
                         if s["swing_type"] == "higher_low" and s["low"] > ref_price:
                             new_flag = "support"
                             break
-                        elif s["swing_type"] == "higher_high" and s["high"] < ref_price:
+                        elif s["swing_type"] == "swing_high" and s["high"] < ref_price:
                             new_flag = "resistance"
                             break
                     
@@ -1862,7 +1456,7 @@ def liquidity_candles(broker_name):
                         entry = config_data[file_key]
 
                         # ────────────────────────────────────────────────
-                        # NEW: Only accept direct list of candles
+                        # Only accept direct list of candles
                         # ────────────────────────────────────────────────
                         if not isinstance(entry, list):
                             log(f"Skipping {file_key} — value is not a list (expected direct array of candles)", "WARN")
@@ -1935,15 +1529,48 @@ def liquidity_candles(broker_name):
                                     obj, dbl = markers[m_key]
                                     app_obj, app_dbl = markers[a_key]
                                     txt = markers.get(f"{m_key}_txt", "")
-
-                                    sweeper_c.update({
-                                        "is_liquidity_sweep": True, 
-                                        "liquidity_price": ref_price
-                                    })
-                                    base_c.update({
-                                        "swept_by_liquidity": True, 
-                                        "swept_by_candle_number": sweeper_c.get("candle_number")
-                                    })
+                                    
+                                    # ===== FIXED: Preserve ALL existing fields when marking =====
+                                    
+                                    # Mark the SWEEPER candle - PRESERVE existing fields
+                                    # Don't use update() which overwrites everything
+                                    # Instead, set individual fields while keeping others
+                                    sweeper_c["is_liquidity_sweep"] = True
+                                    sweeper_c["liquidity_price"] = ref_price
+                                    
+                                    # Also track WHICH victim this sweeper swept
+                                    # Use a list to track multiple victims if this candle sweeps multiple
+                                    if "swept_victims" not in sweeper_c:
+                                        sweeper_c["swept_victims"] = []
+                                    if base_c.get("candle_number") not in sweeper_c["swept_victims"]:
+                                        sweeper_c["swept_victims"].append(base_c.get("candle_number"))
+                                    
+                                    # Keep the single victim number for backward compatibility
+                                    # But only set it if this is the first victim or we want to track the latest
+                                    if "swept_victim_number" not in sweeper_c:
+                                        sweeper_c["swept_victim_number"] = base_c.get("candle_number")
+                                    
+                                    # Mark the VICTIM candle - PRESERVE existing fields
+                                    base_c["swept_by_liquidity"] = True
+                                    base_c["swept_by_candle_number"] = sweeper_c.get("candle_number")
+                                    
+                                    # Also track ALL sweepers that hit this victim (if multiple)
+                                    if "swept_by_candles" not in base_c:
+                                        base_c["swept_by_candles"] = []
+                                    if sweeper_c.get("candle_number") not in base_c["swept_by_candles"]:
+                                        base_c["swept_by_candles"].append(sweeper_c.get("candle_number"))
+                                    
+                                    # If this victim is ALSO a sweeper (has is_liquidity_sweep already), preserve that
+                                    # We don't touch any existing fields, so is_liquidity_sweep remains if it was there
+                                    
+                                    # Optional: Add a flag to indicate this candle plays both roles
+                                    if base_c.get("is_liquidity_sweep") is True:
+                                        base_c["is_both_sweeper_and_victim"] = True
+                                    
+                                    if sweeper_c.get("swept_by_liquidity") is True:
+                                        sweeper_c["is_both_sweeper_and_victim"] = True
+                                    
+                                    # ===== END FIX =====
 
                                     if img is not None:
                                         label_objects_and_text(img, 
@@ -2314,6 +1941,182 @@ def entry_point_of_interest(broker_name):
                 json.dump(updated_paused_records, f, indent=4)
             log(f"Removed {len(paused_records) - len(updated_paused_records)} symbols from paused list due to price violations")
 
+    def swing_points_liquidity(target_data_tf, new_key, original_candles, identify_config):
+        """
+        Identifies liquidity sweepers directly from original candles.
+        For Lower Low: finds first candle with low lower than the definition's low
+        For Higher High: finds first candle with high higher than the definition's high
+        Marks both victims and sweepers directly on the original candle records.
+        
+        Victim gets marked with:
+            - swept_by_liquidity: true
+            - swept_by_candle_number: [sweeper candle number]
+            - swept_by_candles: [list of sweeper candle numbers]
+        
+        Sweeper gets marked with:
+            - is_liquidity_sweep: true
+            - swept_victims: [list of victim candle numbers]
+            - swept_victim_number: [first/primary victim]
+        """
+        if not identify_config or not isinstance(target_data_tf, dict) or not original_candles:
+            return
+        
+        # First, identify all definition/victim candles (swing_lows and swing_highs)
+        victims = []  # List of (candle_number, swing_type, target_price)
+        
+        for candle in original_candles:
+            if not isinstance(candle, dict):
+                continue
+                
+            swing_type = candle.get("swing_type", "").lower()
+            candle_num = candle.get("candle_number")
+            
+            if not swing_type or candle_num is None:
+                continue
+            
+            # Only consider swing_low and swing_high as potential victims
+            if swing_type == "swing_low":
+                target_price = candle.get("low")
+                if target_price is not None:
+                    victims.append((candle_num, swing_type, target_price))
+                    #log(f"    📍 Found victim candidate: Candle {candle_num} | Type: swing_low | Price: {target_price:.5f}")
+                    
+            elif swing_type == "swing_high":
+                target_price = candle.get("high")
+                if target_price is not None:
+                    victims.append((candle_num, swing_type, target_price))
+                    #log(f"    📍 Found victim candidate: Candle {candle_num} | Type: swing_high | Price: {target_price:.5f}")
+        
+        
+        #log(f"  🔍 LIQUIDITY SWEEP: Found {len(victims)} victim candles to check for sweepers")
+        
+        # Track relationships
+        sweeper_to_victims = {}  # sweeper_num -> list of victim_nums
+        victim_to_sweepers = {}  # victim_num -> list of sweeper_nums
+        
+        # For each victim, find its sweeper
+        for victim_num, swing_type, target_price in victims:
+            
+            # Find the FIRST candle after the victim that sweeps it
+            sweeper_num = None
+            
+            for candle in original_candles:
+                if not isinstance(candle, dict):
+                    continue
+                    
+                candle_num = candle.get("candle_number")
+                if candle_num is None or candle_num <= victim_num:
+                    continue
+                
+                if swing_type == "swing_low":
+                    candle_price = candle.get("low")
+                    if candle_price is not None and candle_price < target_price:
+                        sweeper_num = candle_num
+                        #log(f"      ✅ Sweeper found: Candle {candle_num} low ({candle_price:.5f}) < victim low ({target_price:.5f})")
+                        break
+                        
+                elif swing_type == "swing_high":
+                    candle_price = candle.get("high")
+                    if candle_price is not None and candle_price > target_price:
+                        sweeper_num = candle_num
+                        #log(f"      ✅ Sweeper found: Candle {candle_num} high ({candle_price:.5f}) > victim high ({target_price:.5f})")
+                        break
+            
+            if sweeper_num:
+                # Record relationship
+                if sweeper_num not in sweeper_to_victims:
+                    sweeper_to_victims[sweeper_num] = []
+                if victim_num not in sweeper_to_victims[sweeper_num]:
+                    sweeper_to_victims[sweeper_num].append(victim_num)
+                
+                if victim_num not in victim_to_sweepers:
+                    victim_to_sweepers[victim_num] = []
+                if sweeper_num not in victim_to_sweepers[victim_num]:
+                    victim_to_sweepers[victim_num].append(sweeper_num)
+                
+                #log(f"      📝 Relationship: Victim {victim_num} <- Sweeper {sweeper_num}")
+        
+        # Mark the original candles
+        victims_marked = 0
+        sweepers_marked = 0
+        
+        # Mark victims
+        for victim_num, sweeper_list in victim_to_sweepers.items():
+            for candle in original_candles:
+                if isinstance(candle, dict) and candle.get("candle_number") == victim_num:
+                    candle["swept_by_liquidity"] = True
+                    candle["swept_by_candle_number"] = sweeper_list[0]
+                    candle["swept_by_candles"] = sweeper_list
+                    victims_marked += 1
+                    #log(f"    🎯 Marked victim candle {victim_num} swept by: {sweeper_list}")
+                    break
+        
+        # Mark sweepers
+        for sweeper_num, victim_list in sweeper_to_victims.items():
+            for candle in original_candles:
+                if isinstance(candle, dict) and candle.get("candle_number") == sweeper_num:
+                    candle["is_liquidity_sweep"] = True
+                    candle["swept_victims"] = victim_list
+                    candle["swept_victim_number"] = victim_list[0]
+                    sweepers_marked += 1
+                    #log(f"    💧 Marked sweeper candle {sweeper_num} sweeping victims: {victim_list}")
+                    break
+        
+        #log(f"  ✅ LIQUIDITY SWEEP: Found {len(sweeper_to_victims)} sweepers, marked {victims_marked} victims and {sweepers_marked} sweepers for {new_key}")
+    
+    def sanitize_pattern_definitions(patterns_dict):
+        """
+        Sanitizes each pattern in the dictionary.
+        Ensures that the N-th candle in a pattern family only contains 'define_N' metadata.
+        """
+        if not patterns_dict:
+            return {}
+
+        sanitized_patterns = {}
+
+        for p_name, family in patterns_dict.items():
+            new_family = []
+            
+            # The family is ordered [define_1, define_2, ..., define_max]
+            for idx, candle in enumerate(family):
+                if not isinstance(candle, dict):
+                    new_family.append(candle)
+                    continue
+                
+                # Create a shallow copy to avoid modifying the original list in-place
+                clean_candle = candle.copy()
+                current_rank = idx + 1  # 1-based indexing for define_n
+                
+                # Identify keys to keep:
+                # 1. Standard OHLCV and technical data
+                # 2. 'define_N' keys specific to this candle's position in the pattern
+                keys_to_delete = []
+                
+                for key in clean_candle.keys():
+                    # If the key is a 'define_X' key
+                    if key.startswith("define_"):
+                        # Extract the number from 'define_N...'
+                        try:
+                            parts = key.split('_')
+                            def_num = int(parts[1])
+                            
+                            # Logic: If this is the 2nd candle in the list, 
+                            # it should ONLY have define_2 related keys.
+                            if def_num != current_rank:
+                                keys_to_delete.append(key)
+                        except (ValueError, IndexError):
+                            continue
+                
+                # Remove the non-relevant define keys
+                for k in keys_to_delete:
+                    del clean_candle[k]
+                    
+                new_family.append(clean_candle)
+                
+            sanitized_patterns[p_name] = new_family
+            
+        return sanitized_patterns
+   
     def identify_definitions(candle_data, identify_config, source_def_name, raw_filename_base):
         if not identify_config:
             return candle_data
@@ -2335,7 +2138,7 @@ def entry_point_of_interest(broker_name):
         def get_target_swing(current_type, logic_type):
             logic_type = logic_type.lower()
             if "opposite" in logic_type:
-                return "lower_low" if current_type == "higher_high" else "higher_high"
+                return "swing_low" if current_type == "swing_high" else "swing_high"
             if "identical" in logic_type:
                 return current_type
             return None
@@ -2349,7 +2152,7 @@ def entry_point_of_interest(broker_name):
                     continue
                     
                 s_type = anchor_candle.get("swing_type", "").lower()
-                if s_type not in ["higher_high", "lower_low"]:
+                if s_type not in ["swing_high", "swing_low"]:
                     continue
 
                 # Step 1: Initialize the chain with define_1
@@ -2469,15 +2272,15 @@ def entry_point_of_interest(broker_name):
                     # Helper function for the core price logic
                     def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
                         if mode == "behind":
-                            if c_type == "higher_high" and r_type == "higher_high": return c_h < r_h
-                            if c_type == "lower_low" and r_type == "lower_low": return c_l > r_l
-                            if c_type == "higher_high" and r_type == "lower_low": return c_l > r_h
-                            if c_type == "lower_low" and r_type == "higher_high": return c_h < r_l
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
                         elif mode == "beyond":
-                            if c_type == "higher_high" and r_type == "higher_high": return c_h > r_h
-                            if c_type == "lower_low" and r_type == "lower_low": return c_l < r_l
-                            if c_type == "higher_high" and r_type == "lower_low": return c_h > r_h
-                            if c_type == "lower_low" and r_type == "higher_high": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
                         return False
 
                     # 1. Check the target candle itself
@@ -2486,33 +2289,10 @@ def entry_point_of_interest(broker_name):
                     
                     logic_met = check_logic(c_type, curr_h, curr_l, r_type, ref_h, ref_l, mode)
 
-                    # 2. Check Collective Beyond Requirement
-                    min_collective = def_cfg.get("minimum_collectivebeyondcandles")
-                    if logic_met and mode == "beyond" and isinstance(min_collective, int) and min_collective > 0:
-                        # Find index of current candle to look behind in the list
-                        try:
-                            curr_idx = candles.index(target_candle)
-                            # Check the 'n' candles before this one
-                            for i in range(1, min_collective + 1):
-                                prev_idx = curr_idx - i
-                                if prev_idx < 0:
-                                    logic_met = False # Not enough history
-                                    break
-                                
-                                prev_c = candles[prev_idx]
-                                p_h, p_l = prev_c.get("high"), prev_c.get("low")
-                                # We use the target's swing type for the collective check as they are "with" the target
-                                if not check_logic(c_type, p_h, p_l, r_type, ref_h, ref_l, mode):
-                                    logic_met = False
-                                    break
-                        except ValueError:
-                            pass
-
                     if logic_met:
                         target_candle[f"{conn_key}_met"] = True
 
         # --- SECTION 2: EXTRACTION (The "Grouping") ---
-        # (Rest of the function remains the same)
         def_nums = [int(k.split('_')[1]) for k in identify_config.keys() if k.startswith("define_")]
         max_def = max(def_nums) if def_nums else 0
         patterns_dict = {}
@@ -2552,66 +2332,431 @@ def entry_point_of_interest(broker_name):
                     pattern_idx += 1
 
         patterns_dict = sanitize_pattern_definitions(patterns_dict)
-        return candles, patterns_dict
-
-    def sanitize_pattern_definitions(patterns_dict):
-        """
-        Sanitizes each pattern in the dictionary.
-        Ensures that the N-th candle in a pattern family only contains 'define_N' metadata.
-        """
-        if not patterns_dict:
-            return {}
-
-        sanitized_patterns = {}
-
-        for p_name, family in patterns_dict.items():
-            new_family = []
+        patterns_dict = apply_optional_extreme(patterns_dict, identify_config, candles)
+        
+        # --- SECTION 3: FINAL PATTERN VALIDATION ---
+        validated_patterns = {}
+        
+        # Build lookup for original candles by candle_number for neighbor checks
+        original_candle_lookup = {}
+        for candle in candles:
+            if isinstance(candle, dict) and candle.get('candle_number') is not None:
+                original_candle_lookup[candle['candle_number']] = candle
+        
+        for pattern_key, pattern_candles in patterns_dict.items():
+            if not pattern_candles:
+                continue
+                
+            pattern_valid = True
             
-            # The family is ordered [define_1, define_2, ..., define_max]
-            for idx, candle in enumerate(family):
-                if not isinstance(candle, dict):
-                    new_family.append(candle)
-                    continue
-                
-                # Create a shallow copy to avoid modifying the original list in-place
-                clean_candle = candle.copy()
-                current_rank = idx + 1  # 1-based indexing for define_n
-                
-                # Identify keys to keep:
-                # 1. Standard OHLCV and technical data
-                # 2. 'define_N' keys specific to this candle's position in the pattern
-                keys_to_delete = []
-                
-                for key in clean_candle.keys():
-                    # If the key is a 'define_X' key
-                    if key.startswith("define_"):
-                        # Extract the number from 'define_N...'
+            # Collect definition candles
+            definition_candles = {}
+            for candle in pattern_candles:
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
                         try:
                             parts = key.split('_')
-                            def_num = int(parts[1])
-                            
-                            # Logic: If this is the 2nd candle in the list, 
-                            # it should ONLY have define_2 related keys.
-                            if def_num != current_rank:
-                                keys_to_delete.append(key)
+                            if len(parts) >= 2 and parts[1].isdigit():
+                                def_num = int(parts[1])
+                                if def_num not in definition_candles:
+                                    definition_candles[def_num] = candle
                         except (ValueError, IndexError):
                             continue
-                
-                # Remove the non-relevant define keys
-                for k in keys_to_delete:
-                    del clean_candle[k]
-                    
-                new_family.append(clean_candle)
-                
-            sanitized_patterns[p_name] = new_family
             
-        return sanitized_patterns
+            sorted_def_nums = sorted(definition_candles.keys())
+            
+            # Check each definition's conditions
+            for def_num in sorted_def_nums:
+                if def_num == 1:
+                    continue
+                    
+                def_cfg = identify_config.get(f"define_{def_num}", {})
+                condition_cfg = def_cfg.get("condition", "").lower()
+                min_collective = def_cfg.get("minimum_collectivebeyondcandles")
+                
+                if not condition_cfg:
+                    continue
+                
+                # Parse condition
+                mode = "behind" if "behind" in condition_cfg else "beyond"
+                target_match = re.search(r'define_(\d+)', condition_cfg)
+                if not target_match:
+                    continue
+                    
+                ref_def_num = int(target_match.group(1))
+                
+                current_candle = definition_candles.get(def_num)
+                ref_candle = definition_candles.get(ref_def_num)
+                
+                if not current_candle or not ref_candle:
+                    pattern_valid = False
+                    continue
+                
+                # Get prices and types
+                curr_h, curr_l = current_candle.get("high"), current_candle.get("low")
+                curr_type = current_candle.get("swing_type", "").lower()
+                
+                ref_h, ref_l = ref_candle.get("high"), ref_candle.get("low")
+                ref_type = ref_candle.get("swing_type", "").lower()
+                
+                # Check if we need to validate collective beyond candles
+                if min_collective and mode == "beyond" and min_collective >= 1:
+                    # Get the current candle's number to find neighbors in original candles
+                    current_candle_num = current_candle.get('candle_number')
+                    
+                    if current_candle_num is not None:
+                        # Calculate left and right distribution
+                        # Give most search to left, least to right
+                        left_count = min_collective // 2 + (min_collective % 2)  # Ceiling division for left
+                        right_count = min_collective // 2  # Floor division for right
+                        
+                        # Collect neighbor candles from the original candles list
+                        neighbor_candles = []
+                        neighbor_candle_numbers = []
+                        
+                        # Get left neighbors
+                        for offset in range(1, left_count + 1):
+                            neighbor_num = current_candle_num - offset
+                            neighbor = original_candle_lookup.get(neighbor_num)
+                            if neighbor:
+                                neighbor_candles.append(neighbor)
+                                neighbor_candle_numbers.append(neighbor_num)
+                        
+                        # Get right neighbors
+                        for offset in range(1, right_count + 1):
+                            neighbor_num = current_candle_num + offset
+                            neighbor = original_candle_lookup.get(neighbor_num)
+                            if neighbor:
+                                neighbor_candles.append(neighbor)
+                                neighbor_candle_numbers.append(neighbor_num)
+                        
+                        # Check each neighbor individually
+                        all_neighbors_valid = True
+                        
+                        for neighbor in neighbor_candles:
+                            # Get neighbor's price (high or low based on current candle's swing type)
+                            if "high" in curr_type:
+                                neighbor_price = neighbor.get("high")
+                            else:
+                                neighbor_price = neighbor.get("low")
+                            
+                            if neighbor_price is None:
+                                all_neighbors_valid = False
+                                break
+                            
+                            # Check if this neighbor is beyond the reference
+                            # Use the same swing type as the current candle for the neighbor
+                            neighbor_valid = False
+                            
+                            if mode == "beyond":
+                                if "high" in curr_type:
+                                    # For swing high: check if neighbor high > ref high
+                                    if "high" in ref_type:
+                                        neighbor_valid = neighbor_price > ref_h
+                                    elif "low" in ref_type:
+                                        neighbor_valid = neighbor_price > ref_h
+                                elif "low" in curr_type:
+                                    # For swing low: check if neighbor low < ref low
+                                    if "low" in ref_type:
+                                        neighbor_valid = neighbor_price < ref_l
+                                    elif "high" in ref_type:
+                                        neighbor_valid = neighbor_price < ref_l
+                            
+                            if not neighbor_valid:
+                                all_neighbors_valid = False
+                                break
+                        
+                        # If neighbors check fails, pattern is invalid
+                        if not all_neighbors_valid:
+                            pattern_valid = False
+                            continue
+                        
+                        # Also check the current candle itself
+                        def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                            if mode == "behind":
+                                if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                                if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                                if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                                if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
+                            elif mode == "beyond":
+                                if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                                if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                                if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                                if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
+                            return False
+                        
+                        logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
+                        
+                        if not logic_met:
+                            pattern_valid = False
+                    else:
+                        pattern_valid = False
+                else:
+                    # Standard validation without collective candles
+                    def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                        if mode == "behind":
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
+                        elif mode == "beyond":
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
+                        return False
+                    
+                    logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
+                    
+                    if not logic_met:
+                        pattern_valid = False
+            
+            if pattern_valid:
+                validated_patterns[pattern_key] = pattern_candles
+        
+        patterns_dict = validated_patterns
+        return candles, patterns_dict
 
+    def apply_optional_extreme(patterns_dict, identify_config, all_candles):
+        """
+        For definitions with find_optional_extreme=True, find more extreme candles
+        between current definition and next definition (or to the end if no next definition)
+        Using the ORIGINAL full candle data (all_candles) to search for extreme candles,
+        not just the limited pattern data.
+        """
+        if not patterns_dict or not identify_config:
+            return patterns_dict
+        
+        # Find which definitions have optional extreme enabled
+        extreme_defs = {}
+        for def_key, def_config in identify_config.items():
+            if def_config.get("find_optional_extreme") is True:
+                # Extract definition number (e.g., "define_3" -> 3)
+                def_num = int(def_key.split('_')[1])
+                extreme_defs[def_num] = def_config
+        
+        if not extreme_defs:
+            return patterns_dict
+        
+        
+        # Build a quick lookup dictionary for all candles by candle_number
+        candle_lookup = {candle.get('candle_number'): candle for candle in all_candles if isinstance(candle, dict) and candle.get('candle_number')}
+        
+        # Process each pattern
+        for pattern_key, pattern_candles in patterns_dict.items():
+            if not pattern_candles:
+                continue
+            
+            
+            # First, collect ALL definition candles from the pattern
+            all_definition_candles = {}  # def_num -> {'candle': candle, 'index': index, 'candle_number': num}
+            
+            for i, candle in enumerate(pattern_candles):
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        try:
+                            parts = key.split('_')
+                            if len(parts) >= 2 and parts[1].isdigit():
+                                def_num = int(parts[1])
+                                if def_num not in all_definition_candles:
+                                    all_definition_candles[def_num] = {
+                                        'candle': candle,
+                                        'index': i,
+                                        'candle_number': candle.get('candle_number')
+                                    }
+                        except (ValueError, IndexError):
+                            continue
+            
+            if not all_definition_candles:
+                print("  No definition candles found in pattern")
+                continue
+            
+            # Filter to only definitions that have extreme enabled
+            definition_candles = {}
+            for def_num in extreme_defs.keys():
+                if def_num in all_definition_candles:
+                    definition_candles[def_num] = all_definition_candles[def_num]
+            
+            if not definition_candles:
+                continue
+            
+            # Sort definition numbers to process in order
+            sorted_def_nums = sorted(definition_candles.keys())
+            
+            # For each definition that needs extreme substitution
+            for def_num in sorted_def_nums:
+                def_config = extreme_defs[def_num]
+                def_info = definition_candles[def_num]
+                def_candle = def_info['candle']
+                def_candle_index = def_info['index']
+                def_candle_number = def_info['candle_number']
+                
+                # Find the next definition that exists in this pattern (ANY definition)
+                next_def_num = None
+                next_def_candle_number = None
+                next_def_index = None
+                
+                all_sorted_nums = sorted(all_definition_candles.keys())
+                for higher_def in all_sorted_nums:
+                    if higher_def > def_num:
+                        next_def_num = higher_def
+                        next_def_candle_number = all_definition_candles[higher_def]['candle_number']
+                        next_def_index = all_definition_candles[higher_def]['index']
+                        break
+                
+                # Determine search range using candle numbers in the ORIGINAL data
+                start_candle_number = def_candle_number + 1
+                end_candle_number = next_def_candle_number - 1 if next_def_candle_number else float('inf')
+                
+                
+                # Get current candle's swing type and price
+                swing_type = def_candle.get("swing_type", "").lower()
+                is_swing_high = "high" in swing_type
+                is_swing_low = "low" in swing_type
+                
+                if not is_swing_high and not is_swing_low:
+                    continue
+                
+                current_price = def_candle.get("high") if is_swing_high else def_candle.get("low")
+                
+                # Find the most extreme candle in the ORIGINAL candle data
+                extreme_candidate = None
+                extreme_price = current_price
+                extreme_candle_number = None
+                
+                # Get all candles in range from the lookup
+                max_candle_num = max(candle_lookup.keys()) if candle_lookup else 0
+                for candle_num in range(start_candle_number, int(end_candle_number) + 1 if next_def_candle_number else max_candle_num + 1):
+                    candle = candle_lookup.get(candle_num)
+                    if not candle:
+                        continue
+                    
+                    # Only consider candles of the same swing type
+                    candle_swing_type = candle.get("swing_type", "").lower()
+                    
+                    if is_swing_high and "high" in candle_swing_type:
+                        # Look for higher high
+                        candle_high = candle.get("high")
+                        if candle_high and candle_high > extreme_price:
+                            extreme_price = candle_high
+                            extreme_candidate = candle
+                            extreme_candle_number = candle_num
+                    
+                    elif is_swing_low and "low" in candle_swing_type:
+                        # Look for lower low
+                        candle_low = candle.get("low")
+                        if candle_low and candle_low < extreme_price:
+                            extreme_price = candle_low
+                            extreme_candidate = candle
+                            extreme_candle_number = candle_num
+                
+                # If we found a more extreme candle
+                if extreme_candidate is not None:
+                    
+                    # NOW we need to find or create this candle in the pattern
+                    # Check if extreme candle already exists in pattern
+                    extreme_in_pattern_idx = None
+                    for i, c in enumerate(pattern_candles):
+                        if c.get('candle_number') == extreme_candle_number:
+                            extreme_in_pattern_idx = i
+                            extreme_candidate = c  # Use the pattern's version
+                            break
+                    
+                    # Define the base fields that should be kept in the candle
+                    base_candle_fields = [
+                        "open", "high", "low", "close", "volume", "spread", 
+                        "real_volume", "symbol", "time", "candle_number", "timeframe",
+                        "candle_x", "candle_y", "candle_width", "candle_height",
+                        "candle_left", "candle_right", "candle_top", "candle_bottom",
+                        "swing_type", "is_swing", "active_color", "draw_x", "draw_y",
+                        "draw_w", "draw_h", "draw_left", "draw_right", "draw_top", 
+                        "draw_bottom", "m_idx"
+                    ]
+                    
+                    # Also keep swept_by related fields if they exist
+                    swept_fields = ["swept_by_liquidity", "swept_by_candle_number", "swept_by_candles"]
+                    
+                    if extreme_in_pattern_idx is None:
+                        # Extreme candle not in pattern yet - we need to add it
+                        # First, determine where to insert it (between def_candle and next_def)
+                        insert_idx = def_candle_index + 1
+                        
+                        # Create a clean candle with only the base fields
+                        import copy
+                        new_candle = {}
+                        
+                        # Copy only the base fields from the extreme candidate
+                        for field in base_candle_fields + swept_fields:
+                            if field in extreme_candidate:
+                                new_candle[field] = extreme_candidate[field]
+                        
+                        # Insert it into the pattern
+                        pattern_candles.insert(insert_idx, new_candle)
+                        extreme_candidate = new_candle
+                        extreme_in_pattern_idx = insert_idx
+                        
+                        # Update indices in all_definition_candles for definitions after insertion point
+                        for other_def_num, other_info in all_definition_candles.items():
+                            if other_info['index'] >= insert_idx:
+                                other_info['index'] += 1
+                        
+                        # Also update next_def_index if it exists
+                        if next_def_index is not None and next_def_index >= insert_idx:
+                            next_def_index += 1
+                    else:
+                        # Extreme candle already exists in pattern
+                        # Clean the existing candle to remove any extra flags
+                        cleaned_candle = {}
+                        for field in base_candle_fields + swept_fields:
+                            if field in extreme_candidate:
+                                cleaned_candle[field] = extreme_candidate[field]
+                        
+                        # Replace the candle in the pattern with the cleaned version
+                        pattern_candles[extreme_in_pattern_idx] = cleaned_candle
+                        extreme_candidate = cleaned_candle
+                    
+                    # Collect all define_{def_num} related flags from the original candle
+                    keys_to_transfer = []
+                    for key in list(def_candle.keys()):
+                        if key.startswith(f"define_{def_num}"):
+                            keys_to_transfer.append(key)
+                    
+                    # Also collect other important keys that should be transferred
+                    additional_keys = ["pattern_entry", "from", "after", "drawn_and_stopped_on_hitler210"]
+                    for key in additional_keys:
+                        if key in def_candle:
+                            keys_to_transfer.append(key)
+                    
+                    # Remove these keys from original candle
+                    for key in keys_to_transfer:
+                        if key in def_candle:
+                            del def_candle[key]
+                    
+                    # Add them to extreme candle
+                    for key in keys_to_transfer:
+                        extreme_candidate[key] = def_candle.get(key, True)
+                    
+                    # Mark that substitution happened (this is the only extra flag we add)
+                    extreme_candidate[f"define_{def_num}_extreme_substituted"] = True
+                    extreme_candidate[f"define_{def_num}_extreme_from_candle"] = def_candle_number
+                    
+                    # Update the definition_candles dictionary with the new location
+                    definition_candles[def_num] = {
+                        'candle': extreme_candidate,
+                        'index': extreme_in_pattern_idx,
+                        'candle_number': extreme_candle_number
+                    }
+                    
+                    # Also update all_definition_candles
+                    all_definition_candles[def_num] = definition_candles[def_num]
+                    
+        
+        return patterns_dict
+    
     def add_liquidity_sweepers_to_patterns(target_data_tf, new_key, original_candles):
         """
         Adds sweeper candle details to victim candles in patterns.
-        For each candle marked with 'swept_by_liquidity': True, find the sweeper candle
-        (by swept_by_candle_number) from original_candles and append its details.
+        Ensures victim candles have proper sweeper information and adds sweepers to the family.
         Sanitizes sweeper candles to only include essential fields.
         """
         if not isinstance(target_data_tf, dict):
@@ -2620,8 +2765,9 @@ def entry_point_of_interest(broker_name):
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
-        # Create a map of candle_number to candle for quick lookup
-        candle_map = {
+        # Create a map of candle_number to candle for quick lookup from original candles
+        # This contains the complete, marked-up candle data with sweeper information
+        original_candle_map = {
             c.get("candle_number"): c 
             for c in original_candles 
             if isinstance(c, dict) and "candle_number" in c
@@ -2636,67 +2782,220 @@ def entry_point_of_interest(broker_name):
             "swing_type", "is_swing", "active_color",
             "draw_x", "draw_y", "draw_w", "draw_h",
             "draw_left", "draw_right", "draw_top", "draw_bottom",
-            "is_liquidity_sweeper", "swept_victim_number"
+            "is_liquidity_sweep", "swept_victims", "swept_victim_number", "liquidity_price"
         }
 
         for p_name, family in patterns.items():
             if not isinstance(family, list):
                 continue
                 
-            # Track victims we've already processed to avoid duplicates
+            # Track victims we've already processed and sweepers we've added
             processed_victims = set()
+            added_sweepers = set()
             
-            # Create a new list to rebuild the family with sweepers added
+            # Create a new list to rebuild the family with updated victims and added sweepers
             new_family = []
             
+            # First pass: Process all candles, updating victims with their sweeper info
             for candle in family:
                 if not isinstance(candle, dict):
                     new_family.append(candle)
                     continue
-                    
-                # Add current candle to new family
-                new_family.append(candle)
                 
-                # Check if this candle is a victim (swept_by_liquidity = True)
-                if candle.get("swept_by_liquidity") is True:
-                    victim_num = candle.get("candle_number")
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    new_family.append(candle)
+                    continue
+                
+                # Get the original candle data which has the liquidity sweep markings
+                original_candle = original_candle_map.get(candle_num)
+                
+                if original_candle:
+                    # Create a copy to avoid modifying the original
+                    updated_candle = candle.copy()
                     
-                    # Avoid processing same victim twice
-                    if victim_num in processed_victims:
-                        continue
+                    # Update the candle with liquidity sweep information from original
+                    # This ensures victims have swept_by_liquidity, swept_by_candle_number, etc.
+                    if original_candle.get("swept_by_liquidity"):
+                        updated_candle["swept_by_liquidity"] = True
+                        updated_candle["swept_by_candle_number"] = original_candle.get("swept_by_candle_number")
+                        updated_candle["swept_by_candles"] = original_candle.get("swept_by_candles", [])
                         
-                    processed_victims.add(victim_num)
+                        # Mark as victim for processing
+                        if candle_num not in processed_victims:
+                            processed_victims.add(candle_num)
                     
-                    # Get sweeper candle number
-                    sweeper_num = candle.get("swept_by_candle_number")
-                    if sweeper_num is None:
-                        continue
-                        
-                    # Find sweeper candle in original candles
-                    sweeper_candle = candle_map.get(sweeper_num)
-                    if sweeper_candle and sweeper_candle not in new_family:
-                        # Create a sanitized copy with only allowed fields
-                        sweeper_copy = {}
-                        
-                        # Copy only allowed fields from the original sweeper
-                        full_sweeper = candle_map.get(sweeper_num)
-                        if full_sweeper:
+                    # If this candle itself is a sweeper, update its sweeper info
+                    if original_candle.get("is_liquidity_sweep"):
+                        updated_candle["is_liquidity_sweep"] = True
+                        updated_candle["swept_victims"] = original_candle.get("swept_victims", [])
+                        updated_candle["swept_victim_number"] = original_candle.get("swept_victim_number")
+                        updated_candle["liquidity_price"] = original_candle.get("liquidity_price")
+                    
+                    new_family.append(updated_candle)
+                else:
+                    # If no original data, keep as is
+                    new_family.append(candle)
+            
+            # Second pass: Add missing sweeper candles that aren't already in the family
+            for victim_num in processed_victims:
+                # Find the victim in new_family to get its sweeper info
+                victim_candle = None
+                for candle in new_family:
+                    if isinstance(candle, dict) and candle.get("candle_number") == victim_num:
+                        victim_candle = candle
+                        break
+                
+                if not victim_candle:
+                    continue
+                
+                # Get sweeper candle number(s) from victim
+                sweeper_nums = victim_candle.get("swept_by_candles", [])
+                if not sweeper_nums:
+                    # Try single sweeper number
+                    sweeper_num = victim_candle.get("swept_by_candle_number")
+                    if sweeper_num:
+                        sweeper_nums = [sweeper_num]
+                
+                for sweeper_num in sweeper_nums:
+                    # Check if sweeper is already in family
+                    sweeper_exists = False
+                    for candle in new_family:
+                        if isinstance(candle, dict) and candle.get("candle_number") == sweeper_num:
+                            sweeper_exists = True
+                            break
+                    
+                    # If sweeper not in family and not already added, add it
+                    if not sweeper_exists and sweeper_num not in added_sweepers:
+                        # Find sweeper in original candles
+                        original_sweeper = original_candle_map.get(sweeper_num)
+                        if original_sweeper:
+                            # Create sanitized sweeper copy
+                            sweeper_copy = {}
                             for field in allowed_sweeper_fields:
-                                if field in full_sweeper:
-                                    sweeper_copy[field] = full_sweeper.get(field)
-                        
-                        # Mark it as sweeper (ensure these fields are set)
-                        sweeper_copy["is_liquidity_sweeper"] = True
-                        sweeper_copy["swept_victim_number"] = victim_num
-                        
-                        # Add sweeper to family
-                        new_family.append(sweeper_copy)
+                                if field in original_sweeper:
+                                    sweeper_copy[field] = original_sweeper.get(field)
+                            
+                            # Ensure sweeper is properly marked
+                            sweeper_copy["is_liquidity_sweep"] = True
+                            sweeper_copy["swept_victim_number"] = victim_num
+                            
+                            # Add to new_family
+                            new_family.append(sweeper_copy)
+                            added_sweepers.add(sweeper_num)
             
             # Replace the old family with the new one
-            if len(new_family) > len(family):
+            if len(new_family) > len(family) or processed_victims:
                 patterns[p_name] = new_family
         
         return target_data_tf
+    
+    def liquidity_flags_to_sweepers(target_data_tf, patterns_key, identify_config):
+        """
+        Adds define_{value}_liquidity: true flags to sweeper candles based on define candles they swept.
+        
+        This function should be called BEFORE draw_definition_tools to ensure sweepers have
+        the liquidity flags properly set before drawing.
+        
+        Args:
+            target_data_tf: The timeframe data dictionary containing patterns
+            patterns_key: The key for the patterns in target_data_tf (e.g., "new_key_patterns")
+            identify_config: Configuration containing define settings
+        
+        Returns:
+            bool: True if any flags were added, False otherwise
+        """
+        if not identify_config or not target_data_tf:
+            return False
+        
+        patterns = target_data_tf.get(patterns_key, {})
+        flags_added = False
+        
+        #print(f"ADDING LIQUIDITY FLAGS TO SWEEPERS for {patterns_key}")
+        
+        for family_name, family in patterns.items():
+            if not isinstance(family, list):
+                continue
+            
+            # First, build maps of sweepers and their victims
+            sweeper_by_number = {}  # {sweeper_candle_number: sweeper_candle}
+            sweeper_for_victim = {}  # {victim_candle_number: sweeper_candle}
+            
+            # Pass 1: Identify all sweepers and map them to their victims
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # If this candle is a sweeper
+                if candle.get("is_liquidity_sweep") is True:
+                    sweeper_by_number[candle_num] = candle
+                    
+                    # Map this sweeper to all its victims
+                    swept_victims = candle.get("swept_victims", [])
+                    if swept_victims:
+                        for victim_num in swept_victims:
+                            sweeper_for_victim[victim_num] = candle
+                    
+                    # Handle single victim case
+                    single_victim = candle.get("swept_victim_number")
+                    if single_victim and single_victim not in sweeper_for_victim:
+                        sweeper_for_victim[single_victim] = candle
+            
+            # Pass 2: Find all define candles and add flags to their sweepers
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                # Check if this candle is a define (any define_n)
+                define_name = None
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        define_name = key
+                        break
+                
+                if not define_name:
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # Check account management to see if this define should be processed
+                define_settings = identify_config.get(define_name, {})
+                if define_settings:
+                    drawing_enabled = define_settings.get("enable_drawing", True)
+                    if not drawing_enabled:
+                        # Skip if drawing is disabled for this define
+                        continue
+                
+                # Find the sweeper for this define candle
+                sweeper = None
+                
+                # Priority 1: Check victim mapping
+                if candle_num in sweeper_for_victim:
+                    sweeper = sweeper_for_victim[candle_num]
+                
+                # Priority 2: Check direct swept_by_candle_number
+                if not sweeper:
+                    swept_by_num = candle.get("swept_by_candle_number")
+                    if swept_by_num and swept_by_num in sweeper_by_number:
+                        sweeper = sweeper_by_number[swept_by_num]
+                
+                # If we found a sweeper, add the liquidity flag
+                if sweeper:
+                    liquidity_flag = f"{define_name}_liquidity"
+                    
+                    # Check if flag already exists to avoid duplicates
+                    if not sweeper.get(liquidity_flag):
+                        sweeper[liquidity_flag] = True
+                        flags_added = True
+                        #print(f"  🏷️ Added '{liquidity_flag}: true' to sweeper candle #{sweeper.get('candle_number')} for define #{candle_num}")
+        
+        return flags_added
 
     def intruder_and_outlaw_check(processed_data):
         for file_key, candles in processed_data.items():
@@ -2744,9 +3043,9 @@ def entry_point_of_interest(broker_name):
                                 mid_swing = mid_candle.get("swing_type", "").lower()
                                 
                                 is_outlaw = False
-                                if sender_swing == "lower_low" and mid_swing == "higher_high":
+                                if sender_swing == "swing_low" and mid_swing == "swing_high":
                                     is_outlaw = True
-                                elif sender_swing == "higher_high" and mid_swing == "lower_low":
+                                elif sender_swing == "swing_high" and mid_swing == "swing_low":
                                     is_outlaw = True
                                 
                                 if is_outlaw:
@@ -2768,7 +3067,8 @@ def entry_point_of_interest(broker_name):
     def identify_poi(target_data_tf, new_key, original_candles, poi_config):
         """
         Identifies Point of Interest (Breaker) based strictly on price violation.
-        Updated to specifically target lower_low and higher_high violations.
+        Updated to specifically target swing_low and swing_high violations.
+        Now respects the exact from_subject and after_subject values without auto-appending _liquidity.
         Tags anchor candles with 'from': True and 'after': True.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
@@ -2779,6 +3079,10 @@ def entry_point_of_interest(broker_name):
         
         from_sub = poi_config.get("from_subject")  
         after_sub = poi_config.get("after_subject") 
+        
+        # FIX: Only check for the exact values, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        after_variants = [after_sub] if after_sub else []
 
         candle_map = {
             c.get("candle_number"): c 
@@ -2787,9 +3091,18 @@ def entry_point_of_interest(broker_name):
         }
 
         for p_name, family in patterns.items():
-            # 1. Locate the anchor candles
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
-            after_candle = next((c for c in family if c.get(after_sub) is True), None)
+            # 1. Locate the anchor candles - check only the exact values
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+            
+            after_candle = None
+            for variant in after_variants:
+                after_candle = next((c for c in family if c.get(variant) is True), None)
+                if after_candle:
+                    break
             
             if not from_candle or not after_candle:
                 continue
@@ -2804,9 +3117,9 @@ def entry_point_of_interest(broker_name):
             
             # Determine target price level based on swing type
             if "high" in swing_type:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -2821,14 +3134,14 @@ def entry_point_of_interest(broker_name):
                 if not isinstance(oc, dict) or oc.get("candle_number") <= after_num:
                     continue
                     
-                # Logic for lower_low and higher_high violations
-                if swing_type == "lower_low":
+                # Logic for swing_low and swing_high violations
+                if swing_type == "swing_low":
                     violator_low = oc.get("low")
                     if violator_low is not None and violator_low < target_price:
                         hitler_record = oc.copy()
                         break
                 
-                elif swing_type == "higher_high":
+                elif swing_type == "swing_high":
                     violator_high = oc.get("high")
                     if violator_high is not None and violator_high > target_price:
                         hitler_record = oc.copy()
@@ -2839,12 +3152,12 @@ def entry_point_of_interest(broker_name):
 
             if hitler_record:
                 h_num = hitler_record.get("candle_number")
-                direction_label = "below" if swing_type == "lower_low" else "above"
+                direction_label = "below" if swing_type == "swing_low" else "above"
                 
                 label = f"after_subject_{after_sub}_violator_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
                 
                 from_candle[label] = True
-                hitler_record["is_hitler_breaker"] = True
+                hitler_record["is_hitler_poi"] = True
                 hitler_record["point_of_interest"] = True
                 
                 # Enrich coordinates for visualization
@@ -2858,13 +3171,17 @@ def entry_point_of_interest(broker_name):
                         hitler_record[k] = full_record.get(k)
                 
                 family.append(hitler_record)
+                from_candle["pattern_entry"] = True
+            else:
+                from_candle["pattern_entry"] = True
 
         return target_data_tf
-
+    
     def identify_poi_mitigation(target_data_tf, new_key, poi_config):
         """
         Removes patterns where specific candles (restrict_definitions_mitigation) 
         violate the target price based on swing type.
+        Now respects the exact from_subject and restrict values without auto-appending _liquidity.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
@@ -2878,10 +3195,20 @@ def entry_point_of_interest(broker_name):
             return
 
         restrict_subs = [s.strip() for s in restrict_raw.split(",")]
+        
+        # FIX: Only check for the exact from_subject value, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        
         patterns_to_remove = []
 
         for p_name, family in patterns.items():
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            # Find from_candle using exact value only
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+                    
             if not from_candle:
                 continue
 
@@ -2889,9 +3216,9 @@ def entry_point_of_interest(broker_name):
             
             # Determine the target price from configuration
             if "high" in target_swingtype:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -2901,20 +3228,27 @@ def entry_point_of_interest(broker_name):
 
             is_mitigated = False
             
-            # Check if any restricted candle violates the price level
+            # FIX: Check each restrict subject using exact values only (no auto-appended _liquidity)
             for sub_key in restrict_subs:
-                restrict_candle = next((c for c in family if c.get(sub_key) is True), None)
+                # Only check for the exact subject value
+                sub_variants = [sub_key]  # Don't auto-append _liquidity
+                
+                restrict_candle = None
+                for variant in sub_variants:
+                    restrict_candle = next((c for c in family if c.get(variant) is True), None)
+                    if restrict_candle:
+                        break
                 
                 if restrict_candle:
                     # Apply the specific logic requested
-                    if target_swingtype == "lower_low":
+                    if target_swingtype == "swing_low":
                         violator_low = restrict_candle.get("low")
                         # If violator_low is < target_price, it's a mitigation
                         if violator_low is not None and violator_low < target_price:
                             is_mitigated = True
                             break
                     
-                    elif target_swingtype == "higher_high":
+                    elif target_swingtype == "swing_high":
                         violator_high = restrict_candle.get("high")
                         # If violator_high is > target_price, it's a mitigation
                         if violator_high is not None and violator_high > target_price:
@@ -2934,200 +3268,13 @@ def entry_point_of_interest(broker_name):
 
         return target_data_tf
     
-    def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
-        """
-        Checks for swing violations between multiple pairs of definitions (sender and receiver).
-        The config expects a comma-separated string: "define_1_define_3, define_4_define_10"
-        If any candle between a pair matches the receiver's swing_type and violates the price, 
-        the pattern is removed.
-        """
-        if not poi_config or not isinstance(target_data_tf, dict):
-            return
-
-        pattern_key = f"{new_key}_patterns"
-        patterns = target_data_tf.get(pattern_key, {})
-        from_sub = poi_config.get("from_subject")
-        
-        # Get the raw string, e.g., "define_1_define_3, define_2_define_4"
-        restrict_raw = poi_config.get("restrict_swing_mitigation_between_definitions")
-        if not restrict_raw:
-            return
-
-        # Split by comma to handle multiple pairs
-        restrict_pairs = [p.strip() for p in restrict_raw.split(",") if p.strip()]
-        patterns_to_remove = []
-
-        for p_name, family in patterns.items():
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
-            if not from_candle:
-                continue
-
-            # Determine target price level once per pattern based on from_subject
-            target_swingtype = from_candle.get("swing_type", "").lower()
-            if "high" in target_swingtype:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
-            else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
-
-            clean_key = price_key.replace("_price", "")
-            target_price = from_candle.get(clean_key)
-            
-            if target_price is None:
-                continue
-
-            is_mitigated = False
-
-            # Evaluate each pair defined in the config
-            for pair_str in restrict_pairs:
-                parts = pair_str.split("_")
-                # Expecting format: define, N, define, M -> 4 parts
-                if len(parts) < 4:
-                    continue
-                
-                sender_key = f"{parts[0]}_{parts[1]}"
-                receiver_key = f"{parts[2]}_{parts[3]}"
-
-                sender_candle = next((c for c in family if c.get(sender_key) is True), None)
-                receiver_candle = next((c for c in family if c.get(receiver_key) is True), None)
-
-                if not sender_candle or not receiver_candle:
-                    continue
-
-                s_num = sender_candle.get("candle_number")
-                r_num = receiver_candle.get("candle_number")
-                receiver_swing_type = receiver_candle.get("swing_type", "").lower()
-                
-                # Define search range (exclusive)
-                start_range = min(s_num, r_num) + 1
-                end_range = max(s_num, r_num) - 1
-
-                # Scan range for violations
-                for oc in original_candles:
-                    if not isinstance(oc, dict):
-                        continue
-                    
-                    c_num = oc.get("candle_number")
-                    if start_range <= c_num <= end_range:
-                        current_swing = oc.get("swing_type", "").lower()
-                        
-                        # Match the swing type of the receiver
-                        if current_swing == receiver_swing_type:
-                            if receiver_swing_type == "lower_low":
-                                v_low = oc.get("low")
-                                if v_low is not None and v_low < target_price:
-                                    is_mitigated = True
-                                    break
-                            elif receiver_swing_type == "higher_high":
-                                v_high = oc.get("high")
-                                if v_high is not None and v_high > target_price:
-                                    is_mitigated = True
-                                    break
-                
-                if is_mitigated:
-                    break # No need to check other pairs for this pattern if one triggered
-
-            if is_mitigated:
-                patterns_to_remove.append(p_name)
-
-        # Clean up patterns
-        for p_name in patterns_to_remove:
-            del patterns[p_name]
-
-        return target_data_tf
-
-    def identify_selected(target_data_tf, new_key, poi_config):
-        """
-        Filters pattern records based on extreme or non-extreme values of a specific define_n.
-        Config format: "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
-        """
-        if not poi_config or not isinstance(target_data_tf, dict):
-            return target_data_tf
-
-        pattern_key = f"{new_key}_patterns"
-        patterns = target_data_tf.get(pattern_key, {})
-        if not patterns:
-            return target_data_tf
-
-        selection_raw = poi_config.get("multiple_selection")
-        if not selection_raw:
-            return target_data_tf
-
-        # Parse config: e.g., "define_3_extreme" -> target_key="define_3", mode="extreme"
-        parts = selection_raw.split("_")
-        if len(parts) < 3:
-            return target_data_tf
-
-        target_define_key = f"{parts[0]}_{parts[1]}" # e.g., "define_3"
-        mode = parts[2].lower() # "extreme" or "non"
-        if mode == "non":
-            mode = "non_extreme"
-
-        # 1. Collect all patterns containing the target definition and their prices
-        eligible_patterns = []
-        
-        for p_name, family in patterns.items():
-            # Find the candle in this pattern that has target_define_key: True
-            target_candle = next((c for c in family if c.get(target_define_key) is True), None)
-            
-            if target_candle:
-                swing_type = target_candle.get("swing_type", "").lower()
-                # Determine which price to look at based on swing type
-                if "high" in swing_type:
-                    price = target_candle.get("high")
-                else:
-                    price = target_candle.get("low")
-                
-                if price is not None:
-                    eligible_patterns.append({
-                        "name": p_name,
-                        "price": price,
-                        "swing_type": swing_type
-                    })
-
-        if not eligible_patterns:
-            return target_data_tf
-
-        # 2. Determine the winner based on the criteria
-        # We assume all patterns for a specific define_n share the same swing_type category 
-        # (all highs or all lows) for a meaningful comparison.
-        first_swing = eligible_patterns[0]["swing_type"]
-        is_high_type = "high" in first_swing
-        
-        selected_pattern_name = None
-        
-        if is_high_type:
-            # For Higher Highs: 
-            # Extreme = Highest High | Non-Extreme = Lowest High
-            if mode == "extreme":
-                winner = max(eligible_patterns, key=lambda x: x["price"])
-            else: # non_extreme
-                winner = min(eligible_patterns, key=lambda x: x["price"])
-        else:
-            # For Lower Lows: 
-            # Extreme = Lowest Low | Non-Extreme = Highest Low
-            if mode == "extreme":
-                winner = min(eligible_patterns, key=lambda x: x["price"])
-            else: # non_extreme
-                winner = max(eligible_patterns, key=lambda x: x["price"])
-
-        selected_pattern_name = winner["name"]
-
-        # 3. Remove all patterns that were part of this comparison but didn't win
-        # Note: Patterns NOT containing the define_n are left untouched.
-        patterns_to_remove = [p["name"] for p in eligible_patterns if p["name"] != selected_pattern_name]
-        
-        for p_name in patterns_to_remove:
-            if p_name in patterns:
-                del patterns[p_name]
-
-        return target_data_tf
-
     def draw_poi_tools(img, target_data_tf, new_key, poi_config):
         """
         Draws visual markers on the image. 
         Boxes feature a single-edge border on the 'sensitive' price level.
         Updates 'from_candle' with flags regarding its extension or break status.
         Now attaches the formatted time of the breaker candle to the center of boxes.
+        Now respects the exact from_subject value without auto-appending _liquidity.
         """
         if not poi_config or img is None:
             return img
@@ -3138,20 +3285,28 @@ def entry_point_of_interest(broker_name):
         drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
         from_sub = poi_config.get("from_subject")
         
+        # FIX: Only check for the exact value provided, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        
         # Config mapping for sensitive edge
-        hh_lh_edge = poi_config.get("subject_is_higherhigh_or_lowerhigh") # e.g., "low_price"
-        ll_hl_edge = poi_config.get("subject_is_lowerlow_or_higherlow")   # e.g., "high_price"
+        hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
+        ll_hl_edge = poi_config.get("subject_is_swinglow_or_higherlow")   # e.g., "high_price"
         
         img_height, img_width = img.shape[:2]
 
         for p_name, family in patterns.items():
-            # 1. Identify the origin (from_candle)
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            # 1. Identify the origin (from_candle) using exact value only
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+                    
             if not from_candle:
                 continue
 
             # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_breaker") or c.get("is_invalid_hitler")), None)
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler") or c.get("point_of_interest")), None)
             
             # 2. Determine X boundaries and Update Flags
             start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
@@ -3166,7 +3321,7 @@ def entry_point_of_interest(broker_name):
                 
                 # Update the status flags on the origin candle
                 from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
-                from_candle["pending_entry_level"] = False
+                
 
                 # --- DATE FORMATTING LOGIC ---
                 raw_time = breaker_candle.get("time", "")
@@ -3212,9 +3367,9 @@ def entry_point_of_interest(broker_name):
                 swing_type = from_candle.get("swing_type", "").lower()
                 border_y = None
 
-                if "higher_high" in swing_type or "lower_high" in swing_type:
+                if "swing_high" in swing_type or "lower_high" in swing_type:
                     border_y = y_low if hh_lh_edge == "low_price" else y_high
-                elif "lower_low" in swing_type or "higher_low" in swing_type:
+                elif "swing_low" in swing_type or "higher_low" in swing_type:
                     border_y = y_high if ll_hl_edge == "high_price" else y_low
 
                 # Draw the single sensitive border line
@@ -3243,11 +3398,507 @@ def entry_point_of_interest(broker_name):
                 cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
 
         return img
+     
+    def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
+        """
+        Checks for swing violations between multiple pairs of definitions (sender and receiver).
+        The config expects a comma-separated string: "define_1_define_3, define_4_define_10"
+        If any candle between a pair matches the receiver's swing_type and violates the price, 
+        the pattern is removed.
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return
 
-    def identify_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        from_sub = poi_config.get("from_subject")
+        
+        # Get the raw string, e.g., "define_1_define_3, define_2_define_4"
+        restrict_raw = poi_config.get("restrict_swing_mitigation_between_definitions")
+        if not restrict_raw:
+            return
+
+        # Split by comma to handle multiple pairs
+        restrict_pairs = [p.strip() for p in restrict_raw.split(",") if p.strip()]
+        patterns_to_remove = []
+
+        for p_name, family in patterns.items():
+            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            if not from_candle:
+                continue
+
+            # Determine target price level once per pattern based on from_subject
+            target_swingtype = from_candle.get("swing_type", "").lower()
+            if "high" in target_swingtype:
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
+            else:
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
+
+            clean_key = price_key.replace("_price", "")
+            target_price = from_candle.get(clean_key)
+            
+            if target_price is None:
+                continue
+
+            is_mitigated = False
+
+            # Evaluate each pair defined in the config
+            for pair_str in restrict_pairs:
+                parts = pair_str.split("_")
+                # Expecting format: define, N, define, M -> 4 parts
+                if len(parts) < 4:
+                    continue
+                
+                sender_key = f"{parts[0]}_{parts[1]}"
+                receiver_key = f"{parts[2]}_{parts[3]}"
+
+                sender_candle = next((c for c in family if c.get(sender_key) is True), None)
+                receiver_candle = next((c for c in family if c.get(receiver_key) is True), None)
+
+                if not sender_candle or not receiver_candle:
+                    continue
+
+                s_num = sender_candle.get("candle_number")
+                r_num = receiver_candle.get("candle_number")
+                receiver_swing_type = receiver_candle.get("swing_type", "").lower()
+                
+                # Define search range (exclusive)
+                start_range = min(s_num, r_num) + 1
+                end_range = max(s_num, r_num) - 1
+
+                # Scan range for violations
+                for oc in original_candles:
+                    if not isinstance(oc, dict):
+                        continue
+                    
+                    c_num = oc.get("candle_number")
+                    if start_range <= c_num <= end_range:
+                        current_swing = oc.get("swing_type", "").lower()
+                        
+                        # Match the swing type of the receiver
+                        if current_swing == receiver_swing_type:
+                            if receiver_swing_type == "swing_low":
+                                v_low = oc.get("low")
+                                if v_low is not None and v_low < target_price:
+                                    is_mitigated = True
+                                    break
+                            elif receiver_swing_type == "swing_high":
+                                v_high = oc.get("high")
+                                if v_high is not None and v_high > target_price:
+                                    is_mitigated = True
+                                    break
+                
+                if is_mitigated:
+                    break # No need to check other pairs for this pattern if one triggered
+
+            if is_mitigated:
+                patterns_to_remove.append(p_name)
+
+        # Clean up patterns
+        for p_name in patterns_to_remove:
+            del patterns[p_name]
+
+        return target_data_tf
+
+    def identify_selected(target_data_tf, new_key, poi_config):
+        """
+        Filters pattern records based on extreme or non-extreme values of a specific define_n.
+        Config format: 
+            "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
+            "max_selection": 2 (optional) - limits to at most N patterns with the target define_n
+        
+        If max_selection is specified, it will keep at most N patterns, prioritizing the most
+        extreme ones (including ties at the cutoff price level). If there are multiple patterns
+        at the same price level as the Nth pattern, all of them are kept.
+        If max_selection is missing or 0, it keeps only the most extreme pattern(s) (all ties at top).
+        """
+        if not poi_config or not isinstance(target_data_tf, dict):
+            return target_data_tf
+
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        if not patterns:
+            return target_data_tf
+
+        # Get multiple_selection config
+        selection_raw = poi_config.get("multiple_selection")
+        if not selection_raw:
+            return target_data_tf
+
+        # Get max_selection config (default to 0 if not present)
+        max_selection = poi_config.get("max_selection", 0)
+        try:
+            max_selection = int(max_selection)
+        except (ValueError, TypeError):
+            max_selection = 0
+
+        # Parse multiple_selection: e.g., "define_3_extreme" -> target_key="define_3", mode="extreme"
+        parts = selection_raw.split("_")
+        if len(parts) < 3:
+            return target_data_tf
+
+        target_define_key = f"{parts[0]}_{parts[1]}"  # e.g., "define_3"
+        mode = parts[2].lower()  # "extreme" or "non"
+        if mode == "non":
+            mode = "non_extreme"
+
+        # 1. Collect all patterns containing the target definition and their prices
+        eligible_patterns = []
+        
+        for p_name, family in patterns.items():
+            # Find the candle in this pattern that has target_define_key: True
+            target_candle = next((c for c in family if c.get(target_define_key) is True), None)
+            
+            if target_candle:
+                swing_type = target_candle.get("swing_type", "").lower()
+                # Determine which price to look at based on swing type
+                if "high" in swing_type:
+                    price = target_candle.get("high")
+                else:
+                    price = target_candle.get("low")
+                
+                if price is not None:
+                    eligible_patterns.append({
+                        "name": p_name,
+                        "price": price,
+                        "swing_type": swing_type,
+                        "candle_number": target_candle.get("candle_number"),
+                        "full_candle": target_candle  # Store reference for potential future use
+                    })
+
+        # If no eligible patterns found, return unchanged
+        if not eligible_patterns:
+            return target_data_tf
+
+        # Determine the swing type category (all should be same, but we'll verify)
+        first_swing = eligible_patterns[0]["swing_type"]
+        is_high_type = "high" in first_swing
+        
+        # 2. Sort all patterns by how extreme they are (most extreme first)
+        if is_high_type:
+            if mode == "extreme":
+                # For highs in extreme mode: highest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
+            else:  # non_extreme
+                # For highs in non-extreme mode: lowest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
+        else:
+            if mode == "extreme":
+                # For lows in extreme mode: lowest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
+            else:  # non_extreme
+                # For lows in non-extreme mode: highest price is most extreme
+                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
+
+        # 3. Apply max_selection logic
+        patterns_to_keep = []
+        
+        if max_selection > 0 and len(sorted_patterns) > max_selection:
+            # We need to limit to at most max_selection patterns
+            
+            # Take the top max_selection patterns
+            top_n_patterns = sorted_patterns[:max_selection]
+            
+            # Get the price of the last pattern we're including
+            last_price = top_n_patterns[-1]["price"]
+            
+            # Include any additional patterns at the same price level as the last included
+            for p in sorted_patterns[max_selection:]:
+                if p["price"] == last_price:
+                    top_n_patterns.append(p)
+                else:
+                    break
+            
+            patterns_to_keep = [p["name"] for p in top_n_patterns]
+        else:
+            # No max_selection or we have fewer than max - keep all patterns
+            patterns_to_keep = [p["name"] for p in sorted_patterns]
+
+        # 4. Remove all patterns that aren't in our keep list
+        patterns_to_remove = [p_name for p_name in patterns.keys() if p_name not in patterns_to_keep]
+        
+        for p_name in patterns_to_remove:
+            if p_name in patterns:
+                del patterns[p_name]
+
+        return target_data_tf
+
+    def draw_definition_tools(img, target_data_tf, pattern_key, identify_config):
+        """
+        Draws visual markers for definitions as HORIZONTAL LINES with optional text labels.
+        If swept: draws horizontal line from define candle's price level across to sweeper candle
+        If not swept: draws horizontal line from define candle extending to the right edge
+        
+        Now checks account management configuration to determine if drawing is enabled for each define_n.
+        Supports both solid and dashed lines based on drawing_tool setting.
+        Adds centered text labels above/below the line based on swing type, but ONLY for swept lines.
+        """
+        if not identify_config or img is None:
+            return img
+        
+        patterns = target_data_tf.get(pattern_key, {})
+        img_height, img_width = img.shape[:2]
+        
+        #print(f"DRAWING DEFINITION TOOLS for {pattern_key}")
+        
+        total_families = 0
+        total_defines = 0
+        swept_count = 0
+        unswept_count = 0
+        skipped_count = 0
+        disabled_count = 0
+        text_drawn_count = 0
+        
+        for family_name, family in patterns.items():
+            if not isinstance(family, list):
+                #print(f"  ⚠️ Family '{family_name}' is not a list, skipping")
+                continue
+            
+            total_families += 1
+            #print(f"\n  📁 Family: {family_name} ({len(family)} candles)")
+            
+            # First, build a map of sweeper candles by their candle_number for easy lookup
+            sweeper_by_number = {}  # {sweeper_candle_number: sweeper_candle}
+            
+            # Also build a map of which sweepers map to which victims
+            # This is based on the sweeper's swept_victims field
+            sweeper_for_victim = {}  # {victim_candle_number: sweeper_candle}
+            
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # If this candle is a sweeper (has is_liquidity_sweep = True)
+                if candle.get("is_liquidity_sweep") is True:
+                    sweeper_by_number[candle_num] = candle
+                    
+                    # Map this sweeper to all its victims
+                    swept_victims = candle.get("swept_victims", [])
+                    if swept_victims:
+                        for victim_num in swept_victims:
+                            sweeper_for_victim[victim_num] = candle
+                    # Also handle single victim case
+                    single_victim = candle.get("swept_victim_number")
+                    if single_victim and single_victim not in sweeper_for_victim:
+                        sweeper_for_victim[single_victim] = candle
+            
+            # Now draw for each define candle
+            family_defines = 0
+            family_swept = 0
+            family_unswept = 0
+            family_disabled = 0
+            family_text_drawn = 0
+            
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                # Check if this candle is a define (any define_n)
+                define_name = None
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        define_name = key
+                        break
+                
+                if not define_name:
+                    continue
+                
+                family_defines += 1
+                total_defines += 1
+                
+                # Get candle details
+                candle_num = candle.get("candle_number", "???")
+                swing_type = candle.get("swing_type", "").lower()
+                
+                #print(f"\n    🔍 Processing {define_name} (Candle #{candle_num})")
+                #print(f"       Swing type: {swing_type}")
+                
+                # --- ACCOUNT MANAGEMENT CHECK ---
+                # Check if this specific define_n is enabled for drawing
+                # First check define-specific settings in identify_config
+                define_settings = identify_config.get(define_name, {})
+                
+                # If define-specific settings exist, check if drawing is enabled
+                if define_settings:
+                    drawing_enabled = define_settings.get("enable_drawing", True)  # Default to True if not specified
+                    #print(f"       📋 Account management for {define_name}: enable_drawing = {drawing_enabled}")
+                    
+                    if not drawing_enabled:
+                        #print(f"       ⏭️ Skipped: {define_name} drawing disabled in account management")
+                        disabled_count += 1
+                        family_disabled += 1
+                        continue
+                    
+                    # Get text label if available
+                    text_label = define_settings.get("text", "")
+                    #print(f"       📝 Text label: '{text_label}'")
+                else:
+                    # No specific settings for this define_n, assume drawing is enabled
+                    #print(f"       ℹ️ No account management settings for {define_name}, using default (enabled)")
+                    text_label = ""  # No text label by default
+                
+                # Get drawing tool preference for this specific define
+                drawing_tool = define_settings.get("tool", identify_config.get("drawing_tool", "horizontal_line"))
+                #print(f"       🖌️ Drawing tool: {drawing_tool}")
+                
+                # Check all possible swept indicators
+                swept_by_num = candle.get("swept_by_candle_number")
+                swept_by_liquidity = candle.get("swept_by_liquidity")
+                
+                # Check if this candle is a victim (has a sweeper mapped to it)
+                is_victim = candle_num in sweeper_for_victim
+                
+                #print(f"       swept_by_candle_number: {swept_by_num}")
+                #print(f"       swept_by_liquidity: {swept_by_liquidity}")
+                #print(f"       is_victim (has sweeper mapped): {is_victim}")
+                
+                # Determine the Y-coordinate (price level) based on swing type
+                # This is the horizontal line level
+                if "swing_high" in swing_type:
+                    # For higher high, draw from the HIGH of the candle
+                    line_y = int(candle.get("draw_top", candle.get("candle_top", 0)))
+                    line_desc = f"high at Y={line_y}"
+                    # Start from the RIGHT side of the candle
+                    start_x = int(candle.get("draw_right", candle.get("candle_right", 0)))
+                    text_position = "above"  # Text should be above the line for higher high
+                elif "swing_low" in swing_type:
+                    # For lower low, draw from the LOW of the candle
+                    line_y = int(candle.get("draw_bottom", candle.get("candle_bottom", img_height)))
+                    line_desc = f"low at Y={line_y}"
+                    # Start from the RIGHT side of the candle
+                    start_x = int(candle.get("draw_right", candle.get("candle_right", 0)))
+                    text_position = "below"  # Text should be below the line for lower low
+                else:
+                    #print(f"       ❌ Skipped: Unknown swing type '{swing_type}'")
+                    skipped_count += 1
+                    continue
+                
+                #print(f"       Horizontal line level: {line_desc}")
+                #print(f"       Start X: {start_x}")
+                #print(f"       Text position: {text_position}")
+                
+                # Determine if swept and find sweeper
+                sweeper = None
+                end_x = img_width  # Default to right edge
+                end_desc = "right edge"
+                is_swept = False
+                
+                # Priority 1: Check if this candle has a sweeper mapped to it via sweeper_for_victim
+                if candle_num in sweeper_for_victim:
+                    sweeper = sweeper_for_victim[candle_num]
+                    sweeper_num = sweeper.get("candle_number", "???")
+                    #print(f"       ✅ Swept via victim mapping to sweeper #{sweeper_num}")
+                    is_swept = True
+                
+                # Priority 2: Check direct swept_by_candle_number that exists in sweeper_by_number
+                elif swept_by_num and swept_by_num in sweeper_by_number:
+                    sweeper = sweeper_by_number[swept_by_num]
+                    #print(f"       ✅ Swept via direct swept_by_candle_number={swept_by_num}")
+                    is_swept = True
+                
+                if sweeper:
+                    # If swept, draw horizontal line to the sweeper candle's LEFT side
+                    sweeper_num = sweeper.get("candle_number", "???")
+                    
+                    # Get the sweeper's left side coordinate
+                    # For sweepers, we want to draw to their left side (where they start)
+                    end_x = int(sweeper.get("draw_left", sweeper.get("candle_left", img_width)))
+                    
+                    # Make sure we're drawing to the LEFT of the sweeper (earlier in time)
+                    # If the sweeper is to the left of the victim (shouldn't happen by logic), adjust
+                    if end_x < start_x:
+                        # Sweeper is to the left, draw to its right side instead
+                        end_x = int(sweeper.get("draw_right", sweeper.get("candle_right", img_width)))
+                        end_desc = f"sweeper #{sweeper_num} right side at X={end_x}"
+                    else:
+                        end_desc = f"sweeper #{sweeper_num} left side at X={end_x}"
+                    
+                    #print(f"       📍 Swept: drawing horizontal line to {end_desc}")
+                    swept_count += 1
+                    family_swept += 1
+                else:
+                    # If not swept, draw horizontal line to right edge
+                    #print(f"       ➡️ Not swept: drawing horizontal line to right edge at X={end_x}")
+                    unswept_count += 1
+                    family_unswept += 1
+                
+                # Draw the line based on drawing tool preference
+                if "dashed_horizontal_line" in drawing_tool:
+                    # Draw DASHED horizontal line
+                    dash_length = 10
+                    gap_length = 5
+                    curr_x = start_x
+                    
+                    while curr_x < end_x:
+                        next_x = min(curr_x + dash_length, end_x)
+                        cv2.line(img, (curr_x, line_y), (next_x, line_y), (0, 0, 0), 1, cv2.LINE_AA)
+                        curr_x += dash_length + gap_length
+                    
+                    #print(f"       🖍️ Drew DASHED line from X={start_x} to X={end_x}")
+                else:
+                    # Draw SOLID horizontal line (default)
+                    cv2.line(img, (start_x, line_y), (end_x, line_y), (0, 0, 0), 1, cv2.LINE_AA)
+                    #print(f"       🖍️ Drew SOLID line from X={start_x} to X={end_x}")
+                
+                # Draw text label ONLY if the line is swept (has a sweeper)
+                if text_label and is_swept:
+                    # Calculate center X coordinate of the line
+                    center_x = (start_x + end_x) // 2
+                    
+                    # Calculate Y coordinate based on text position
+                    if text_position == "above":
+                        # Place text above the line (5 pixels above)
+                        text_y = line_y - 5
+                        text_bg_y1 = text_y - 15
+                        text_bg_y2 = text_y + 5
+                    else:  # below
+                        # Place text below the line (15 pixels below to account for text height)
+                        text_y = line_y + 15
+                        text_bg_y1 = text_y - 15
+                        text_bg_y2 = text_y + 5
+                    
+                    # Get text size
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.4
+                    thickness = 1
+                    (text_width, text_height), baseline = cv2.getTextSize(text_label, font, font_scale, thickness)
+                    
+                    # Calculate text position to center it horizontally
+                    text_x = center_x - (text_width // 2)
+                    
+                    # Draw white background rectangle for better readability
+                    padding = 2
+                    bg_x1 = text_x - padding
+                    bg_y1 = text_y - text_height - padding
+                    bg_x2 = text_x + text_width + padding
+                    bg_y2 = text_y + padding
+                    
+                    # Ensure background stays within image bounds
+                    bg_x1 = max(0, bg_x1)
+                    bg_y1 = max(0, bg_y1)
+                    bg_x2 = min(img_width, bg_x2)
+                    bg_y2 = min(img_height, bg_y2)
+                    
+                    # Draw background rectangle
+                    cv2.rectangle(img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                    
+                    # Draw text in black
+                    cv2.putText(img, text_label, (text_x, text_y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+                    
+                    #print(f"       📝 Drew text '{text_label}' at center X={center_x}, Y={text_y} ({text_position} line)")
+                    text_drawn_count += 1
+                    family_text_drawn += 1
+        return img
+    
+    def identify_pending_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
         """
         Saves limit orders into a pending_orders folder INSIDE the specific new_filename folder.
         Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
+        Also adds order_type flag to the entry candle in the original data structure
         """
         if not record_config:
             return
@@ -3292,9 +3943,9 @@ def entry_point_of_interest(broker_name):
                             swing_type = target_candle.get("swing_type", "").lower()
                             price_attr_raw = ""
                             if "high" in swing_type:
-                                price_attr_raw = role_cfg.get("subject_is_higherhigh_or_lowerhigh")
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
                             elif "low" in swing_type:
-                                price_attr_raw = role_cfg.get("subject_is_lowerlow_or_higherlow")
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
 
                             actual_key = price_map.get(price_attr_raw, price_attr_raw)
                             if actual_key:
@@ -3307,9 +3958,16 @@ def entry_point_of_interest(broker_name):
                 type_cfg = record_config.get("order_type", {})
                 
                 if "high" in e_swing:
-                    order_data["order_type"] = type_cfg.get("subject_is_higherhigh_or_lowerhigh", "sell_limit")
+                    order_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
                 else:
-                    order_data["order_type"] = type_cfg.get("subject_is_lowerlow_or_higherlow", "buy_limit")
+                    order_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                
+                # Add order_type flag to the origin candle (pending_entry_level candle)
+                origin_candle["order_type"] = order_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from origin_candle
+                if entry_candle != origin_candle:
+                    entry_candle["order_type"] = order_data["order_type"]
 
                 pending_list.append(order_data)
 
@@ -3326,61 +3984,145 @@ def entry_point_of_interest(broker_name):
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
 
-    def enrich_limit_orders(dev_base_path, new_folder_name):
+    def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
         """
-        Reads the limit_orders.json, looks up the symbol-specific ticks.json,
-        and enriches each order with tick_size and tick_value.
+        Saves hitler/POI entry information into a poi_entry.json file.
+        Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
+        Follows the same logic as identify_prices but targets Hitler/POI candles
+        Only records orders for symbols that have confirmation keys across all timeframes
+        Also adds order_type flag to the Hitler/POI candle in the original data structure
         """
-        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
-        orders_file = os.path.join(orders_dir, "limit_orders.json")
-
-        if not os.path.exists(orders_file):
+        if not record_config:
             return
 
-        try:
-            with open(orders_file, 'r', encoding='utf-8') as f:
-                orders = json.load(f)
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        pending_poi_list = []
+        price_map = {
+            "low_price": "low",
+            "high_price": "high",
+            "open_price": "open",
+            "close_price": "close"
+        }
+        
+        # Updated Path Logic: Inside the new_folder_name directory
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+        os.makedirs(orders_dir, exist_ok=True)
+        poi_file = os.path.join(orders_dir, "poi_entry.json")
+
+        # Check if this source timeframe has any confirmation keys in ANY timeframe of the full target data
+        has_confirmation = False
+        source_tf = None
+        
+        # First, determine the source timeframe from any pattern
+        for p_name, family in patterns.items():
+            if family and len(family) > 0:
+                source_tf = family[0].get("timeframe")
+                if source_tf:
+                    break
+        
+        if source_tf and target_data_full:
+            # Check through ALL timeframes in the full target data
+            for tf_key, tf_data in target_data_full.items():
+                if isinstance(tf_data, dict):
+                    # Check each key in this timeframe's data
+                    for data_key in tf_data.keys():
+                        if isinstance(data_key, str) and f"_confirmation_from_{source_tf}_poi_" in data_key:
+                            has_confirmation = True
+                            break
+                if has_confirmation:
+                    break
+        
+        # If no confirmation keys found across all timeframes, don't record any orders
+        if not has_confirmation:
+            return
+
+        for p_name, family in patterns.items():
+            # Find the Hitler/POI candle instead of pending_entry_level
+            hitler_candle = next((c for c in family if c.get("is_hitler_poi") is True or c.get("point_of_interest") is True), None)
             
-            if not orders:
-                return
+            if hitler_candle:
+                poi_data = {
+                    "symbol": hitler_candle.get("symbol", "unknown"),
+                    "timeframe": hitler_candle.get("timeframe", "unknown"),
+                    "risk_reward": record_config.get("risk_reward", 0),
+                    "order_type": "unknown",
+                    "entry": 0,
+                    "exit": 0,
+                    "target": 0,
+                    "hitler_time": hitler_candle.get("time", "")  # Additional field for hitler time
+                }
 
-            # Cache for tick data to avoid re-reading the same file for every timeframe
-            tick_cache = {}
-            modified = False
-
-            for order in orders:
-                symbol = order.get("symbol")
-                if not symbol:
-                    continue
-
-                # If not in cache, try to load the symbol_ticks.json
-                if symbol not in tick_cache:
-                    # Path: dev_base_path/new_folder_name/symbol/symbol_ticks.json
-                    ticks_path = os.path.join(dev_base_path, new_folder_name, symbol, f"{symbol}_ticks.json")
+                # Get entry, exit, and target prices using the same logic as identify_prices
+                for role in ["entry", "exit", "target"]:
+                    role_cfg = record_config.get(role, {})
+                    subject_key = role_cfg.get("subject")
                     
-                    if os.path.exists(ticks_path):
-                        try:
-                            with open(ticks_path, 'r', encoding='utf-8') as f:
-                                tick_cache[symbol] = json.load(f)
-                        except Exception as e:
-                            log(f"Error loading ticks for enrichment of {symbol}: {e}")
-                            tick_cache[symbol] = None
-                    else:
-                        tick_cache[symbol] = None
+                    if subject_key:
+                        target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                        if target_candle:
+                            swing_type = target_candle.get("swing_type", "").lower()
+                            price_attr_raw = ""
+                            if "high" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                            elif "low" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
 
-                # Enrich the order if tick data exists
-                symbol_data = tick_cache.get(symbol)
-                if symbol_data:
-                    order["tick_size"] = symbol_data.get("tick_size")
-                    order["tick_value"] = symbol_data.get("tick_value")
-                    modified = True
+                            actual_key = price_map.get(price_attr_raw, price_attr_raw)
+                            if actual_key:
+                                poi_data[role] = target_candle.get(actual_key, 0)
+                
+                # Determine order type using the same logic as identify_prices
+                entry_subject = record_config.get("entry", {}).get("subject")
+                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), hitler_candle)
+                
+                e_swing = entry_candle.get("swing_type", "").lower()
+                type_cfg = record_config.get("order_type", {})
+                
+                if "high" in e_swing:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinghigh_or_lowerhigh", "sell_limit")
+                else:
+                    poi_data["order_type"] = type_cfg.get("subject_is_swinglow_or_higherlow", "buy_limit")
+                
+                # Add order_type flag to the Hitler/POI candle
+                hitler_candle["order_type"] = poi_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from hitler_candle
+                if entry_candle != hitler_candle:
+                    entry_candle["order_type"] = poi_data["order_type"]
 
-            if modified:
-                with open(orders_file, 'w', encoding='utf-8') as f:
-                    json.dump(orders, f, indent=4)
+                pending_poi_list.append(poi_data)
 
-        except Exception as e:
-            log(f"Failed to enrich limit orders: {e}")
+        if pending_poi_list:
+            # Instead of overwriting, we should append/merge with existing data
+            # But we need to ensure we don't have duplicates
+            existing_poi = []
+            if os.path.exists(poi_file):
+                try:
+                    with open(poi_file, 'r', encoding='utf-8') as f:
+                        existing_poi = json.load(f)
+                except: 
+                    existing_poi = []
+            
+            # Create a dictionary keyed by (symbol, timeframe, hitler_time) to avoid duplicates
+            poi_dict = {}
+            
+            # Add existing entries to dictionary
+            for entry in existing_poi:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Add new entries (will overwrite if same key exists)
+            for entry in pending_poi_list:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Convert back to list
+            merged_poi = list(poi_dict.values())
+            
+            with open(poi_file, 'w', encoding='utf-8') as f:
+                json.dump(merged_poi, f, indent=4)
 
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
@@ -3393,35 +4135,6 @@ def entry_point_of_interest(broker_name):
                 os.remove(orders_file)
             except Exception as e:
                 log(f"Could not clear limit orders for {new_folder_name}: {e}")
-
-    def sanitize_symbols_or_files(target_sym_dir, target_data):
-        """
-        Returns (should_delete_whole_folder, list_of_timeframes_to_keep)
-        
-        Note: This function only determines which timeframes have patterns/structures
-        but does NOT remove any data from target_data. The config JSON data is preserved
-        for all timeframes, regardless of whether they have patterns.
-        """
-        tfs_to_keep = []
-        tfs_to_remove = []
-
-        for tf, tf_content in list(target_data.items()):
-            has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
-            
-            if has_patterns:
-                tfs_to_keep.append(tf)
-            else:
-                tfs_to_remove.append(tf)
-
-        # If no timeframes have patterns, the whole symbol is invalid
-        if not tfs_to_keep:
-            return True, []
-
-        # DO NOT delete any timeframe data from target_data
-        # The config JSON should preserve ALL timeframe data, even without patterns
-        # This ensures the original keys and data remain in the config file
-        
-        return False, tfs_to_keep
 
     def identify_paused_symbols(target_data, dev_base_path, new_folder_name):
         """
@@ -3520,7 +4233,6 @@ def entry_point_of_interest(broker_name):
         
         # If no paused symbols file exists, nothing to do
         if not os.path.exists(paused_file):
-            log("No paused symbols file found, skipping limit orders population")
             return 0
         
         # Load paused symbols/orders
@@ -3667,7 +4379,6 @@ def entry_point_of_interest(broker_name):
         # Check if this source timeframe has any configured confirmation relationships
         if source_tf not in poi_confirmation_timeframes:
             # No configuration for this source timeframe - skip completely
-            log(f"    ⏭️ No confirmation configuration for {source_tf} POI - skipping confirmations")
             return target_data_tf
         
         # Get the allowed confirmation timeframes for this source_tf
@@ -3678,7 +4389,6 @@ def entry_point_of_interest(broker_name):
             log(f"    ⏭️ Empty confirmation list for {source_tf} POI - skipping confirmations")
             return target_data_tf
         
-        log(f"    📋 Using configured confirmation timeframes for {source_tf} POI: {allowed_confirmation_tfs}")
         
         # Find all available timeframes from pending_full_candle_refs
         available_tfs = set()
@@ -3694,11 +4404,8 @@ def entry_point_of_interest(broker_name):
         for tf in allowed_confirmation_tfs:
             if tf in available_tfs:
                 lower_tfs.append(tf)
-            else:
-                log(f"      ⚠️ Configured confirmation timeframe {tf} not available for {sym}")
         
         if not lower_tfs:
-            log(f"      ⚠️ No configured confirmation timeframes available for {source_tf}")
             return target_data_tf
         
         # Collect all POI timestamps from source timeframe
@@ -3722,7 +4429,6 @@ def entry_point_of_interest(broker_name):
         
         # For each POI timestamp, look for it in each allowed lower timeframe
         for timestamp in sorted(list(poi_timestamps)):
-            log(f"    📍 Processing POI at {timestamp}")
             
             # Find matching POI candle for metadata
             source_poi_candle = next((p for p in poi_candles if p.get("time") == timestamp), None)
@@ -3784,11 +4490,6 @@ def entry_point_of_interest(broker_name):
                 
                 # Sort by time
                 target_data_tf[confirmation_key].sort(key=lambda x: x.get("time", ""))
-                
-                log(f"   💾 {len(new_candles)} {lower_tf} candles confirmation from POI at {timestamp}")
-        
-        if not any_confirmations_created:
-            log(f"    ℹ️ No confirmation candles could be created for {source_tf} POI timestamps")
         
         return target_data_tf
 
@@ -3798,6 +4499,7 @@ def entry_point_of_interest(broker_name):
         Creates charts directly from the confirmation candle data without needing source charts.
         Features dynamic width scaling for optimal candle visibility.
         Records pixel coordinates for each candle in the target_data structure.
+        Labels swing candles with their numbers above (for higher highs) or below (for lower lows).
         
         Chart filename format: {lower_tf}_confirmation_from_{source_tf}_poi.png
         
@@ -3840,11 +4542,11 @@ def entry_point_of_interest(broker_name):
         INNER_PADDING_TOP = 20       # Space from top border to highest candle
         INNER_PADDING_BOTTOM = 20    # Space from bottom border to lowest candle
         
-        # Numbering configuration
-        NUMBER_FONT_SCALE = 0  # Smaller font for numbers (set to 0 to disable numbering)
-        NUMBER_FONT_THICKNESS = 2
-        NUMBER_OFFSET_ABOVE_WICK = 5  # Pixels above the wick to place the number
-        NUMBER_BG_PADDING = 2  # Padding around number for background
+        # Numbering configuration for swing candles only
+        SWING_NUMBER_FONT_SCALE = 1  # Font size for swing candle numbers
+        SWING_NUMBER_FONT_THICKNESS = 2
+        SWING_NUMBER_OFFSET = 25  # Pixels away from wick to place the number
+        SWING_NUMBER_BG_PADDING = 5  # Padding around number for background
         
         # Process each timeframe
         for tf in timeframes_to_process:
@@ -3884,29 +4586,30 @@ def entry_point_of_interest(broker_name):
                 if not confirmation_data:
                     continue
                 
-                # Extract OHLC data from confirmation candles, preserving candle_number
+                # Extract OHLC data from confirmation candles, preserving candle_number and swing info
                 ohlc_data = []
                 for item in confirmation_data:
                     # FIX: Check if item is a dictionary or a string
                     if isinstance(item, dict):
                         # It's a candle dictionary - proceed normally
-                        ohlc_data.append({
+                        candle_dict = {
                             'time': item.get('time', ''),
                             'open': item.get('open', 0),
                             'high': item.get('high', 0),
                             'low': item.get('low', 0),
                             'close': item.get('close', 0),
                             'candle_number': item.get('candle_number', None),  # Preserve the original candle number
+                            'is_swing': item.get('is_swing', False),  # Check if it's a swing candle
+                            'swing_type': item.get('swing_type', None),  # Type of swing (swing_high, swing_low, etc.)
                             'original_candle': item  # Store reference to original candle for updating coordinates
-                        })
+                        }
+                        ohlc_data.append(candle_dict)
                     elif isinstance(item, str):
                         # It's a string (possibly just a timestamp) - create a minimal candle
-                        # Try to parse the string as a timestamp
                         timestamp = item
                         log(f"       ⚠️ Warning: Found string instead of candle dict in {conf_key}: {timestamp[:50] if len(timestamp) > 50 else timestamp}")
                         
                         # Create a placeholder candle with just the timestamp
-                        # You may want to adjust these default values
                         ohlc_data.append({
                             'time': timestamp,
                             'open': 0,
@@ -3914,6 +4617,8 @@ def entry_point_of_interest(broker_name):
                             'low': 0,
                             'close': 0,
                             'candle_number': None,
+                            'is_swing': False,
+                            'swing_type': None,
                             'original_candle': {'time': timestamp}  # Create a minimal original candle
                         })
                     else:
@@ -4048,7 +4753,7 @@ def entry_point_of_interest(broker_name):
                         return chart_bottom - chart_height // 2
                     return chart_bottom - int((price - min_price) / price_range * chart_height)
                 
-                # Draw each candle with its actual candle number (if enabled) and record coordinates
+                # Draw each candle and record coordinates
                 for i, candle in enumerate(ohlc_data):
                     # Calculate x position
                     if num_candles > 1:
@@ -4095,49 +4800,84 @@ def entry_point_of_interest(broker_name):
                                     (candle_right_x, body_bottom_y),
                                     color, -1)
                     
-                    # Draw candle number only if NUMBER_FONT_SCALE > 0
-                    if NUMBER_FONT_SCALE > 0:
-                        # Get the actual candle number from the data
+                    # -----------------------------------------------------------------
+                    # LABEL SWING CANDLES ONLY WITH THEIR NUMBERS
+                    # -----------------------------------------------------------------
+                    if candle.get('is_swing', False):
+                        # Get the actual candle number
                         candle_number = candle.get('candle_number')
                         
-                        # If candle_number exists, use it; otherwise, fall back to sequential numbering
                         if candle_number is not None:
                             number_text = str(candle_number)
-                        else:
-                            number_text = str(i + 1)  # Fallback to sequential numbering
-                            if candle['open'] != 0 or candle['close'] != 0:  # Only warn for real candles
-                                log(f"       ⚠️ Warning: Candle at position {i+1} has no candle_number, using sequential")
-                        
-                        # Calculate text size for background
-                        (text_width, text_height), baseline = cv2.getTextSize(
-                            number_text, cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, NUMBER_FONT_THICKNESS
-                        )
-                        
-                        # Position the number above the wick
-                        number_x = int(x_center - text_width / 2)
-                        number_y = high_y - NUMBER_OFFSET_ABOVE_WICK
-                        
-                        # Draw white background for better readability
-                        bg_x1 = number_x - NUMBER_BG_PADDING
-                        bg_y1 = number_y - text_height - NUMBER_BG_PADDING
-                        bg_x2 = number_x + text_width + NUMBER_BG_PADDING
-                        bg_y2 = number_y + NUMBER_BG_PADDING
-                        
-                        # Ensure background stays within image bounds
-                        bg_x1 = max(0, bg_x1)
-                        bg_y1 = max(0, bg_y1)
-                        bg_x2 = min(img_width, bg_x2)
-                        bg_y2 = min(BASE_HEIGHT, bg_y2)
-                        
-                        # Draw white rectangle background
-                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
-                        
-                        # Draw black border around background for better visibility
-                        cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), 1)
-                        
-                        # Draw the number in black
-                        cv2.putText(chart_img, number_text, (number_x, number_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, NUMBER_FONT_SCALE, (0, 0, 0), NUMBER_FONT_THICKNESS)
+                            
+                            # Calculate text size for background
+                            (text_width, text_height), baseline = cv2.getTextSize(
+                                number_text, cv2.FONT_HERSHEY_SIMPLEX, SWING_NUMBER_FONT_SCALE, SWING_NUMBER_FONT_THICKNESS
+                            )
+                            
+                            # Determine position based on swing type
+                            swing_type = candle.get('swing_type', '')
+                            
+                            if swing_type == 'swing_high':
+                                # Position number ABOVE the wick
+                                number_x = int(x_center - text_width / 2)
+                                number_y = high_y - SWING_NUMBER_OFFSET
+                                
+                                # Draw arrow pointing up (optional)
+                                arrow_start = (int(x_center), high_y - 5)
+                                arrow_end = (int(x_center), number_y + text_height + 5)
+                                cv2.arrowedLine(chart_img, arrow_start, arrow_end, (0, 0, 255), 1, tipLength=0.3)
+                                
+                            elif swing_type == 'swing_low':
+                                # Position number BELOW the wick
+                                number_x = int(x_center - text_width / 2)
+                                number_y = low_y + SWING_NUMBER_OFFSET + text_height
+                                
+                                # Draw arrow pointing down (optional)
+                                arrow_start = (int(x_center), low_y + 5)
+                                arrow_end = (int(x_center), number_y - text_height - 5)
+                                cv2.arrowedLine(chart_img, arrow_start, arrow_end, (0, 255, 0), 1, tipLength=0.3)
+                                
+                            else:
+                                # For other swing types, default to above
+                                number_x = int(x_center - text_width / 2)
+                                number_y = high_y - SWING_NUMBER_OFFSET
+                            
+                            # Draw white background for better readability
+                            bg_x1 = number_x - SWING_NUMBER_BG_PADDING
+                            bg_y1 = number_y - text_height - SWING_NUMBER_BG_PADDING
+                            bg_x2 = number_x + text_width + SWING_NUMBER_BG_PADDING
+                            bg_y2 = number_y + SWING_NUMBER_BG_PADDING
+                            
+                            # Ensure background stays within image bounds
+                            bg_x1 = max(0, bg_x1)
+                            bg_y1 = max(0, bg_y1)
+                            bg_x2 = min(img_width, bg_x2)
+                            bg_y2 = min(BASE_HEIGHT, bg_y2)
+                            
+                            # Draw white rectangle background
+                            cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                            
+                            # Draw black border around background for better visibility
+                            cv2.rectangle(chart_img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), 1)
+                            
+                            # Draw the number in black
+                            cv2.putText(chart_img, number_text, (number_x, number_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, SWING_NUMBER_FONT_SCALE, (0, 0, 0), SWING_NUMBER_FONT_THICKNESS)
+                            
+                            # Also add small indicator text for swing type (optional)
+                            type_text = "HH" if swing_type == 'swing_high' else "LL" if swing_type == 'swing_low' else ""
+                            if type_text:
+                                (type_width, type_height), _ = cv2.getTextSize(
+                                    type_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1
+                                )
+                                type_x = int(x_center - type_width / 2)
+                                if swing_type == 'swing_high':
+                                    type_y = number_y - text_height - 5
+                                else:
+                                    type_y = number_y + 15
+                                cv2.putText(chart_img, type_text, (type_x, type_y),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
                     
                     # -----------------------------------------------------------------
                     # RECORD CANDLE COORDINATES IN THE ORIGINAL DATA STRUCTURE
@@ -4209,7 +4949,8 @@ def entry_point_of_interest(broker_name):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
                 
                 # Add detailed info for debugging/verification
-                info_text = f"Width:{target_candle_width}px Spacing:{actual_spacing:.1f}px | Inner L:{INNER_PADDING_LEFT} R:{INNER_PADDING_RIGHT} | Img Width:{img_width}px"
+                swing_count = sum(1 for c in ohlc_data if c.get('is_swing', False))
+                info_text = f"Width:{target_candle_width}px Spacing:{actual_spacing:.1f}px | Swing candles: {swing_count} | Img Width:{img_width}px"
                 cv2.putText(chart_img, info_text, (OUTER_PADDING_LEFT, BASE_HEIGHT - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
                 
@@ -4221,7 +4962,7 @@ def entry_point_of_interest(broker_name):
                 chart_count += 1
         
         if chart_count > 0:
-            log(f"  📊 Generated {chart_count} confirmation charts for {sym} with pixel coordinates recorded")
+            log(f"  📊 Generated {chart_count} confirmation charts for {sym}")
 
     def move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
         """
@@ -4416,8 +5157,8 @@ def entry_point_of_interest(broker_name):
                             candle_lists_to_update.append(candle_key)
                     
                     # Also check for keys that might be the base pattern name
-                    # For example, if original_key is "higherhighsandlowerlows", also look for 
-                    # "STRUCTURAL-LIQUIDITY_higherhighsandlowerlows" and similar
+                    # For example, if original_key is "swing_points", also look for 
+                    # "STRUCTURAL-LIQUIDITY_swing_points" and similar
                     for candle_key in list(target_tf_data.keys()):
                         if candle_key.endswith('_patterns') or '_confirmation_from_' in candle_key:
                             continue
@@ -4450,8 +5191,6 @@ def entry_point_of_interest(broker_name):
                         if backup_key not in target_tf_data:
                             target_tf_data[backup_key] = original_data.copy()
                             modified = True
-                        else:
-                            log(f"    ℹ️ Backup {backup_key} already exists, skipping backup creation")
                         
                         # Now update all candle lists with confirmation data
                         for candle_key in candle_lists_to_update:
@@ -4461,6 +5200,40 @@ def entry_point_of_interest(broker_name):
                             modified = True
         
         return modified
+
+    def filter_empty_symbol_folders(dev_base_path, folder_name):
+        """
+        Remove symbol folders that contain no files (empty directories).
+        
+        Args:
+            dev_base_path: Base development path
+            folder_name: Name of the folder containing symbol subfolders
+            
+        Returns:
+            int: Number of empty folders deleted
+        """
+        folder_path = os.path.join(dev_base_path, folder_name)
+        if not os.path.exists(folder_path):
+            log(f"Folder {folder_path} does not exist, skipping empty folder filter")
+            return 0
+        
+        deleted_count = 0
+        
+        # Iterate through all items in the folder
+        for item_name in os.listdir(folder_path):
+            item_path = os.path.join(folder_path, item_name)
+            
+            # Only process directories (symbol folders)
+            if os.path.isdir(item_path):
+                # Check if directory is empty (no files/subdirectories)
+                if not os.listdir(item_path):
+                    try:
+                        shutil.rmtree(item_path)
+                        deleted_count += 1
+                    except Exception as e:
+                        log(f"  ❌ Error deleting empty folder {item_name}: {e}")
+        
+        return deleted_count
 
     def process_entry_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
@@ -4512,7 +5285,6 @@ def entry_point_of_interest(broker_name):
         identify_paused_symbols_poi(dev_base_path, new_folder_name)
         cleanup_non_paused_symbols(dev_base_path, new_folder_name)
 
-        # 1. Clear previous limit orders before starting a new run
         limit_orders_old_record_cleanup(dev_base_path, new_folder_name)
 
         # 2. Identify which symbols should be skipped (Paused Symbols)
@@ -4529,7 +5301,16 @@ def entry_point_of_interest(broker_name):
 
         process_receiver = str(entry_settings.get("process_receiver_files", "no")).lower()
         identify_config = entry_settings.get("identify_definitions", {})
+        poi_config = entry_settings.get("point_of_interest")  # Moved this up for clarity
         sync_count = 0
+
+        # --- CHECK IF ENTRY CONFIRMATION IS ENABLED ---
+        # Get the entry confirmation setting from accountmanagement
+        entry_confirmation_enabled = entry_settings.get("enable_entry_poi_confirmation", False)
+        if entry_confirmation_enabled:
+            log(f"  ✅ Entry POI Confirmation is ENABLED for {new_folder_name}")
+        else:
+            log(f"  ⏭️ Entry POI Confirmation is DISABLED for {new_folder_name} - skipping confirmation processing")
 
         # Log filtering status before processing
         if target_symbols:
@@ -4606,18 +5387,24 @@ def entry_point_of_interest(broker_name):
                         continue
 
                     new_key = f"{new_folder_name}_{file_key}"
+                    
+                    # --- MOVED: Call swing_points_liquidity BEFORE identify_definitions ---
+                    # This needs to happen first to identify swing points in the raw candles
+                    if poi_config and identify_config:
+                        # First, call swing_points_liquidity on the original candles
+                        swing_points_liquidity(target_data[tf], new_key, candles, identify_config)
+                    
+                    # Now proceed with identification and confirmation setup
+                    if entry_confirmation_enabled:
+                        full_candles_ref_key = f"{tf}_full_candles_ref_{file_key}"
+                        pending_full_candle_data[full_candles_ref_key] = {
+                            "tf": tf,
+                            "config_key": file_key,  # The original key in the source config
+                            "target_data_ref": target_data[tf],  # Reference to where it will be stored
+                            "target_key": file_key  # In target_data, it will be stored under this key
+                        }
+
                     processed_candles = {}
-
-                    # MODIFIED: Store reference to the original full candles data that will be available in config.json
-                    # This will be used later by extract_poi_to_confirmation and generate_confirmation_charts
-                    full_candles_ref_key = f"{tf}_full_candles_ref_{file_key}"
-                    pending_full_candle_data[full_candles_ref_key] = {
-                        "tf": tf,
-                        "config_key": file_key,  # The original key in the source config
-                        "target_data_ref": target_data[tf],  # Reference to where it will be stored
-                        "target_key": file_key  # In target_data, it will be stored under this key
-                    }
-
                     if identify_config:
                         processed_candles = identify_definitions({file_key: candles}, identify_config, source_def_name, raw_filename_base)
                         if file_key in processed_candles:
@@ -4625,37 +5412,36 @@ def entry_point_of_interest(broker_name):
                             target_data[tf][new_key] = updated_candles
                             if extracted_patterns:
                                 target_data[tf][f"{new_key}_patterns"] = extracted_patterns
+                                
+                                # --- ADDED: Call add_liquidity_sweepers_to_patterns immediately after patterns are created ---
+                                # Get original candles for liquidity sweepers
+                                original_candles = candles
+                                if original_candles:
+                                    add_liquidity_sweepers_to_patterns(target_data[tf], new_key, original_candles)
+                                    
+                                    # --- ADDED: Call liquidity_flags_to_sweepers immediately after adding sweepers ---
+                                    patterns_key = f"{new_key}_patterns"
+                                    if patterns_key in target_data[tf]:
+                                        liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
+                                
                             modified = True
 
                         processed_candles = intruder_and_outlaw_check(processed_candles)
-                        poi_config = entry_settings.get("point_of_interest")
+                        
+                        # Now apply POI functions after definitions have been identified
                         if poi_config and file_key in processed_candles:
+                            # Note: swing_points_liquidity already called above
                             identify_poi(target_data[tf], new_key, candles, poi_config)
                             identify_poi_mitigation(target_data[tf], new_key, poi_config)
+                            
                             identify_swing_mitigation_between_definitions(target_data[tf], new_key, candles, poi_config)
                             identify_selected(target_data[tf], new_key, poi_config)
 
+                    # Always store the original candles
                     target_data[tf][file_key] = candles
                     if identify_config and file_key in processed_candles:
                         target_data[tf][new_key] = processed_candles[file_key]
                     modified = True
-
-                    # Image Handling
-                    src_png = os.path.join(source_dev_dir, f"{file_key}.png")
-                    if not os.path.exists(src_png):
-                        src_png = os.path.join(source_dev_dir, f"{raw_filename_base}.png")
-
-                    if os.path.exists(src_png):
-                        img = cv2.imread(src_png)
-                        if img is not None:
-                            if poi_config:
-                                img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
-                                record_config = entry_settings.get("record_prices")
-                                if record_config:
-                                    identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
-                            
-                            img_filename = f"{tf}_{file_key}.png"
-                            pending_images[img_filename] = (tf, img)
 
             # --- STEP 2: Process Ticks JSON ---
             source_ticks_path = os.path.join(dev_base_path, sym, f"{sym}_ticks.json")
@@ -4669,91 +5455,175 @@ def entry_point_of_interest(broker_name):
                 except Exception as e:
                     log(f"Error processing ticks for {sym}: {e}")
             
-            enrich_limit_orders(dev_base_path, new_folder_name)
+            # =================================================================
+            # INTEGRATED SANITIZE LOGIC (replaces sanitize_symbols_or_files call)
+            # =================================================================
+            # Determine which timeframes have patterns
+            tfs_to_keep = []
+            tfs_to_remove = []
 
-            # --- STEP 3: Sanitize and identify orders ---
-            should_delete_folder, tfs_to_keep = sanitize_symbols_or_files(target_sym_dir, target_data)
+            for tf, tf_content in list(target_data.items()):
+                has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
+                
+                if has_patterns:
+                    tfs_to_keep.append(tf)
+                else:
+                    tfs_to_remove.append(tf)
 
-            if should_delete_folder:
+            # If no timeframes have patterns, the whole symbol is invalid - delete the folder
+            if not tfs_to_keep:
                 if os.path.exists(target_sym_dir):
                     shutil.rmtree(target_sym_dir)
-                continue 
+                continue  # Skip to next symbol
 
-            # REMOVED: ensure_full_candles_data_for_all_timeframes is no longer called
+            # =================================================================
+            # END INTEGRATED SANITIZE LOGIC
+            # =================================================================
 
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
-
-            # --- STEP 4: Add liquidity sweepers to patterns ---
+            
+            # STEP 4 ADD DEFINITIONS LIQUIDITY TO PATTERNS (This section is now redundant but kept for backward compatibility)
+            # Note: This section is kept but the main processing now happens immediately after pattern creation
             for tf in tfs_to_keep:
                 if tf in target_data:
                     for file_key in list(target_data[tf].keys()):
                         if file_key.endswith("_patterns"):
-                            # Extract base key (remove '_patterns' suffix)
                             base_key = file_key.replace("_patterns", "")
                             
-                            # Find original candles for this timeframe
-                            original_candles_key = base_key.replace(f"{new_folder_name}_", "")
+                            # Extract original candles key from pattern key
+                            if "_confirmation_from_" in base_key:
+                                parts = base_key.split("_poi_")
+                                if len(parts) > 1:
+                                    original_candles_key = parts[1]
+                                else:
+                                    original_candles_key = base_key.split("_poi_")[0].split("_confirmation_from_")[1]
+                            else:
+                                original_candles_key = base_key.replace(f"{new_folder_name}_", "")
+                            
                             original_candles = target_data[tf].get(original_candles_key, [])
                             
                             if original_candles:
-                                # Add sweepers to patterns
                                 add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
+                                
+                                # --- ADDED: Also add liquidity flags to sweepers for any patterns created here ---
+                                if identify_config:
+                                    liquidity_flags_to_sweepers(target_data[tf], file_key, identify_config)
 
-            # --- STEP 5: Extract POI to confirmation candles ---
-            # Get the POI confirmation timeframes from entry settings
-            poi_confirmation_timeframes = entry_settings.get("poi_confirmation_timeframes", {})
-            
-            if poi_confirmation_timeframes:
-                log(f"  📋 POI Confirmation Rules: {poi_confirmation_timeframes}")
-            else:
-                log(f"  ℹ️ No POI confirmation rules configured - no confirmations will be created")
-            
-            for tf in tfs_to_keep:
-                if tf in target_data:
-                    for file_key in list(target_data[tf].keys()):
-                        if file_key.endswith("_patterns"):
-                            # Extract base key (remove '_patterns' suffix)
-                            base_key = file_key.replace("_patterns", "")
+
+            # --- STEP 5: Now create images WITH sweepers properly added ---
+            for tf in os.listdir(sym_p):  # Re-iterate to create images
+                tf_p = os.path.join(sym_p, tf)
+                if not os.path.isdir(tf_p) or tf not in tfs_to_keep:
+                    continue
+                
+                source_dev_dir = os.path.join(dev_base_path, sym, tf)
+                source_config_path = os.path.join(source_dev_dir, "config.json")
+                if not os.path.exists(source_config_path):
+                    continue
+
+                with open(source_config_path, 'r', encoding='utf-8') as f:
+                    src_data = json.load(f)
+
+                for file_key, candles in src_data.items():
+                    clean_key = file_key.lower()
+                    if "candle_list" in clean_key or "candlelist" in clean_key:
+                        continue
+
+                    is_primary = (clean_key == source_def_name.lower() or clean_key == raw_filename_base)
+                    is_receiver = (not is_primary and raw_filename_base in clean_key)
+
+                    if (is_receiver and process_receiver != "yes") or (not is_primary and not is_receiver):
+                        continue
+
+                    new_key = f"{new_folder_name}_{file_key}"
+                    
+                    # Image Handling
+                    src_png = os.path.join(source_dev_dir, f"{file_key}.png")
+                    if not os.path.exists(src_png):
+                        src_png = os.path.join(source_dev_dir, f"{raw_filename_base}.png")
+
+                    if os.path.exists(src_png):
+                        img = cv2.imread(src_png)
+                        if img is not None:
+                            # Draw POI tools (now includes swing points liquidity from earlier)
+                            if poi_config:
+                                img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
+                                record_config = entry_settings.get("record_prices")
+                                if record_config:
+                                    identify_pending_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                    
+                                    # --- ADDED: Call identify_hitler_prices immediately after identify_prices ---
+                                    patterns_key = f"{new_key}_patterns"
+                                    if patterns_key in target_data[tf]:
+                                        identify_hitler_prices(
+                                            target_data[tf], 
+                                            new_key, 
+                                            record_config,
+                                            dev_base_path, 
+                                            new_folder_name,
+                                            target_data  # Pass the full target_data for cross-timeframe checking
+                                        )
                             
-                            # Call the POI extraction function for this pattern, passing pending_full_candle_data
-                            original_target_data = target_data[tf].copy()  # Keep a copy for reference
-                            result = extract_poi_to_confirmation(
-                                target_data[tf], 
-                                base_key, 
-                                dev_base_path, 
-                                new_folder_name, 
-                                sym,
-                                pending_full_candle_data,  # Pass the queued full candle references
-                                poi_confirmation_timeframes  # Pass the configuration
-                            )
+                            # Draw definition tools AFTER sweepers and flags have been added
+                            if identify_config:
+                                patterns_key = f"{new_key}_patterns"
+                                if patterns_key in target_data[tf]:
+                                    # No need to call liquidity_flags_to_sweepers here as it's already done
+                                    img = draw_definition_tools(img, target_data[tf], patterns_key, identify_config)
                             
-                            # Check if anything was added/modified
-                            if result != original_target_data:
-                                target_data[tf] = result
-                                modified = True
-                                log(f"  📊 Added POI confirmation candles for {sym} {tf}")
+                            img_filename = f"{tf}_{file_key}.png"
+                            pending_images[img_filename] = (tf, img)
 
-            # --- STEP 6: Generate confirmation charts for all timeframes ---
-            generate_confirmation_charts(
-                dev_base_path,
-                new_folder_name,
-                sym,
-                target_sym_dir,
-                target_data,
-                pending_full_candle_data,
-                tfs_to_keep  # Pass the list of timeframes to keep
-            )
+            # --- STEP 6: Extract POI to confirmation candles (ONLY IF ENABLED) ---
+            if entry_confirmation_enabled:
+                # Get the POI confirmation timeframes from entry settings
+                poi_confirmation_timeframes = entry_settings.get("poi_confirmation_timeframes", {})
+                
+                for tf in tfs_to_keep:
+                    if tf in target_data:
+                        for file_key in list(target_data[tf].keys()):
+                            if file_key.endswith("_patterns"):
+                                # Extract base key (remove '_patterns' suffix)
+                                base_key = file_key.replace("_patterns", "")
+                                
+                                # Call the POI extraction function for this pattern, passing pending_full_candle_data
+                                original_target_data = target_data[tf].copy()  # Keep a copy for reference
+                                result = extract_poi_to_confirmation(
+                                    target_data[tf], 
+                                    base_key, 
+                                    dev_base_path, 
+                                    new_folder_name, 
+                                    sym,
+                                    pending_full_candle_data,  # Pass the queued full candle references
+                                    poi_confirmation_timeframes  # Pass the configuration
+                                )
+                                
+                                # Check if anything was added/modified
+                                if result != original_target_data:
+                                    target_data[tf] = result
+                                    modified = True
 
-            # --- STEP 7: Move confirmation keys to their target timeframes (using helper function) ---
-            if move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
-                modified = True
+                    # --- STEP 7: Generate confirmation charts for all timeframes (ONLY IF ENABLED) ---
+                    generate_confirmation_charts(
+                        dev_base_path,
+                        new_folder_name,
+                        sym,
+                        target_sym_dir,
+                        target_data,
+                        pending_full_candle_data,
+                        tfs_to_keep  # Pass the list of timeframes to keep
+                    )
 
-            # --- STEP 7.5: Populate other timeframes with confirmation entry data ---
-            if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
-                modified = True
+                    # --- STEP 8: Move confirmation keys to their target timeframes (ONLY IF ENABLED) ---
+                    if move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
+                        modified = True
 
-            # --- STEP 8: Final Write (Images) ---
+                    # --- STEP 9: Populate other timeframes with confirmation entry data (ONLY IF ENABLED) ---
+                    if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
+                        modified = True
+
+            # --- STEP 10: Final Write (Images) ---
             # Write Images (only for timeframes that are kept)
             for img_name, (tf, img_data) in pending_images.items():
                 if tf in tfs_to_keep:
@@ -4768,12 +5638,68 @@ def entry_point_of_interest(broker_name):
                     json.dump(target_data, f, indent=4)
                 sync_count += 1
 
+        # --- FINAL STEP: Clear limit orders at the END if confirmation is enabled ---
+        if entry_confirmation_enabled:
+            #do nothing until decision
+            
+            # --- NEW: Identify and save Hitler/POI prices using the same record_config ---
+            log(f"  🎯 Identifying POI Zone for {new_folder_name} entries")
+            record_config = entry_settings.get("record_prices")  # Use the same record_config as limit orders
+            
+            if record_config:
+                # First, clear the existing poi_entry.json to start fresh
+                orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+                poi_file = os.path.join(orders_dir, "poi_entry.json")
+                if os.path.exists(poi_file):
+                    try:
+                        os.remove(poi_file)
+                        log(f"    🧹 Cleared existing poi_entry.json")
+                    except:
+                        pass
+                
+                # Iterate through all symbols and timeframes to identify hitler prices
+                for sym in sorted(os.listdir(base_folder)):
+                    sym_p = os.path.join(base_folder, sym)
+                    if not os.path.isdir(sym_p):
+                        continue
+                        
+                    target_sym_dir = os.path.join(dev_base_path, new_folder_name, sym)
+                    target_config_path = os.path.join(target_sym_dir, "config.json")
+                    
+                    if os.path.exists(target_config_path):
+                        try:
+                            with open(target_config_path, 'r', encoding='utf-8') as f:
+                                target_data = json.load(f)
+                            
+                            # Process each timeframe
+                            for tf in target_data.keys():
+                                if isinstance(target_data[tf], dict):
+                                    for key in target_data[tf].keys():
+                                        if key.endswith("_patterns"):
+                                            # Call identify_hitler_prices for each pattern key
+                                            # Pass the FULL target_data so it can check across all timeframes
+                                            identify_hitler_prices(
+                                                target_data[tf], 
+                                                key.replace("_patterns", ""), 
+                                                record_config,
+                                                dev_base_path, 
+                                                new_folder_name,
+                                                target_data  # Pass the full target_data for cross-timeframe checking
+                                            )
+                        except Exception as e:
+                            log(f"Error processing hitler prices for {sym}: {e}")
+            else:
+                log(f"  ⚠️ No record_config found for {new_folder_name}, skipping Hitler/POI identification")
+        else:
+            filter_empty_symbol_folders(dev_base_path, new_folder_name)
+            log(f"  💾 Preserving limit orders for {new_folder_name} (confirmation disabled)")
+
         # --- NEW: Log summary of filtered processing ---
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
         return sync_count
-   
+
     def main_logic():
         """Main logic for processing entry points of interest."""
         log(f"Starting: {broker_name}")
@@ -5138,6 +6064,131 @@ def entries_confirmation(broker_name):
                 json.dump(updated_paused_records, f, indent=4)
             log(f"Removed {len(paused_records) - len(updated_paused_records)} symbols from paused list due to price violations")
 
+    def swing_points_liquidity(target_data_tf, new_key, original_candles, identify_config):
+        """
+        Identifies liquidity sweepers directly from original candles for ALL swing points.
+        For Lower Low: finds first candle with low lower than the swing low's low
+        For Higher High: finds first candle with high higher than the swing high's high
+        Marks both victims and sweepers directly on the original candle records.
+        
+        Victim gets marked with:
+            - swept_by_liquidity: true
+            - swept_by_candle_number: [sweeper candle number]
+            - swept_by_candles: [list of sweeper candle numbers]
+        
+        Sweeper gets marked with:
+            - is_liquidity_sweep: true
+            - swept_victims: [list of victim candle numbers]
+            - swept_victim_number: [first/primary victim]
+        """
+        if not identify_config or not isinstance(target_data_tf, dict) or not original_candles:
+            return
+        
+        # First, identify ALL swing candles as potential victims (swing_lows and swing_highs)
+        victims = []  # List of (candle_number, swing_type, target_price)
+        
+        for candle in original_candles:
+            if not isinstance(candle, dict):
+                continue
+                
+            swing_type = candle.get("swing_type", "").lower()
+            candle_num = candle.get("candle_number")
+            
+            if not swing_type or candle_num is None:
+                continue
+            
+            # Consider ALL swing_low and swing_high as potential victims
+            if swing_type == "swing_low":
+                target_price = candle.get("low")
+                if target_price is not None:
+                    victims.append((candle_num, swing_type, target_price))
+                    #log(f"    📍 Found victim candidate: Candle {candle_num} | Type: swing_low | Price: {target_price:.5f}")
+                    
+            elif swing_type == "swing_high":
+                target_price = candle.get("high")
+                if target_price is not None:
+                    victims.append((candle_num, swing_type, target_price))
+                    #log(f"    📍 Found victim candidate: Candle {candle_num} | Type: swing_high | Price: {target_price:.5f}")
+        
+        
+        #log(f"  🔍 LIQUIDITY SWEEP: Found {len(victims)} swing candles to check for sweepers")
+        
+        # Track relationships
+        sweeper_to_victims = {}  # sweeper_num -> list of victim_nums
+        victim_to_sweepers = {}  # victim_num -> list of sweeper_nums
+        
+        # For each swing candle, find its sweeper
+        for victim_num, swing_type, target_price in victims:
+            
+            # Find the FIRST candle after the victim that sweeps it
+            sweeper_num = None
+            
+            for candle in original_candles:
+                if not isinstance(candle, dict):
+                    continue
+                    
+                candle_num = candle.get("candle_number")
+                if candle_num is None or candle_num <= victim_num:
+                    continue
+                
+                if swing_type == "swing_low":
+                    candle_price = candle.get("low")
+                    if candle_price is not None and candle_price < target_price:
+                        sweeper_num = candle_num
+                        #log(f"      ✅ Sweeper found: Candle {candle_num} low ({candle_price:.5f}) < victim low ({target_price:.5f})")
+                        break
+                        
+                elif swing_type == "swing_high":
+                    candle_price = candle.get("high")
+                    if candle_price is not None and candle_price > target_price:
+                        sweeper_num = candle_num
+                        #log(f"      ✅ Sweeper found: Candle {candle_num} high ({candle_price:.5f}) > victim high ({target_price:.5f})")
+                        break
+            
+            if sweeper_num:
+                # Record relationship
+                if sweeper_num not in sweeper_to_victims:
+                    sweeper_to_victims[sweeper_num] = []
+                if victim_num not in sweeper_to_victims[sweeper_num]:
+                    sweeper_to_victims[sweeper_num].append(victim_num)
+                
+                if victim_num not in victim_to_sweepers:
+                    victim_to_sweepers[victim_num] = []
+                if sweeper_num not in victim_to_sweepers[victim_num]:
+                    victim_to_sweepers[victim_num].append(sweeper_num)
+                
+                #log(f"      📝 Relationship: Victim {victim_num} <- Sweeper {sweeper_num}")
+        
+        # Mark the original candles
+        victims_marked = 0
+        sweepers_marked = 0
+        
+        # Mark victims
+        for victim_num, sweeper_list in victim_to_sweepers.items():
+            for candle in original_candles:
+                if isinstance(candle, dict) and candle.get("candle_number") == victim_num:
+                    candle["swept_by_liquidity"] = True
+                    candle["swept_by_candle_number"] = sweeper_list[0]
+                    candle["swept_by_candles"] = sweeper_list
+                    victims_marked += 1
+                    #log(f"    🎯 Marked victim candle {victim_num} swept by: {sweeper_list}")
+                    break
+        
+        # Mark sweepers
+        for sweeper_num, victim_list in sweeper_to_victims.items():
+            for candle in original_candles:
+                if isinstance(candle, dict) and candle.get("candle_number") == sweeper_num:
+                    candle["is_liquidity_sweep"] = True
+                    candle["swept_victims"] = victim_list
+                    candle["swept_victim_number"] = victim_list[0]
+                    sweepers_marked += 1
+                    #log(f"    💧 Marked sweeper candle {sweeper_num} sweeping victims: {victim_list}")
+                    break
+        
+        #log(f"  ✅ LIQUIDITY SWEEP: Found {len(sweeper_to_victims)} sweepers, marked {victims_marked} victims and {sweepers_marked} sweepers for {new_key}")
+        # 
+        #    
+       
     def identify_definitions(candle_data, identify_config, source_def_name, raw_filename_base):
         if not identify_config:
             return candle_data
@@ -5159,7 +6210,7 @@ def entries_confirmation(broker_name):
         def get_target_swing(current_type, logic_type):
             logic_type = logic_type.lower()
             if "opposite" in logic_type:
-                return "lower_low" if current_type == "higher_high" else "higher_high"
+                return "swing_low" if current_type == "swing_high" else "swing_high"
             if "identical" in logic_type:
                 return current_type
             return None
@@ -5173,7 +6224,7 @@ def entries_confirmation(broker_name):
                     continue
                     
                 s_type = anchor_candle.get("swing_type", "").lower()
-                if s_type not in ["higher_high", "lower_low"]:
+                if s_type not in ["swing_high", "swing_low"]:
                     continue
 
                 # Step 1: Initialize the chain with define_1
@@ -5293,15 +6344,15 @@ def entries_confirmation(broker_name):
                     # Helper function for the core price logic
                     def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
                         if mode == "behind":
-                            if c_type == "higher_high" and r_type == "higher_high": return c_h < r_h
-                            if c_type == "lower_low" and r_type == "lower_low": return c_l > r_l
-                            if c_type == "higher_high" and r_type == "lower_low": return c_l > r_h
-                            if c_type == "lower_low" and r_type == "higher_high": return c_h < r_l
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
                         elif mode == "beyond":
-                            if c_type == "higher_high" and r_type == "higher_high": return c_h > r_h
-                            if c_type == "lower_low" and r_type == "lower_low": return c_l < r_l
-                            if c_type == "higher_high" and r_type == "lower_low": return c_h > r_h
-                            if c_type == "lower_low" and r_type == "higher_high": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
                         return False
 
                     # 1. Check the target candle itself
@@ -5431,97 +6482,6 @@ def entries_confirmation(broker_name):
             
         return sanitized_patterns
 
-    def add_liquidity_sweepers_to_patterns(target_data_tf, new_key, original_candles):
-        """
-        Adds sweeper candle details to victim candles in patterns.
-        For each candle marked with 'swept_by_liquidity': True, find the sweeper candle
-        (by swept_by_candle_number) from original_candles and append its details.
-        Sanitizes sweeper candles to only include essential fields.
-        """
-        if not isinstance(target_data_tf, dict):
-            return
-
-        pattern_key = f"{new_key}_patterns"
-        patterns = target_data_tf.get(pattern_key, {})
-        
-        # Create a map of candle_number to candle for quick lookup
-        candle_map = {
-            c.get("candle_number"): c 
-            for c in original_candles 
-            if isinstance(c, dict) and "candle_number" in c
-        }
-
-        # Define the allowed fields for sanitized sweeper candles
-        allowed_sweeper_fields = {
-            "open", "high", "low", "close", "volume", "spread", "real_volume",
-            "symbol", "time", "candle_number", "timeframe",
-            "candle_x", "candle_y", "candle_width", "candle_height",
-            "candle_left", "candle_right", "candle_top", "candle_bottom",
-            "swing_type", "is_swing", "active_color",
-            "draw_x", "draw_y", "draw_w", "draw_h",
-            "draw_left", "draw_right", "draw_top", "draw_bottom",
-            "is_liquidity_sweeper", "swept_victim_number"
-        }
-
-        for p_name, family in patterns.items():
-            if not isinstance(family, list):
-                continue
-                
-            # Track victims we've already processed to avoid duplicates
-            processed_victims = set()
-            
-            # Create a new list to rebuild the family with sweepers added
-            new_family = []
-            
-            for candle in family:
-                if not isinstance(candle, dict):
-                    new_family.append(candle)
-                    continue
-                    
-                # Add current candle to new family
-                new_family.append(candle)
-                
-                # Check if this candle is a victim (swept_by_liquidity = True)
-                if candle.get("swept_by_liquidity") is True:
-                    victim_num = candle.get("candle_number")
-                    
-                    # Avoid processing same victim twice
-                    if victim_num in processed_victims:
-                        continue
-                        
-                    processed_victims.add(victim_num)
-                    
-                    # Get sweeper candle number
-                    sweeper_num = candle.get("swept_by_candle_number")
-                    if sweeper_num is None:
-                        continue
-                        
-                    # Find sweeper candle in original candles
-                    sweeper_candle = candle_map.get(sweeper_num)
-                    if sweeper_candle and sweeper_candle not in new_family:
-                        # Create a sanitized copy with only allowed fields
-                        sweeper_copy = {}
-                        
-                        # Copy only allowed fields from the original sweeper
-                        full_sweeper = candle_map.get(sweeper_num)
-                        if full_sweeper:
-                            for field in allowed_sweeper_fields:
-                                if field in full_sweeper:
-                                    sweeper_copy[field] = full_sweeper.get(field)
-                        
-                        # Mark it as sweeper (ensure these fields are set)
-                        sweeper_copy["is_liquidity_sweeper"] = True
-                        sweeper_copy["swept_victim_number"] = victim_num
-                        
-                        # Add sweeper to family
-                        new_family.append(sweeper_copy)
-            
-            # Replace the old family with the new one
-            if len(new_family) > len(family):
-                patterns[p_name] = new_family
-        
-        return target_data_tf
-
     def intruder_and_outlaw_check(processed_data):
         for file_key, candles in processed_data.items():
             if not isinstance(candles, list):
@@ -5568,9 +6528,9 @@ def entries_confirmation(broker_name):
                                 mid_swing = mid_candle.get("swing_type", "").lower()
                                 
                                 is_outlaw = False
-                                if sender_swing == "lower_low" and mid_swing == "higher_high":
+                                if sender_swing == "swing_low" and mid_swing == "swing_high":
                                     is_outlaw = True
-                                elif sender_swing == "higher_high" and mid_swing == "lower_low":
+                                elif sender_swing == "swing_high" and mid_swing == "swing_low":
                                     is_outlaw = True
                                 
                                 if is_outlaw:
@@ -5588,11 +6548,256 @@ def entries_confirmation(broker_name):
                         continue
 
         return processed_data
+    
+    def add_liquidity_sweepers_to_patterns(target_data_tf, new_key, original_candles):
+        """
+        Adds sweeper candle details to victim candles in patterns.
+        Ensures victim candles have proper sweeper information and adds sweepers to the family.
+        Sanitizes sweeper candles to only include essential fields.
+        """
+        if not isinstance(target_data_tf, dict):
+            return
 
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        # Create a map of candle_number to candle for quick lookup from original candles
+        # This contains the complete, marked-up candle data with sweeper information
+        original_candle_map = {
+            c.get("candle_number"): c 
+            for c in original_candles 
+            if isinstance(c, dict) and "candle_number" in c
+        }
+
+        # Define the allowed fields for sanitized sweeper candles
+        allowed_sweeper_fields = {
+            "open", "high", "low", "close", "volume", "spread", "real_volume",
+            "symbol", "time", "candle_number", "timeframe",
+            "candle_x", "candle_y", "candle_width", "candle_height",
+            "candle_left", "candle_right", "candle_top", "candle_bottom",
+            "swing_type", "is_swing", "active_color",
+            "draw_x", "draw_y", "draw_w", "draw_h",
+            "draw_left", "draw_right", "draw_top", "draw_bottom",
+            "is_liquidity_sweep", "swept_victims", "swept_victim_number", "liquidity_price"
+        }
+
+        for p_name, family in patterns.items():
+            if not isinstance(family, list):
+                continue
+                
+            # Track victims we've already processed and sweepers we've added
+            processed_victims = set()
+            added_sweepers = set()
+            
+            # Create a new list to rebuild the family with updated victims and added sweepers
+            new_family = []
+            
+            # First pass: Process all candles, updating victims with their sweeper info
+            for candle in family:
+                if not isinstance(candle, dict):
+                    new_family.append(candle)
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    new_family.append(candle)
+                    continue
+                
+                # Get the original candle data which has the liquidity sweep markings
+                original_candle = original_candle_map.get(candle_num)
+                
+                if original_candle:
+                    # Create a copy to avoid modifying the original
+                    updated_candle = candle.copy()
+                    
+                    # Update the candle with liquidity sweep information from original
+                    # This ensures victims have swept_by_liquidity, swept_by_candle_number, etc.
+                    if original_candle.get("swept_by_liquidity"):
+                        updated_candle["swept_by_liquidity"] = True
+                        updated_candle["swept_by_candle_number"] = original_candle.get("swept_by_candle_number")
+                        updated_candle["swept_by_candles"] = original_candle.get("swept_by_candles", [])
+                        
+                        # Mark as victim for processing
+                        if candle_num not in processed_victims:
+                            processed_victims.add(candle_num)
+                    
+                    # If this candle itself is a sweeper, update its sweeper info
+                    if original_candle.get("is_liquidity_sweep"):
+                        updated_candle["is_liquidity_sweep"] = True
+                        updated_candle["swept_victims"] = original_candle.get("swept_victims", [])
+                        updated_candle["swept_victim_number"] = original_candle.get("swept_victim_number")
+                        updated_candle["liquidity_price"] = original_candle.get("liquidity_price")
+                    
+                    new_family.append(updated_candle)
+                else:
+                    # If no original data, keep as is
+                    new_family.append(candle)
+            
+            # Second pass: Add missing sweeper candles that aren't already in the family
+            for victim_num in processed_victims:
+                # Find the victim in new_family to get its sweeper info
+                victim_candle = None
+                for candle in new_family:
+                    if isinstance(candle, dict) and candle.get("candle_number") == victim_num:
+                        victim_candle = candle
+                        break
+                
+                if not victim_candle:
+                    continue
+                
+                # Get sweeper candle number(s) from victim
+                sweeper_nums = victim_candle.get("swept_by_candles", [])
+                if not sweeper_nums:
+                    # Try single sweeper number
+                    sweeper_num = victim_candle.get("swept_by_candle_number")
+                    if sweeper_num:
+                        sweeper_nums = [sweeper_num]
+                
+                for sweeper_num in sweeper_nums:
+                    # Check if sweeper is already in family
+                    sweeper_exists = False
+                    for candle in new_family:
+                        if isinstance(candle, dict) and candle.get("candle_number") == sweeper_num:
+                            sweeper_exists = True
+                            break
+                    
+                    # If sweeper not in family and not already added, add it
+                    if not sweeper_exists and sweeper_num not in added_sweepers:
+                        # Find sweeper in original candles
+                        original_sweeper = original_candle_map.get(sweeper_num)
+                        if original_sweeper:
+                            # Create sanitized sweeper copy
+                            sweeper_copy = {}
+                            for field in allowed_sweeper_fields:
+                                if field in original_sweeper:
+                                    sweeper_copy[field] = original_sweeper.get(field)
+                            
+                            # Ensure sweeper is properly marked
+                            sweeper_copy["is_liquidity_sweep"] = True
+                            sweeper_copy["swept_victim_number"] = victim_num
+                            
+                            # Add to new_family
+                            new_family.append(sweeper_copy)
+                            added_sweepers.add(sweeper_num)
+            
+            # Replace the old family with the new one
+            if len(new_family) > len(family) or processed_victims:
+                patterns[p_name] = new_family
+        
+        return target_data_tf
+    
+    def liquidity_flags_to_sweepers(target_data_tf, patterns_key, identify_config):
+        """
+        Adds define_{value}_liquidity: true flags to sweeper candles based on define candles they swept.
+        
+        This function should be called BEFORE draw_definition_tools to ensure sweepers have
+        the liquidity flags properly set before drawing.
+        
+        Args:
+            target_data_tf: The timeframe data dictionary containing patterns
+            patterns_key: The key for the patterns in target_data_tf (e.g., "new_key_patterns")
+            identify_config: Configuration containing define settings
+        
+        Returns:
+            bool: True if any flags were added, False otherwise
+        """
+        if not identify_config or not target_data_tf:
+            return False
+        
+        patterns = target_data_tf.get(patterns_key, {})
+        flags_added = False
+        
+        #print(f"ADDING LIQUIDITY FLAGS TO SWEEPERS for {patterns_key}")
+        
+        for family_name, family in patterns.items():
+            if not isinstance(family, list):
+                continue
+            
+            # First, build maps of sweepers and their victims
+            sweeper_by_number = {}  # {sweeper_candle_number: sweeper_candle}
+            sweeper_for_victim = {}  # {victim_candle_number: sweeper_candle}
+            
+            # Pass 1: Identify all sweepers and map them to their victims
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # If this candle is a sweeper
+                if candle.get("is_liquidity_sweep") is True:
+                    sweeper_by_number[candle_num] = candle
+                    
+                    # Map this sweeper to all its victims
+                    swept_victims = candle.get("swept_victims", [])
+                    if swept_victims:
+                        for victim_num in swept_victims:
+                            sweeper_for_victim[victim_num] = candle
+                    
+                    # Handle single victim case
+                    single_victim = candle.get("swept_victim_number")
+                    if single_victim and single_victim not in sweeper_for_victim:
+                        sweeper_for_victim[single_victim] = candle
+            
+            # Pass 2: Find all define candles and add flags to their sweepers
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                # Check if this candle is a define (any define_n)
+                define_name = None
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        define_name = key
+                        break
+                
+                if not define_name:
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # Check account management to see if this define should be processed
+                define_settings = identify_config.get(define_name, {})
+                if define_settings:
+                    drawing_enabled = define_settings.get("enable_drawing", True)
+                    if not drawing_enabled:
+                        # Skip if drawing is disabled for this define
+                        continue
+                
+                # Find the sweeper for this define candle
+                sweeper = None
+                
+                # Priority 1: Check victim mapping
+                if candle_num in sweeper_for_victim:
+                    sweeper = sweeper_for_victim[candle_num]
+                
+                # Priority 2: Check direct swept_by_candle_number
+                if not sweeper:
+                    swept_by_num = candle.get("swept_by_candle_number")
+                    if swept_by_num and swept_by_num in sweeper_by_number:
+                        sweeper = sweeper_by_number[swept_by_num]
+                
+                # If we found a sweeper, add the liquidity flag
+                if sweeper:
+                    liquidity_flag = f"{define_name}_liquidity"
+                    
+                    # Check if flag already exists to avoid duplicates
+                    if not sweeper.get(liquidity_flag):
+                        sweeper[liquidity_flag] = True
+                        flags_added = True
+                        #print(f"  🏷️ Added '{liquidity_flag}: true' to sweeper candle #{sweeper.get('candle_number')} for define #{candle_num}")
+        
+        return flags_added
+   
     def identify_poi(target_data_tf, new_key, original_candles, poi_config):
         """
         Identifies Point of Interest (Breaker) based strictly on price violation.
-        Updated to specifically target lower_low and higher_high violations.
+        Updated to specifically target swing_low and swing_high violations.
+        Now respects the exact from_subject and after_subject values without auto-appending _liquidity.
         Tags anchor candles with 'from': True and 'after': True.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
@@ -5601,8 +6806,12 @@ def entries_confirmation(broker_name):
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
-        from_sub = poi_config.get("from_subject")  
+        from_sub = poi_config.get("from_subject") 
         after_sub = poi_config.get("after_subject") 
+        
+        # FIX: Only check for the exact values, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        after_variants = [after_sub] if after_sub else []
 
         candle_map = {
             c.get("candle_number"): c 
@@ -5611,9 +6820,18 @@ def entries_confirmation(broker_name):
         }
 
         for p_name, family in patterns.items():
-            # 1. Locate the anchor candles
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
-            after_candle = next((c for c in family if c.get(after_sub) is True), None)
+            # 1. Locate the anchor candles - check only the exact values
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+            
+            after_candle = None
+            for variant in after_variants:
+                after_candle = next((c for c in family if c.get(variant) is True), None)
+                if after_candle:
+                    break
             
             if not from_candle or not after_candle:
                 continue
@@ -5628,9 +6846,9 @@ def entries_confirmation(broker_name):
             
             # Determine target price level based on swing type
             if "high" in swing_type:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -5645,14 +6863,14 @@ def entries_confirmation(broker_name):
                 if not isinstance(oc, dict) or oc.get("candle_number") <= after_num:
                     continue
                     
-                # Logic for lower_low and higher_high violations
-                if swing_type == "lower_low":
+                # Logic for swing_low and swing_high violations
+                if swing_type == "swing_low":
                     violator_low = oc.get("low")
                     if violator_low is not None and violator_low < target_price:
                         hitler_record = oc.copy()
                         break
                 
-                elif swing_type == "higher_high":
+                elif swing_type == "swing_high":
                     violator_high = oc.get("high")
                     if violator_high is not None and violator_high > target_price:
                         hitler_record = oc.copy()
@@ -5663,14 +6881,13 @@ def entries_confirmation(broker_name):
 
             if hitler_record:
                 h_num = hitler_record.get("candle_number")
-                direction_label = "below" if swing_type == "lower_low" else "above"
+                direction_label = "below" if swing_type == "swing_low" else "above"
                 
                 label = f"after_subject_{after_sub}_violator_{h_num}_breaks_{direction_label}_{from_sub}_{clean_key}_price_{target_price:.5f}"
                 
                 from_candle[label] = True
-                hitler_record["is_hitler_breaker"] = True
                 hitler_record["point_of_interest"] = True
-                
+                hitler_record["is_hitler_poi"] = True
                 # Enrich coordinates for visualization
                 coordinate_keys = [
                     "candle_x", "candle_y", "candle_width", "candle_height",
@@ -5682,13 +6899,17 @@ def entries_confirmation(broker_name):
                         hitler_record[k] = full_record.get(k)
                 
                 family.append(hitler_record)
+                from_candle["pattern_entry"] = True
+            else:
+                from_candle["pattern_entry"] = True
 
         return target_data_tf
-
+    
     def identify_poi_mitigation(target_data_tf, new_key, poi_config):
         """
         Removes patterns where specific candles (restrict_definitions_mitigation) 
         violate the target price based on swing type.
+        Now respects the exact from_subject and restrict values without auto-appending _liquidity.
         """
         if not poi_config or not isinstance(target_data_tf, dict):
             return
@@ -5702,10 +6923,20 @@ def entries_confirmation(broker_name):
             return
 
         restrict_subs = [s.strip() for s in restrict_raw.split(",")]
+        
+        # FIX: Only check for the exact from_subject value, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        
         patterns_to_remove = []
 
         for p_name, family in patterns.items():
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            # Find from_candle using exact value only
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+                    
             if not from_candle:
                 continue
 
@@ -5713,9 +6944,9 @@ def entries_confirmation(broker_name):
             
             # Determine the target price from configuration
             if "high" in target_swingtype:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "") 
             target_price = from_candle.get(clean_key)
@@ -5725,20 +6956,27 @@ def entries_confirmation(broker_name):
 
             is_mitigated = False
             
-            # Check if any restricted candle violates the price level
+            # FIX: Check each restrict subject using exact values only (no auto-appended _liquidity)
             for sub_key in restrict_subs:
-                restrict_candle = next((c for c in family if c.get(sub_key) is True), None)
+                # Only check for the exact subject value
+                sub_variants = [sub_key]  # Don't auto-append _liquidity
+                
+                restrict_candle = None
+                for variant in sub_variants:
+                    restrict_candle = next((c for c in family if c.get(variant) is True), None)
+                    if restrict_candle:
+                        break
                 
                 if restrict_candle:
                     # Apply the specific logic requested
-                    if target_swingtype == "lower_low":
+                    if target_swingtype == "swing_low":
                         violator_low = restrict_candle.get("low")
                         # If violator_low is < target_price, it's a mitigation
                         if violator_low is not None and violator_low < target_price:
                             is_mitigated = True
                             break
                     
-                    elif target_swingtype == "higher_high":
+                    elif target_swingtype == "swing_high":
                         violator_high = restrict_candle.get("high")
                         # If violator_high is > target_price, it's a mitigation
                         if violator_high is not None and violator_high > target_price:
@@ -5757,7 +6995,7 @@ def entries_confirmation(broker_name):
             del patterns[p_name]
 
         return target_data_tf
-    
+
     def identify_swing_mitigation_between_definitions(target_data_tf, new_key, original_candles, poi_config):
         """
         Checks for swing violations between multiple pairs of definitions (sender and receiver).
@@ -5789,9 +7027,9 @@ def entries_confirmation(broker_name):
             # Determine target price level once per pattern based on from_subject
             target_swingtype = from_candle.get("swing_type", "").lower()
             if "high" in target_swingtype:
-                price_key = poi_config.get("subject_is_higherhigh_or_lowerhigh", "low")
+                price_key = poi_config.get("subject_is_swinghigh_or_lowerhigh", "low")
             else:
-                price_key = poi_config.get("subject_is_lowerlow_or_higherlow", "high")
+                price_key = poi_config.get("subject_is_swinglow_or_higherlow", "high")
 
             clean_key = price_key.replace("_price", "")
             target_price = from_candle.get(clean_key)
@@ -5836,12 +7074,12 @@ def entries_confirmation(broker_name):
                         
                         # Match the swing type of the receiver
                         if current_swing == receiver_swing_type:
-                            if receiver_swing_type == "lower_low":
+                            if receiver_swing_type == "swing_low":
                                 v_low = oc.get("low")
                                 if v_low is not None and v_low < target_price:
                                     is_mitigated = True
                                     break
-                            elif receiver_swing_type == "higher_high":
+                            elif receiver_swing_type == "swing_high":
                                 v_high = oc.get("high")
                                 if v_high is not None and v_high > target_price:
                                     is_mitigated = True
@@ -5945,13 +7183,14 @@ def entries_confirmation(broker_name):
                 del patterns[p_name]
 
         return target_data_tf
-
+    
     def draw_poi_tools(img, target_data_tf, new_key, poi_config):
         """
         Draws visual markers on the image. 
         Boxes feature a single-edge border on the 'sensitive' price level.
         Updates 'from_candle' with flags regarding its extension or break status.
         Now attaches the formatted time of the breaker candle to the center of boxes.
+        Now respects the exact from_subject value without auto-appending _liquidity.
         """
         if not poi_config or img is None:
             return img
@@ -5962,20 +7201,28 @@ def entries_confirmation(broker_name):
         drawing_tool = poi_config.get("drawing_tool", "horizontal_line")
         from_sub = poi_config.get("from_subject")
         
+        # FIX: Only check for the exact value provided, don't auto-append _liquidity
+        from_variants = [from_sub] if from_sub else []
+        
         # Config mapping for sensitive edge
-        hh_lh_edge = poi_config.get("subject_is_higherhigh_or_lowerhigh") # e.g., "low_price"
-        ll_hl_edge = poi_config.get("subject_is_lowerlow_or_higherlow")   # e.g., "high_price"
+        hh_lh_edge = poi_config.get("subject_is_swinghigh_or_lowerhigh") # e.g., "low_price"
+        ll_hl_edge = poi_config.get("subject_is_swinglow_or_higherlow")   # e.g., "high_price"
         
         img_height, img_width = img.shape[:2]
 
         for p_name, family in patterns.items():
-            # 1. Identify the origin (from_candle)
-            from_candle = next((c for c in family if c.get(from_sub) is True), None)
+            # 1. Identify the origin (from_candle) using exact value only
+            from_candle = None
+            for variant in from_variants:
+                from_candle = next((c for c in family if c.get(variant) is True), None)
+                if from_candle:
+                    break
+                    
             if not from_candle:
                 continue
 
             # Locate the breaker candle using the boolean flags
-            breaker_candle = next((c for c in family if c.get("is_hitler_breaker") or c.get("is_invalid_hitler")), None)
+            breaker_candle = next((c for c in family if c.get("is_hitler_poi") or c.get("is_invalid_hitler") or c.get("point_of_interest")), None)
             
             # 2. Determine X boundaries and Update Flags
             start_x = int(from_candle.get("draw_right", from_candle.get("candle_right", 0)))
@@ -5990,7 +7237,6 @@ def entries_confirmation(broker_name):
                 
                 # Update the status flags on the origin candle
                 from_candle[f"drawn_and_stopped_on_hitler{hitler_num}"] = True
-                from_candle["pending_entry_level"] = False
 
                 # --- DATE FORMATTING LOGIC ---
                 raw_time = breaker_candle.get("time", "")
@@ -6005,6 +7251,7 @@ def entries_confirmation(broker_name):
                 end_x = img_width
                 color = (0, 255, 0)  # Green for active
                 from_candle["pending_entry_level"] = True
+                
 
             # 3. Handle Drawing Tools
             
@@ -6036,9 +7283,9 @@ def entries_confirmation(broker_name):
                 swing_type = from_candle.get("swing_type", "").lower()
                 border_y = None
 
-                if "higher_high" in swing_type or "lower_high" in swing_type:
+                if "swing_high" in swing_type or "lower_high" in swing_type:
                     border_y = y_low if hh_lh_edge == "low_price" else y_high
-                elif "lower_low" in swing_type or "higher_low" in swing_type:
+                elif "swing_low" in swing_type or "higher_low" in swing_type:
                     border_y = y_high if ll_hl_edge == "high_price" else y_low
 
                 # Draw the single sensitive border line
@@ -6067,17 +7314,308 @@ def entries_confirmation(broker_name):
                 cv2.line(img, (start_x, target_y), (end_x, target_y), color, 2)
 
         return img
-
-    def identify_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
+    
+    def draw_definition_tools(img, target_data_tf, pattern_key, identify_config):
+        """
+        Draws visual markers for definitions as HORIZONTAL LINES with optional text labels.
+        If swept: draws horizontal line from define candle's price level across to sweeper candle
+        If not swept: draws horizontal line from define candle extending to the right edge
+        
+        Now checks account management configuration to determine if drawing is enabled for each define_n.
+        Supports both solid and dashed lines based on drawing_tool setting.
+        Adds centered text labels above/below the line based on swing type, but ONLY for swept lines.
+        """
+        if not identify_config or img is None:
+            return img
+        
+        patterns = target_data_tf.get(pattern_key, {})
+        img_height, img_width = img.shape[:2]
+        
+        #print(f"DRAWING DEFINITION TOOLS for {pattern_key}")
+        
+        total_families = 0
+        total_defines = 0
+        swept_count = 0
+        unswept_count = 0
+        skipped_count = 0
+        disabled_count = 0
+        text_drawn_count = 0
+        
+        for family_name, family in patterns.items():
+            if not isinstance(family, list):
+                #print(f"  ⚠️ Family '{family_name}' is not a list, skipping")
+                continue
+            
+            total_families += 1
+            #print(f"\n  📁 Family: {family_name} ({len(family)} candles)")
+            
+            # First, build a map of sweeper candles by their candle_number for easy lookup
+            sweeper_by_number = {}  # {sweeper_candle_number: sweeper_candle}
+            
+            # Also build a map of which sweepers map to which victims
+            # This is based on the sweeper's swept_victims field
+            sweeper_for_victim = {}  # {victim_candle_number: sweeper_candle}
+            
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                candle_num = candle.get("candle_number")
+                if candle_num is None:
+                    continue
+                
+                # If this candle is a sweeper (has is_liquidity_sweep = True)
+                if candle.get("is_liquidity_sweep") is True:
+                    sweeper_by_number[candle_num] = candle
+                    
+                    # Map this sweeper to all its victims
+                    swept_victims = candle.get("swept_victims", [])
+                    if swept_victims:
+                        for victim_num in swept_victims:
+                            sweeper_for_victim[victim_num] = candle
+                    # Also handle single victim case
+                    single_victim = candle.get("swept_victim_number")
+                    if single_victim and single_victim not in sweeper_for_victim:
+                        sweeper_for_victim[single_victim] = candle
+            
+            # Now draw for each define candle
+            family_defines = 0
+            family_swept = 0
+            family_unswept = 0
+            family_disabled = 0
+            family_text_drawn = 0
+            
+            for candle in family:
+                if not isinstance(candle, dict):
+                    continue
+                
+                # Check if this candle is a define (any define_n)
+                define_name = None
+                for key in candle.keys():
+                    if key.startswith("define_") and candle[key] is True:
+                        define_name = key
+                        break
+                
+                if not define_name:
+                    continue
+                
+                family_defines += 1
+                total_defines += 1
+                
+                # Get candle details
+                candle_num = candle.get("candle_number", "???")
+                swing_type = candle.get("swing_type", "").lower()
+                
+                #print(f"\n    🔍 Processing {define_name} (Candle #{candle_num})")
+                #print(f"       Swing type: {swing_type}")
+                
+                # --- ACCOUNT MANAGEMENT CHECK ---
+                # Check if this specific define_n is enabled for drawing
+                # First check define-specific settings in identify_config
+                define_settings = identify_config.get(define_name, {})
+                
+                # If define-specific settings exist, check if drawing is enabled
+                if define_settings:
+                    drawing_enabled = define_settings.get("enable_drawing", True)  # Default to True if not specified
+                    #print(f"       📋 Account management for {define_name}: enable_drawing = {drawing_enabled}")
+                    
+                    if not drawing_enabled:
+                        #print(f"       ⏭️ Skipped: {define_name} drawing disabled in account management")
+                        disabled_count += 1
+                        family_disabled += 1
+                        continue
+                    
+                    # Get text label if available
+                    text_label = define_settings.get("text", "")
+                    #print(f"       📝 Text label: '{text_label}'")
+                else:
+                    # No specific settings for this define_n, assume drawing is enabled
+                    #print(f"       ℹ️ No account management settings for {define_name}, using default (enabled)")
+                    text_label = ""  # No text label by default
+                
+                # Get drawing tool preference for this specific define
+                drawing_tool = define_settings.get("tool", identify_config.get("drawing_tool", "horizontal_line"))
+                #print(f"       🖌️ Drawing tool: {drawing_tool}")
+                
+                # Check all possible swept indicators
+                swept_by_num = candle.get("swept_by_candle_number")
+                swept_by_liquidity = candle.get("swept_by_liquidity")
+                
+                # Check if this candle is a victim (has a sweeper mapped to it)
+                is_victim = candle_num in sweeper_for_victim
+                
+                #print(f"       swept_by_candle_number: {swept_by_num}")
+                #print(f"       swept_by_liquidity: {swept_by_liquidity}")
+                #print(f"       is_victim (has sweeper mapped): {is_victim}")
+                
+                # Determine the Y-coordinate (price level) based on swing type
+                # This is the horizontal line level
+                if "swing_high" in swing_type:
+                    # For higher high, draw from the HIGH of the candle
+                    line_y = int(candle.get("draw_top", candle.get("candle_top", 0)))
+                    line_desc = f"high at Y={line_y}"
+                    # Start from the RIGHT side of the candle
+                    start_x = int(candle.get("draw_right", candle.get("candle_right", 0)))
+                    text_position = "above"  # Text should be above the line for higher high
+                elif "swing_low" in swing_type:
+                    # For lower low, draw from the LOW of the candle
+                    line_y = int(candle.get("draw_bottom", candle.get("candle_bottom", img_height)))
+                    line_desc = f"low at Y={line_y}"
+                    # Start from the RIGHT side of the candle
+                    start_x = int(candle.get("draw_right", candle.get("candle_right", 0)))
+                    text_position = "below"  # Text should be below the line for lower low
+                else:
+                    #print(f"       ❌ Skipped: Unknown swing type '{swing_type}'")
+                    skipped_count += 1
+                    continue
+                
+                #print(f"       Horizontal line level: {line_desc}")
+                #print(f"       Start X: {start_x}")
+                #print(f"       Text position: {text_position}")
+                
+                # Determine if swept and find sweeper
+                sweeper = None
+                end_x = img_width  # Default to right edge
+                end_desc = "right edge"
+                is_swept = False
+                
+                # Priority 1: Check if this candle has a sweeper mapped to it via sweeper_for_victim
+                if candle_num in sweeper_for_victim:
+                    sweeper = sweeper_for_victim[candle_num]
+                    sweeper_num = sweeper.get("candle_number", "???")
+                    #print(f"       ✅ Swept via victim mapping to sweeper #{sweeper_num}")
+                    is_swept = True
+                
+                # Priority 2: Check direct swept_by_candle_number that exists in sweeper_by_number
+                elif swept_by_num and swept_by_num in sweeper_by_number:
+                    sweeper = sweeper_by_number[swept_by_num]
+                    #print(f"       ✅ Swept via direct swept_by_candle_number={swept_by_num}")
+                    is_swept = True
+                
+                if sweeper:
+                    # If swept, draw horizontal line to the sweeper candle's LEFT side
+                    sweeper_num = sweeper.get("candle_number", "???")
+                    
+                    # Get the sweeper's left side coordinate
+                    # For sweepers, we want to draw to their left side (where they start)
+                    end_x = int(sweeper.get("draw_left", sweeper.get("candle_left", img_width)))
+                    
+                    # Make sure we're drawing to the LEFT of the sweeper (earlier in time)
+                    # If the sweeper is to the left of the victim (shouldn't happen by logic), adjust
+                    if end_x < start_x:
+                        # Sweeper is to the left, draw to its right side instead
+                        end_x = int(sweeper.get("draw_right", sweeper.get("candle_right", img_width)))
+                        end_desc = f"sweeper #{sweeper_num} right side at X={end_x}"
+                    else:
+                        end_desc = f"sweeper #{sweeper_num} left side at X={end_x}"
+                    
+                    #print(f"       📍 Swept: drawing horizontal line to {end_desc}")
+                    swept_count += 1
+                    family_swept += 1
+                else:
+                    # If not swept, draw horizontal line to right edge
+                    #print(f"       ➡️ Not swept: drawing horizontal line to right edge at X={end_x}")
+                    unswept_count += 1
+                    family_unswept += 1
+                
+                # Draw the line based on drawing tool preference
+                if "dashed_horizontal_line" in drawing_tool:
+                    # Draw DASHED horizontal line
+                    dash_length = 10
+                    gap_length = 5
+                    curr_x = start_x
+                    
+                    while curr_x < end_x:
+                        next_x = min(curr_x + dash_length, end_x)
+                        cv2.line(img, (curr_x, line_y), (next_x, line_y), (0, 0, 0), 1, cv2.LINE_AA)
+                        curr_x += dash_length + gap_length
+                    
+                    #print(f"       🖍️ Drew DASHED line from X={start_x} to X={end_x}")
+                else:
+                    # Draw SOLID horizontal line (default)
+                    cv2.line(img, (start_x, line_y), (end_x, line_y), (0, 0, 0), 1, cv2.LINE_AA)
+                    #print(f"       🖍️ Drew SOLID line from X={start_x} to X={end_x}")
+                
+                # Draw text label ONLY if the line is swept (has a sweeper)
+                if text_label and is_swept:
+                    # Calculate center X coordinate of the line
+                    center_x = (start_x + end_x) // 2
+                    
+                    # Calculate Y coordinate based on text position
+                    if text_position == "above":
+                        # Place text above the line (5 pixels above)
+                        text_y = line_y - 5
+                        text_bg_y1 = text_y - 15
+                        text_bg_y2 = text_y + 5
+                    else:  # below
+                        # Place text below the line (15 pixels below to account for text height)
+                        text_y = line_y + 15
+                        text_bg_y1 = text_y - 15
+                        text_bg_y2 = text_y + 5
+                    
+                    # Get text size
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.4
+                    thickness = 1
+                    (text_width, text_height), baseline = cv2.getTextSize(text_label, font, font_scale, thickness)
+                    
+                    # Calculate text position to center it horizontally
+                    text_x = center_x - (text_width // 2)
+                    
+                    # Draw white background rectangle for better readability
+                    padding = 2
+                    bg_x1 = text_x - padding
+                    bg_y1 = text_y - text_height - padding
+                    bg_x2 = text_x + text_width + padding
+                    bg_y2 = text_y + padding
+                    
+                    # Ensure background stays within image bounds
+                    bg_x1 = max(0, bg_x1)
+                    bg_y1 = max(0, bg_y1)
+                    bg_x2 = min(img_width, bg_x2)
+                    bg_y2 = min(img_height, bg_y2)
+                    
+                    # Draw background rectangle
+                    cv2.rectangle(img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+                    
+                    # Draw text in black
+                    cv2.putText(img, text_label, (text_x, text_y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+                    
+                    #print(f"       📝 Drew text '{text_label}' at center X={center_x}, Y={text_y} ({text_position} line)")
+                    text_drawn_count += 1
+                    family_text_drawn += 1
+        return img
+    
+    def identify_pending_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name):
         """
         Saves limit orders into a pending_orders folder INSIDE the specific new_filename folder.
         Path: dev_base_path/new_folder_name/pending_orders/limit_orders.json
+        Also adds order_type flag to the entry candle in the original data structure
+        Also checks poi_entry.json for existing POI orders and adds POI flags to matching patterns
+        Also filters out orders where order_type doesn't match poi_entry_order_type
         """
         if not record_config:
             return
 
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
+        
+        # Load POI entries if they exist
+        poi_orders = []
+        poi_file = os.path.join(dev_base_path, new_folder_name, "pending_orders", "poi_entry.json")
+        if os.path.exists(poi_file):
+            try:
+                with open(poi_file, 'r', encoding='utf-8') as f:
+                    poi_orders = json.load(f)
+            except:
+                poi_orders = []
+        
+        # Create a lookup dictionary for POI orders by hitler_time
+        poi_by_time = {}
+        for poi in poi_orders:
+            hitler_time = poi.get("hitler_time")
+            if hitler_time:
+                poi_by_time[hitler_time] = poi
         
         pending_list = []
         price_map = {
@@ -6095,6 +7633,30 @@ def entries_confirmation(broker_name):
         for p_name, family in patterns.items():
             origin_candle = next((c for c in family if c.get("pending_entry_level") is True), None)
             
+            # Check if this pattern has a POI origin time matching any POI order
+            found_poi = None
+            poi_origin_time = None
+            pattern_time_id_with_poi = None
+            poi_entry_order_type = None
+            
+            # Scan all candles in the family to find poi_origin_time and POI-related fields
+            for candle in family:
+                if candle.get("poi_origin_time"):
+                    poi_origin_time = candle.get("poi_origin_time")
+                    # Check if this poi_origin_time exists in our POI orders
+                    if poi_origin_time in poi_by_time:
+                        found_poi = poi_by_time[poi_origin_time]
+                        # Don't break - continue scanning to get all POI fields
+                
+                # Check for pattern_time_id_with_poi directly
+                if candle.get("pattern_time_id_with_poi") and not pattern_time_id_with_poi:
+                    pattern_time_id_with_poi = candle.get("pattern_time_id_with_poi")
+                
+                # Check for poi_entry_order_type directly
+                if candle.get("poi_entry_order_type") and not poi_entry_order_type:
+                    poi_entry_order_type = candle.get("poi_entry_order_type")
+            
+            # First determine the order type for this pattern
             if origin_candle:
                 order_data = {
                     "symbol": origin_candle.get("symbol", "unknown"),
@@ -6106,6 +7668,20 @@ def entries_confirmation(broker_name):
                     "target": 0
                 }
 
+                # Add pattern_time_id_with_poi if it exists
+                if pattern_time_id_with_poi:
+                    order_data["pattern_time_id_with_poi"] = pattern_time_id_with_poi
+                elif poi_origin_time:
+                    # Fallback to using poi_origin_time if pattern_time_id_with_poi not found
+                    order_data["pattern_time_id_with_poi"] = poi_origin_time
+                
+                # Add poi_entry_order_type if it exists
+                if poi_entry_order_type:
+                    order_data["poi_entry_order_type"] = poi_entry_order_type
+                elif found_poi:
+                    # Fallback to using found_poi order_type
+                    order_data["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
+
                 for role in ["entry", "exit", "target"]:
                     role_cfg = record_config.get(role, {})
                     subject_key = role_cfg.get("subject")
@@ -6116,24 +7692,60 @@ def entries_confirmation(broker_name):
                             swing_type = target_candle.get("swing_type", "").lower()
                             price_attr_raw = ""
                             if "high" in swing_type:
-                                price_attr_raw = role_cfg.get("subject_is_higherhigh_or_lowerhigh")
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
                             elif "low" in swing_type:
-                                price_attr_raw = role_cfg.get("subject_is_lowerlow_or_higherlow")
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
 
                             actual_key = price_map.get(price_attr_raw, price_attr_raw)
                             if actual_key:
                                 order_data[role] = target_candle.get(actual_key, 0)
                 
-                entry_subject = record_config.get("entry", {}).get("subject")
-                entry_candle = next((c for c in family if entry_subject and c.get(entry_subject) is True), origin_candle)
+                # FIX: Look for pattern_entry directly instead of relying on record_config
+                entry_candle = next((c for c in family if c.get("pattern_entry") is True), origin_candle)
                 
                 e_swing = entry_candle.get("swing_type", "").lower()
                 type_cfg = record_config.get("order_type", {})
                 
                 if "high" in e_swing:
-                    order_data["order_type"] = type_cfg.get("subject_is_higherhigh_or_lowerhigh", "sell_limit")
+                    # Use direct string fallback if config value is None
+                    order_type_val = type_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                    pattern_order_type = order_type_val if order_type_val is not None else "sell_limit"
                 else:
-                    order_data["order_type"] = type_cfg.get("subject_is_lowerlow_or_higherlow", "buy_limit")
+                    order_type_val = type_cfg.get("subject_is_swinglow_or_higherlow")
+                    pattern_order_type = order_type_val if order_type_val is not None else "buy_limit"
+                
+                order_data["order_type"] = pattern_order_type
+                
+                # Add order_type flag to the origin candle (pending_entry_level candle)
+                origin_candle["order_type"] = pattern_order_type
+                
+                # Also add order_type flag to the entry candle if it's different from origin_candle
+                if entry_candle != origin_candle:
+                    entry_candle["order_type"] = pattern_order_type
+                
+                # If POI found, add POI flags to the candle that has the order_type
+                if found_poi and poi_origin_time:
+                    # Add POI flags to the entry candle (which already has order_type)
+                    entry_candle["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
+                    entry_candle["pattern_time_id_with_poi"] = poi_origin_time
+                    
+                    # Also add to origin candle if it's different
+                    if origin_candle != entry_candle:
+                        origin_candle["poi_entry_order_type"] = found_poi.get("order_type", "unknown")
+                        origin_candle["pattern_time_id_with_poi"] = poi_origin_time
+
+                # ===== NEW FILTERING LOGIC =====
+                # Check if order has both order_type and poi_entry_order_type and they must match
+                has_both_types = (order_data.get("order_type") != "unknown" and 
+                                 order_data.get("poi_entry_order_type") not in [None, "unknown"])
+                
+                if has_both_types:
+                    # If both exist, they must match - otherwise skip this order
+                    if order_data["order_type"] != order_data["poi_entry_order_type"]:
+                        continue  # Skip adding this order to pending_list
+                
+                # If order has only order_type (no POI), keep it
+                # If order has matching types, keep it
 
                 pending_list.append(order_data)
 
@@ -6149,62 +7761,230 @@ def entries_confirmation(broker_name):
             existing_orders.extend(pending_list)
             with open(orders_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_orders, f, indent=4)
-
-    def enrich_limit_orders(dev_base_path, new_folder_name):
+                             
+    def identify_hitler_prices(target_data_tf, new_key, record_config, dev_base_path, new_folder_name, target_data_full=None):
         """
-        Reads the limit_orders.json, looks up the symbol-specific ticks.json,
-        and enriches each order with tick_size and tick_value.
+        Saves hitler/POI entry information into a poi_entry.json file.
+        Path: dev_base_path/new_folder_name/pending_orders/poi_entry.json
+        Follows the same logic as identify_prices but targets Hitler/POI candles
+        Only records orders for symbols that have confirmation keys across all timeframes
+        Also adds order_type flag to the Hitler/POI candle in the original data structure
         """
-        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
-        orders_file = os.path.join(orders_dir, "limit_orders.json")
-
-        if not os.path.exists(orders_file):
+        if not record_config:
             return
 
-        try:
-            with open(orders_file, 'r', encoding='utf-8') as f:
-                orders = json.load(f)
+        pattern_key = f"{new_key}_patterns"
+        patterns = target_data_tf.get(pattern_key, {})
+        
+        pending_poi_list = []
+        price_map = {
+            "low_price": "low",
+            "high_price": "high",
+            "open_price": "open",
+            "close_price": "close"
+        }
+        
+        # Updated Path Logic: Inside the new_folder_name directory
+        orders_dir = os.path.join(dev_base_path, new_folder_name, "pending_orders")
+        os.makedirs(orders_dir, exist_ok=True)
+        poi_file = os.path.join(orders_dir, "poi_entry.json")
+
+        # Check if this source timeframe has any confirmation keys in ANY timeframe of the full target data
+        has_confirmation = False
+        source_tf = None
+        
+        # First, determine the source timeframe from any pattern
+        for p_name, family in patterns.items():
+            if family and len(family) > 0:
+                source_tf = family[0].get("timeframe")
+                if source_tf:
+                    break
+        
+        if source_tf and target_data_full:
+            # Check through ALL timeframes in the full target data
+            for tf_key, tf_data in target_data_full.items():
+                if isinstance(tf_data, dict):
+                    # Check each key in this timeframe's data
+                    for data_key in tf_data.keys():
+                        if isinstance(data_key, str) and f"_confirmation_from_{source_tf}_poi_" in data_key:
+                            has_confirmation = True
+                            break
+                if has_confirmation:
+                    break
+        
+        # If no confirmation keys found across all timeframes, don't record any orders
+        if not has_confirmation:
+            return
+
+        for p_name, family in patterns.items():
+            # Find the Hitler/POI candle instead of pending_entry_level
+            hitler_candle = next((c for c in family if c.get("is_hitler_poi") is True or c.get("point_of_interest") is True), None)
             
-            if not orders:
-                return
+            if hitler_candle:
+                # Get the hitler time for this candle
+                hitler_time = hitler_candle.get("time", "")
+                
+                poi_data = {
+                    "symbol": hitler_candle.get("symbol", "unknown"),
+                    "timeframe": hitler_candle.get("timeframe", "unknown"),
+                    "risk_reward": record_config.get("risk_reward", 0),
+                    "order_type": "unknown",
+                    "entry": 0,
+                    "exit": 0,
+                    "target": 0,
+                    "hitler_time": hitler_time  # Additional field for hitler time
+                }
 
-            # Cache for tick data to avoid re-reading the same file for every timeframe
-            tick_cache = {}
-            modified = False
-
-            for order in orders:
-                symbol = order.get("symbol")
-                if not symbol:
-                    continue
-
-                # If not in cache, try to load the symbol_ticks.json
-                if symbol not in tick_cache:
-                    # Path: dev_base_path/new_folder_name/symbol/symbol_ticks.json
-                    ticks_path = os.path.join(dev_base_path, new_folder_name, symbol, f"{symbol}_ticks.json")
+                # Get entry, exit, and target prices using the same logic as identify_prices
+                for role in ["entry", "exit", "target"]:
+                    role_cfg = record_config.get(role, {})
+                    subject_key = role_cfg.get("subject")
                     
-                    if os.path.exists(ticks_path):
-                        try:
-                            with open(ticks_path, 'r', encoding='utf-8') as f:
-                                tick_cache[symbol] = json.load(f)
-                        except Exception as e:
-                            log(f"Error loading ticks for enrichment of {symbol}: {e}")
-                            tick_cache[symbol] = None
-                    else:
-                        tick_cache[symbol] = None
+                    if subject_key:
+                        target_candle = next((c for c in family if c.get(subject_key) is True), None)
+                        if target_candle:
+                            swing_type = target_candle.get("swing_type", "").lower()
+                            price_attr_raw = ""
+                            if "high" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                            elif "low" in swing_type:
+                                price_attr_raw = role_cfg.get("subject_is_swinglow_or_higherlow")
 
-                # Enrich the order if tick data exists
-                symbol_data = tick_cache.get(symbol)
-                if symbol_data:
-                    order["tick_size"] = symbol_data.get("tick_size")
-                    order["tick_value"] = symbol_data.get("tick_value")
-                    modified = True
+                            actual_key = price_map.get(price_attr_raw, price_attr_raw)
+                            if actual_key:
+                                poi_data[role] = target_candle.get(actual_key, 0)
+                
+                # FIX: Look for pattern_entry directly instead of relying on record_config
+                entry_candle = next((c for c in family if c.get("pattern_entry") is True), hitler_candle)
+                
+                e_swing = entry_candle.get("swing_type", "").lower()
+                type_cfg = record_config.get("order_type", {})
+                
+                if "high" in e_swing:
+                    # Use direct string fallback if config value is None
+                    order_type_val = type_cfg.get("subject_is_swinghigh_or_lowerhigh")
+                    poi_data["order_type"] = order_type_val if order_type_val is not None else "sell_limit"
+                else:
+                    order_type_val = type_cfg.get("subject_is_swinglow_or_higherlow")
+                    poi_data["order_type"] = order_type_val if order_type_val is not None else "buy_limit"
+                
+                # Add order_type flag to the Hitler/POI candle
+                hitler_candle["order_type"] = poi_data["order_type"]
+                
+                # Also add order_type flag to the entry candle if it's different from hitler_candle
+                if entry_candle != hitler_candle:
+                    entry_candle["order_type"] = poi_data["order_type"]
 
-            if modified:
-                with open(orders_file, 'w', encoding='utf-8') as f:
-                    json.dump(orders, f, indent=4)
+                pending_poi_list.append(poi_data)
 
-        except Exception as e:
-            log(f"Failed to enrich limit orders: {e}")
+        if pending_poi_list:
+            # Instead of overwriting, we should append/merge with existing data
+            # But we need to ensure we don't have duplicates
+            existing_poi = []
+            if os.path.exists(poi_file):
+                try:
+                    with open(poi_file, 'r', encoding='utf-8') as f:
+                        existing_poi = json.load(f)
+                except: 
+                    existing_poi = []
+            
+            # Create a dictionary keyed by (symbol, timeframe, hitler_time) to avoid duplicates
+            poi_dict = {}
+            
+            # Add existing entries to dictionary
+            for entry in existing_poi:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Add new entries (will overwrite if same key exists)
+            for entry in pending_poi_list:
+                key = (entry.get("symbol"), entry.get("timeframe"), entry.get("hitler_time"))
+                poi_dict[key] = entry
+            
+            # Convert back to list
+            merged_poi = list(poi_dict.values())
+            
+            with open(poi_file, 'w', encoding='utf-8') as f:
+                json.dump(merged_poi, f, indent=4)
+
+    def poi_order_direction_validation(target_data_tf, pattern_key):
+        """
+        Validates patterns based on order_type and poi_entry_order_type.
+        Rules:
+        1. If a pattern has no order_type field at all, it's invalid and removed immediately
+        2. If a pattern has both order_type and poi_entry_order_type, they must match
+        3. Only patterns that satisfy these conditions remain
+        
+        Args:
+            target_data_tf: The timeframe data dictionary containing patterns
+            pattern_key: The key for the patterns dictionary (e.g., "1h_confirmation_from_4h_poi_primary_patterns")
+        
+        Returns:
+            bool: True if any patterns were removed, False otherwise
+        """
+        if pattern_key not in target_data_tf:
+            return False
+        
+        patterns_dict = target_data_tf[pattern_key]
+        if not isinstance(patterns_dict, dict):
+            return False
+        
+        patterns_removed = False
+        patterns_to_delete = []
+        
+        # Iterate through each pattern in the patterns dictionary
+        for pattern_name, pattern_candles in patterns_dict.items():
+            if not isinstance(pattern_candles, list):
+                patterns_to_delete.append(pattern_name)
+                patterns_removed = True
+                log(f"    🗑️ Removing invalid pattern {pattern_name} - not a list")
+                continue
+            
+            # Track if we've found order_type and poi_entry_order_type in this pattern
+            has_order_type = False
+            has_poi_order_type = False
+            found_order_type = None
+            found_poi_order_type = None
+            
+            # Check each candle in the pattern family
+            for candle in pattern_candles:
+                # Check for order_type field
+                if "order_type" in candle:
+                    has_order_type = True
+                    found_order_type = candle["order_type"]
+                
+                # Check for poi_entry_order_type field
+                if "poi_entry_order_type" in candle:
+                    has_poi_order_type = True
+                    found_poi_order_type = candle["poi_entry_order_type"]
+            
+            # RULE 1: If pattern has no order_type field at all, remove it immediately
+            if not has_order_type:
+                patterns_to_delete.append(pattern_name)
+                patterns_removed = True
+                continue
+            
+            # RULE 2: If pattern has both order_type and poi_entry_order_type, they must match
+            if has_order_type and has_poi_order_type:
+                if found_order_type != found_poi_order_type:
+                    patterns_to_delete.append(pattern_name)
+                    patterns_removed = True
+                    continue
+            
+            # RULE 3: If pattern has order_type but no poi_entry_order_type, keep it
+            # (this is a valid pattern that just doesn't have POI confirmation)
+            
+            # RULE 4: If pattern has order_type and matching poi_entry_order_type, keep it
+        
+        # Delete all invalid patterns
+        for pattern_name in patterns_to_delete:
+            del patterns_dict[pattern_name]
+        
+        # If patterns dictionary is now empty, remove the entire patterns key
+        if not patterns_dict:
+            del target_data_tf[pattern_key]
+        
+        return patterns_removed
 
     def limit_orders_old_record_cleanup(dev_base_path, new_folder_name):
         """
@@ -6217,35 +7997,6 @@ def entries_confirmation(broker_name):
                 os.remove(orders_file)
             except Exception as e:
                 log(f"Could not clear limit orders for {new_folder_name}: {e}")
-
-    def sanitize_symbols_or_files(target_sym_dir, target_data):
-        """
-        Returns (should_delete_whole_folder, list_of_timeframes_to_keep)
-        
-        Note: This function only determines which timeframes have patterns/structures
-        but does NOT remove any data from target_data. The config JSON data is preserved
-        for all timeframes, regardless of whether they have patterns.
-        """
-        tfs_to_keep = []
-        tfs_to_remove = []
-
-        for tf, tf_content in list(target_data.items()):
-            has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
-            
-            if has_patterns:
-                tfs_to_keep.append(tf)
-            else:
-                tfs_to_remove.append(tf)
-
-        # If no timeframes have patterns, the whole symbol is invalid
-        if not tfs_to_keep:
-            return True, []
-
-        # DO NOT delete any timeframe data from target_data
-        # The config JSON should preserve ALL timeframe data, even without patterns
-        # This ensures the original keys and data remain in the config file
-        
-        return False, tfs_to_keep
 
     def identify_paused_symbols(target_data, dev_base_path, new_folder_name):
         """
@@ -6344,7 +8095,6 @@ def entries_confirmation(broker_name):
         
         # If no paused symbols file exists, nothing to do
         if not os.path.exists(paused_file):
-            log("No paused symbols file found, skipping limit orders population")
             return 0
         
         # Load paused symbols/orders
@@ -6443,24 +8193,6 @@ def entries_confirmation(broker_name):
         return orders_added           
 
     def extract_poi_to_confirmation(target_data_tf, new_key, dev_base_path, new_folder_name, sym, pending_full_candle_refs, poi_confirmation_timeframes=None):
-        """
-        Extracts candles from point_of_interest markers and looks for the same timestamp in lower timeframes' full candle data.
-        Creates {lower_tf}_confirmation_from_{source_tf}_poi_{original_key} structures in config.json
-        
-        ONLY creates confirmations for timeframe relationships explicitly defined in poi_confirmation_timeframes.
-        No default relationships are created.
-        
-        Args:
-            target_data_tf: The timeframe data in target_data
-            new_key: The processed key (e.g., "supply_demand_buy_entries_supply_demand")
-            dev_base_path: Base path to developers folder
-            new_folder_name: The entry folder name
-            sym: Symbol being processed
-            pending_full_candle_refs: Dictionary of references to full candle data in config.json
-            poi_confirmation_timeframes: Dictionary defining allowed POI -> confirmation timeframe relationships
-                                        Format: {"source_tf": ["confirmation_tf1", "confirmation_tf2", ...]}
-                                        If None or empty, NO confirmations will be created.
-        """
         # -----------------------------------------------------------------
         # STRICT VALIDATION: Only proceed if we have confirmation timeframes configured
         # -----------------------------------------------------------------
@@ -6468,6 +8200,45 @@ def entries_confirmation(broker_name):
             # No configuration provided - don't create any confirmations
             return target_data_tf
         
+        # Check if this key is already a confirmation key
+        is_confirmation_key = "_confirmation_from_" in new_key and not new_key.endswith("_patterns")
+        
+        if is_confirmation_key:
+            # This is a confirmation key - we need to parse it to find the source and target
+            parts = new_key.split('_confirmation_from_')
+            if len(parts) == 2:
+                target_tf = parts[0]  # This should match the current timeframe
+                remaining = parts[1]
+                
+                # Split remaining into source_tf and original_key
+                source_parts = remaining.split('_poi_')
+                if len(source_parts) == 2:
+                    source_tf = source_parts[0]
+                    original_key = source_parts[1]
+                    
+                    # Log what we're processing
+                    
+                    # Now we can use source_tf to check if confirmations are allowed
+                    if source_tf not in poi_confirmation_timeframes:
+                        return target_data_tf
+                    
+                    # Check if target_tf is in allowed list for this source_tf
+                    allowed_tfs = poi_confirmation_timeframes[source_tf]
+                    if target_tf not in allowed_tfs:
+                        log(f"    ⏭️ {target_tf} not in allowed confirmations for {source_tf}: {allowed_tfs}")
+                        return target_data_tf
+                    
+                    # Get the actual confirmation data (the candles)
+                    confirmation_data = target_data_tf.get(new_key, [])
+                    if confirmation_data:
+                        log(f"       Found {len(confirmation_data)} candles in confirmation data")
+                        
+                        # Look for POI markers in the original patterns? Or process differently?
+                        # This depends on what you want to do with existing confirmation keys
+                        
+                        return target_data_tf
+        
+        # If we get here, this is a regular pattern key (not a confirmation key)
         pattern_key = f"{new_key}_patterns"
         patterns = target_data_tf.get(pattern_key, {})
         
@@ -6491,7 +8262,6 @@ def entries_confirmation(broker_name):
         # Check if this source timeframe has any configured confirmation relationships
         if source_tf not in poi_confirmation_timeframes:
             # No configuration for this source timeframe - skip completely
-            log(f"    ⏭️ No confirmation configuration for {source_tf} POI - skipping confirmations")
             return target_data_tf
         
         # Get the allowed confirmation timeframes for this source_tf
@@ -6502,7 +8272,6 @@ def entries_confirmation(broker_name):
             log(f"    ⏭️ Empty confirmation list for {source_tf} POI - skipping confirmations")
             return target_data_tf
         
-        log(f"    📋 Using configured confirmation timeframes for {source_tf} POI: {allowed_confirmation_tfs}")
         
         # Find all available timeframes from pending_full_candle_refs
         available_tfs = set()
@@ -6518,11 +8287,8 @@ def entries_confirmation(broker_name):
         for tf in allowed_confirmation_tfs:
             if tf in available_tfs:
                 lower_tfs.append(tf)
-            else:
-                log(f"      ⚠️ Configured confirmation timeframe {tf} not available for {sym}")
         
         if not lower_tfs:
-            log(f"      ⚠️ No configured confirmation timeframes available for {source_tf}")
             return target_data_tf
         
         # Collect all POI timestamps from source timeframe
@@ -6608,15 +8374,13 @@ def entries_confirmation(broker_name):
                 
                 # Sort by time
                 target_data_tf[confirmation_key].sort(key=lambda x: x.get("time", ""))
-                
-                log(f"   💾 {len(new_candles)} {lower_tf} candles confirmation from POI at {timestamp}")
         
         if not any_confirmations_created:
             log(f"    ℹ️ No confirmation candles could be created for {source_tf} POI timestamps")
         
         return target_data_tf
 
-    def generate_confirmation_charts(dev_base_path, new_folder_name, sym, target_sym_dir, target_data, pending_full_candle_data, tfs_to_keep=None):
+    def generate_confirmation_charts(dev_base_path, new_folder_name, sym, target_sym_dir, target_data, pending_full_candle_data, tfs_to_keep=None, poi_confirmation_timeframes=None):
         """
         Generates brand new charts for confirmation data extracted from POI candles.
         Creates charts directly from the confirmation candle data without needing source charts.
@@ -6633,7 +8397,17 @@ def entries_confirmation(broker_name):
             target_data: The complete target data dictionary (all timeframes)
             pending_full_candle_data: Dictionary of queued full candle data for ALL timeframes
             tfs_to_keep: Optional list of timeframes to process
+            poi_confirmation_timeframes: Dictionary defining allowed POI -> confirmation timeframe relationships
+                                        Format: {"source_tf": ["confirmation_tf1", "confirmation_tf2", ...]}
+                                        If None, no charts will be generated.
         """
+        # -----------------------------------------------------------------
+        # STRICT VALIDATION: Only proceed if we have confirmation timeframes configured
+        # -----------------------------------------------------------------
+        if not poi_confirmation_timeframes:
+            # No configuration provided - don't generate any charts
+            return
+        
         # Determine which timeframes to process
         if tfs_to_keep is None:
             timeframes_to_process = list(target_data.keys())
@@ -6678,38 +8452,10 @@ def entries_confirmation(broker_name):
             target_data_tf = target_data[tf]
             
             # Find all confirmation data keys in this timeframe's data (not pattern keys)
-            # Look for keys that end with the original pattern name but don't end with "_patterns"
             confirmation_keys = []
-            
-            # First, identify all base pattern names from pattern keys
-            pattern_bases = set()
-            for key in target_data_tf.keys():
-                if key.endswith("_patterns"):
-                    # Extract base key by removing '_patterns'
-                    base_key = key.replace("_patterns", "")
-                    pattern_bases.add(base_key)
-            
-            # Now look for keys that match these base patterns but aren't pattern keys themselves
-            for key in target_data_tf.keys():
-                # Skip pattern keys and metadata
-                if key.endswith("_patterns") or key == "_metadata":
-                    continue
-                
-                # Check if this key matches any pattern base
-                for base_key in pattern_bases:
-                    if key == base_key or key.startswith(base_key + "_") or base_key.startswith(key + "_"):
-                        # This is a candidate - check if it contains "_confirmation_from_"
-                        if "_confirmation_from_" in key:
-                            confirmation_keys.append(key)
-                            break
-            
-            # Alternative approach: directly look for keys with "_confirmation_from_" that don't end with "_patterns"
             for key in target_data_tf.keys():
                 if "_confirmation_from_" in key and not key.endswith("_patterns"):
                     confirmation_keys.append(key)
-            
-            # Remove duplicates
-            confirmation_keys = list(set(confirmation_keys))
             
             for conf_key in confirmation_keys:
                 # Parse the confirmation key to get source and target timeframes
@@ -6732,6 +8478,21 @@ def entries_confirmation(broker_name):
                 original_key = source_parts[1]
                 
                 if not source_tf or not target_tf:
+                    continue
+                
+                # -----------------------------------------------------------------
+                # CRITICAL FILTER: Only generate chart if this relationship is allowed
+                # -----------------------------------------------------------------
+                # Check if source_tf has any confirmation rules defined
+                if source_tf not in poi_confirmation_timeframes:
+                    continue
+                
+                # Get the allowed confirmation timeframes for this source_tf
+                allowed_targets = poi_confirmation_timeframes[source_tf]
+                
+                # Check if target_tf is in the allowed list
+                if target_tf not in allowed_targets:
+                    log(f"    ⏭️ Skipping chart for {conf_key} - {source_tf}→{target_tf} not in allowed relationships: {allowed_targets}")
                     continue
                 
                 # Get the confirmation data (this is the actual candle data, not patterns)
@@ -7080,9 +8841,7 @@ def entries_confirmation(broker_name):
                 chart_count += 1
         
         if chart_count > 0:
-            log(f"  📊 Generated {chart_count} confirmation charts for {sym} with pixel coordinates recorded")
-        else:
-            log(f"  ℹ️ No confirmation charts generated for {sym}")
+            log(f"  📊 Generated {chart_count} confirmation charts for {sym} ")
 
     def move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
         """
@@ -7277,8 +9036,8 @@ def entries_confirmation(broker_name):
                             candle_lists_to_update.append(candle_key)
                     
                     # Also check for keys that might be the base pattern name
-                    # For example, if original_key is "higherhighsandlowerlows", also look for 
-                    # "STRUCTURAL-LIQUIDITY_higherhighsandlowerlows" and similar
+                    # For example, if original_key is "swing_points", also look for 
+                    # "STRUCTURAL-LIQUIDITY_swing_points" and similar
                     for candle_key in list(target_tf_data.keys()):
                         if candle_key.endswith('_patterns') or '_confirmation_from_' in candle_key:
                             continue
@@ -7311,8 +9070,6 @@ def entries_confirmation(broker_name):
                         if backup_key not in target_tf_data:
                             target_tf_data[backup_key] = original_data.copy()
                             modified = True
-                        else:
-                            log(f"    ℹ️ Backup {backup_key} already exists, skipping backup creation")
                         
                         # Now update all candle lists with confirmation data
                         for candle_key in candle_lists_to_update:
@@ -7322,10 +9079,54 @@ def entries_confirmation(broker_name):
                             modified = True
         
         return modified
+    
+    def filter_empty_symbol_folders(dev_base_path, folder_name):
+        """
+        Remove symbol folders that contain no files (empty directories).
+        
+        Args:
+            dev_base_path: Base development path
+            folder_name: Name of the folder containing symbol subfolders
+            
+        Returns:
+            int: Number of empty folders deleted
+        """
+        folder_path = os.path.join(dev_base_path, folder_name)
+        if not os.path.exists(folder_path):
+            log(f"Folder {folder_path} does not exist, skipping empty folder filter")
+            return 0
+        
+        deleted_count = 0
+        
+        # Iterate through all items in the folder
+        for item_name in os.listdir(folder_path):
+            item_path = os.path.join(folder_path, item_name)
+            
+            # Only process directories (symbol folders)
+            if os.path.isdir(item_path):
+                # Check if directory is empty (no files/subdirectories)
+                if not os.listdir(item_path):
+                    try:
+                        shutil.rmtree(item_path)
+                        deleted_count += 1
+                    except Exception as e:
+                        log(f"  ❌ Error deleting empty folder {item_name}: {e}")
+        
+        
+        return deleted_count
 
     def process_entry_confirmation_newfilename(entry_settings, source_def_name, raw_filename_base, base_folder, dev_base_path, symbols_dictionary=None):
         new_folder_name = entry_settings.get("new_filename")
         if not new_folder_name:
+            return 0
+        
+        # --- CHECK IF ENTRY CONFIRMATION IS ENABLED AT THE START ---
+        entry_confirmation_enabled = entry_settings.get("enable_entry_poi_confirmation", False)
+        if entry_confirmation_enabled:
+            log(f"  ✅ Entry POI Confirmation is ENABLED for {new_folder_name}")
+        else:
+            log(f"  ⏭️ Entry POI Confirmation is DISABLED for {new_folder_name} - skipping confirmation processing")
+            # If confirmation is disabled, we can return early as this function only handles confirmation
             return 0
         
         # Add timeframe hierarchy for ordering (from highest to lowest)
@@ -7482,9 +9283,10 @@ def entries_confirmation(broker_name):
                         chart_base_name = f"{tf}_confirmation_from_{source_tf}_poi"
                         
                         if identify_config:
-                            # Process using the candle data from target, not source
-                            log(f"  🔄 [{sym}] Enriching {new_key} from target data")
+                            # Apply swing points liquidity first
+                            swing_points_liquidity(target_data[tf], new_key, candles, identify_config)
                             
+                            # Process using the candle data from target
                             processed_candles = identify_definitions({file_key: candles}, identify_config, source_def_name, raw_filename_base)
                             
                             if file_key in processed_candles:
@@ -7497,6 +9299,27 @@ def entries_confirmation(broker_name):
                                 
                                 if extracted_patterns:
                                     target_data[tf][f"{new_key}_patterns"] = extracted_patterns
+                                    
+                                    # --- ADDED: Call add_liquidity_sweepers_to_patterns immediately after patterns are created ---
+                                    # Get original candles for liquidity sweepers
+                                    if "_confirmation_from_" in new_key:
+                                        parts = new_key.split("_poi_")
+                                        if len(parts) > 1:
+                                            original_candles_key = parts[1]
+                                        else:
+                                            original_candles_key = new_key.split("_poi_")[0].split("_confirmation_from_")[1]
+                                    else:
+                                        original_candles_key = new_key.replace(f"{new_folder_name}_", "")
+                                    
+                                    original_candles = target_data[tf].get(original_candles_key, [])
+                                    
+                                    if original_candles:
+                                        add_liquidity_sweepers_to_patterns(target_data[tf], new_key, original_candles)
+                                        
+                                        # --- MOVED: Call liquidity_flags_to_sweepers immediately after adding sweepers ---
+                                        patterns_key = f"{new_key}_patterns"
+                                        if patterns_key in target_data[tf]:
+                                            liquidity_flags_to_sweepers(target_data[tf], patterns_key, identify_config)
                                 
                                 modified = True
                                 
@@ -7508,23 +9331,6 @@ def entries_confirmation(broker_name):
                                     identify_poi_mitigation(target_data[tf], new_key, poi_config)
                                     identify_swing_mitigation_between_definitions(target_data[tf], new_key, updated_candles, poi_config)
                                     identify_selected(target_data[tf], new_key, poi_config)
-
-                        # Handle chart images - use the current timeframe (tf) for the image mapping
-                        existing_img_path = os.path.join(target_sym_dir, f"{chart_base_name}.png")
-                        
-                        if os.path.exists(existing_img_path):
-                            img = cv2.imread(existing_img_path)
-                            if img is not None:
-                                log(f"  📊 [{sym}] {new_key}")
-                                
-                                if poi_config:
-                                    img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
-                                    record_config = entry_settings.get("record_prices")
-                                    if record_config:
-                                        identify_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
-                                
-                                # Queue the image to be saved (overwrites the existing one)
-                                pending_images[f"{chart_base_name}.png"] = (tf, img, new_key)
 
                     # Process full_candles_data.json from target symbol directory
                     target_full_candle_path = os.path.join(target_sym_dir, f"{tf}_full_candles_data.json")
@@ -7555,15 +9361,30 @@ def entries_confirmation(broker_name):
                 except Exception as e:
                     log(f"Error processing ticks for {sym}: {e}")
             
-            enrich_limit_orders(dev_base_path, new_folder_name)
+            # =================================================================
+            # INTEGRATED SANITIZE LOGIC (replaces sanitize_symbols_or_files call)
+            # =================================================================
+            # Determine which timeframes have patterns
+            tfs_to_keep = []
+            tfs_to_remove = []
 
-            # Sanitize and identify orders - this only determines which timeframes have patterns
-            should_delete_folder, tfs_to_keep = sanitize_symbols_or_files(target_sym_dir, target_data)
+            for tf, tf_content in list(target_data.items()):
+                has_patterns = any(key.endswith("_patterns") and value for key, value in tf_content.items())
+                
+                if has_patterns:
+                    tfs_to_keep.append(tf)
+                else:
+                    tfs_to_remove.append(tf)
 
-            if should_delete_folder:
+            # If no timeframes have patterns, the whole symbol is invalid - delete the folder
+            if not tfs_to_keep:
                 if os.path.exists(target_sym_dir):
                     shutil.rmtree(target_sym_dir)
-                continue 
+                continue  # Skip to next symbol
+
+            # =================================================================
+            # END INTEGRATED SANITIZE LOGIC
+            # =================================================================
 
             identify_paused_symbols(target_data, dev_base_path, new_folder_name)
             populate_limit_orders_with_paused_orders(dev_base_path, new_folder_name)
@@ -7573,11 +9394,6 @@ def entries_confirmation(broker_name):
             # -----------------------------------------------------------------
             # Get the POI confirmation timeframes from entry settings
             poi_confirmation_timeframes = entry_settings.get("poi_confirmation_timeframes", {})
-            
-            if poi_confirmation_timeframes:
-                log(f"  📋 POI Confirmation Rules: {poi_confirmation_timeframes}")
-            else:
-                log(f"  ℹ️ No POI confirmation rules configured - no confirmations will be created")
             
             for tf in tfs_to_keep:
                 if tf in target_data:
@@ -7605,7 +9421,7 @@ def entries_confirmation(broker_name):
                                 log(f"  📊 Added POI confirmation candles for {sym} {tf}")
 
             # -----------------------------------------------------------------
-            # NEW: Generate confirmation charts (like process_entry)
+            # GENERATE CONFIRMATION CHARTS (like process_entry)
             # -----------------------------------------------------------------
             generate_confirmation_charts(
                 dev_base_path,
@@ -7614,22 +9430,24 @@ def entries_confirmation(broker_name):
                 target_sym_dir,
                 target_data,
                 pending_full_candle_data,
-                tfs_to_keep  # Pass the list of timeframes to keep
+                tfs_to_keep,  # Pass the list of timeframes to keep
+                poi_confirmation_timeframes  # Pass the configuration for filtering
             )
 
             # -----------------------------------------------------------------
-            # NEW: Move confirmation keys to target timeframes (like process_entry)
+            # MOVE CONFIRMATION KEYS TO TARGET TIMEFRAMES (like process_entry)
             # -----------------------------------------------------------------
             if move_confirmation_keys_to_target_timeframes(target_data, dev_base_path, new_folder_name, sym):
                 modified = True
 
             # -----------------------------------------------------------------
-            # NEW: Populate other timeframes with confirmation entry data (like process_entry)
+            # POPULATE OTHER TIMEFRAMES WITH CONFIRMATION ENTRY DATA (like process_entry)
             # -----------------------------------------------------------------
             if populate_other_timeframes_with_confirmation_entry(target_data, dev_base_path, new_folder_name, sym):
                 modified = True
 
-            # Add liquidity sweepers to patterns
+            # STEP 4 ADD DEFINITIONS LIQUIDITY TO PATTERNS - Now redundant as we already did it above
+            # But keeping for backward compatibility with any patterns that might have been created elsewhere
             for tf in tfs_to_keep:
                 if tf in target_data:
                     for file_key in list(target_data[tf].keys()):
@@ -7650,16 +9468,98 @@ def entries_confirmation(broker_name):
                             
                             if original_candles:
                                 add_liquidity_sweepers_to_patterns(target_data[tf], base_key, original_candles)
+                                
+                                # Also add liquidity flags to sweepers for any patterns created here
+                                liquidity_flags_to_sweepers(target_data[tf], file_key, identify_config)
 
-            # --- Final Write (Images and Full Candle Data) ---
+            # =================================================================
+            # NOW DRAW ALL IMAGES WITH SWEEPERS INCLUDED
+            # =================================================================
+            
+            # Re-iterate through timeframes to draw images now that sweepers are added
+            for tf in timeframes:
+                if tf not in target_data or tf not in tfs_to_keep:
+                    continue
+                    
+                # Get all higher timeframes (for confirmation sources)
+                higher_tfs = []
+                if tf in tf_hierarchy:
+                    tf_index = tf_hierarchy.index(tf)
+                    higher_tfs = tf_hierarchy[:tf_index]
+                
+                # Process each file_key in this timeframe
+                for file_key in list(target_data[tf].keys()):
+                    # Skip pattern keys and metadata
+                    if file_key.endswith("_patterns") or file_key == "_metadata":
+                        continue
+                        
+                    clean_key = file_key.lower()
+                    
+                    # Check if this is a primary or receiver file based on naming
+                    is_primary = (clean_key == source_def_name.lower() or clean_key == raw_filename_base)
+                    is_receiver = (not is_primary and raw_filename_base in clean_key)
+                    
+                    # Skip if it's a receiver file but we're not processing receivers
+                    if (is_receiver and process_receiver != "yes") or (not is_primary and not is_receiver):
+                        continue
+                    
+                    # Find existing confirmation keys for this timeframe and file_key
+                    matching_keys = []
+                    for existing_key in target_data[tf].keys():
+                        if existing_key.startswith(f"{tf}_confirmation_from_") and existing_key.endswith(f"_poi_{file_key}"):
+                            source_tf_part = existing_key.replace(f"{tf}_confirmation_from_", "").split("_poi_")[0]
+                            if source_tf_part in higher_tfs:
+                                matching_keys.append(existing_key)
+                    
+                    # Process each matching key for drawing
+                    for new_key in matching_keys:
+                        source_tf = new_key.replace(f"{tf}_confirmation_from_", "").split("_poi_")[0]
+                        chart_base_name = f"{tf}_confirmation_from_{source_tf}_poi"
+                        
+                        # Handle chart images
+                        existing_img_path = os.path.join(target_sym_dir, f"{chart_base_name}.png")
+                        
+                        if os.path.exists(existing_img_path):
+                            img = cv2.imread(existing_img_path)
+                            if img is not None:
+                                
+                                poi_config = entry_settings.get("point_of_interest")
+                                if poi_config:
+                                    img = draw_poi_tools(img, target_data[tf], new_key, poi_config)
+                                    record_config = entry_settings.get("record_prices")
+                                    if record_config:
+                                        identify_pending_prices(target_data[tf], new_key, record_config, dev_base_path, new_folder_name)
+                                        
+                                        # --- ADDED: Call identify_hitler_prices immediately after identify_prices ---
+                                        patterns_key = f"{new_key}_patterns"
+                                        if patterns_key in target_data[tf]:
+                                            identify_hitler_prices(
+                                                target_data[tf], 
+                                                new_key, 
+                                                record_config,
+                                                dev_base_path, 
+                                                new_folder_name,
+                                                target_data  # Pass the full target_data for cross-timeframe checking
+                                            )
+                                            poi_order_direction_validation(target_data[tf], patterns_key)
+                                        
+                                
+                                # Draw definition tools NOW that sweepers and flags are in the patterns
+                                if identify_config:
+                                    patterns_key = f"{new_key}_patterns"
+                                    if patterns_key in target_data[tf]:
+                                        # No need to call liquidity_flags_to_sweepers here as it's already done
+                                        img = draw_definition_tools(img, target_data[tf], patterns_key, identify_config)
+                                
+                                # Queue the image to be saved
+                                pending_images[f"{chart_base_name}.png"] = (tf, img, new_key)
+
+            # --- Final Write (Images) ---
             # Save all pending images
             for img_name, (tf, img_data, new_key) in pending_images.items():
                 img_path = os.path.join(target_sym_dir, img_name)
                 cv2.imwrite(img_path, img_data)
-                log(f"  💾 [{sym}] {img_name} updated")
-
-            # Write tf_full_candles_data.json files (if needed - though we may not need this anymore)
-            # This part might be deprecated if we're using references instead
+                log(f"  💾 [{sym}] {img_name} confirmation completed")
 
             if modified:
                 with open(target_config_path, 'w', encoding='utf-8') as f:
@@ -7668,6 +9568,7 @@ def entries_confirmation(broker_name):
 
         if target_symbols:
             log(f"✅ PROCESSED {new_folder_name} {sync_count} SYMBOLS POI CONFIRMATION")
+        filter_empty_symbol_folders(dev_base_path, new_folder_name)
             
         return sync_count
 
@@ -7716,7 +9617,7 @@ def entries_confirmation(broker_name):
                 new_folder_name = entry_settings.get('new_filename')
                 if new_folder_name:
                     print()
-                    log(f"\n📊 PROCESSING {new_folder_name} ENTRIES POI CONFIRMATION")
+                    log(f"\n📊 PROCESSING {new_folder_name} POI CONFIRMATION")
                     
                     # Check if identify_definitions exist
                     identify_config = entry_settings.get("identify_definitions")
@@ -7824,14 +9725,17 @@ def move_verified_investors():
     Strategy name is extracted by splitting INVESTED_WITH on first underscore
     e.g., "deriv6_double-levels" → strategy = "double-levels"
     
+    SUPPORTS MULTI-STRATEGY: INVESTED_WITH can contain comma-separated values
+    e.g., "deriv6_strat1, deriv6_strat2, deriv6_strat3"
+    
     For Step 2, only proceeds if the strategy folder already exists for the investor.
     
     NOTE: Investors are NOT removed from verified_investors.json after processing
     """
     
-    print("\n" + "="*80)
-    print("📦 MOVING VERIFIED INVESTORS TO INVESTOR USERS AND STRATEGY FOLDERS")
-    print("="*80)
+    print(f"\n{'='*70}")
+    print(f"📦 MOVE VERIFIED INVESTORS TO INVESTOR USERS".center(70))
+    print(f"{'='*70}")
     
     # Default activities template
     DEFAULT_ACTIVITIES = {
@@ -7866,9 +9770,9 @@ def move_verified_investors():
     # ============================================
     # STEP 1: Move to investors.json with limited fields
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 1: MOVING TO INVESTORS.JSON")
-    print("="*80)
+    print(f"\n{'─'*70}")
+    print(f"🔹 STEP 1: ADDING TO INVESTORS.JSON")
+    print(f"{'─'*70}")
     
     # Load existing investors.json if it exists
     investors_data = {}
@@ -7881,328 +9785,217 @@ def move_verified_investors():
             print(f"⚠️ Error loading existing investors.json: {e}")
             investors_data = {}
     
-    investors_updated_count = 0
-    investors_skipped_count = 0
-    investors_error_count = 0
+    investors_updated = []
+    investors_skipped = []
     
     for inv_id, investor_data in verified_data.items():
-        print(f"\n{'='*50}")
-        print(f"👤 Processing Investor ID: {inv_id} for investors.json")
-        print(f"{'='*50}")
-        
-        # CASE INSENSITIVE: Create a case-insensitive lookup by converting all keys to uppercase for comparison
+        # Case-insensitive lookup
         investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
         
-        # Check if investor has all required fields (using case-insensitive lookup)
+        # Check required fields
         invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
         execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
         contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
         terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
-        
-        # Also check for login, password, server (case-insensitive)
         login_id = investor_data_upper.get('LOGIN_ID') or investor_data_upper.get('LOGIN', '')
         password = investor_data_upper.get('PASSWORD', '').strip()
         server = investor_data_upper.get('SERVER', '').strip()
         
         missing_fields = []
-        if not invested_with:
-            missing_fields.append('INVESTED_WITH')
-        if not execution_start:
-            missing_fields.append('execution_start_date')
-        if not contract_days:
-            missing_fields.append('contract_days_left')
-        if not terminal_path:
-            missing_fields.append('TERMINAL_PATH')
-        if not login_id:
-            missing_fields.append('LOGIN_ID/LOGIN')
-        if not password:
-            missing_fields.append('PASSWORD')
-        if not server:
-            missing_fields.append('SERVER')
+        if not invested_with: missing_fields.append('INVESTED_WITH')
+        if not execution_start: missing_fields.append('execution_start_date')
+        if not contract_days: missing_fields.append('contract_days_left')
+        if not terminal_path: missing_fields.append('TERMINAL_PATH')
+        if not login_id: missing_fields.append('LOGIN_ID')
+        if not password: missing_fields.append('PASSWORD')
+        if not server: missing_fields.append('SERVER')
         
         if missing_fields:
-            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
-            print(f"      INVESTED_WITH: '{invested_with}'")
-            print(f"      execution_start_date: '{execution_start}'")
-            print(f"      contract_days_left: '{contract_days}'")
-            print(f"      TERMINAL_PATH: '{terminal_path}'")
-            print(f"      LOGIN_ID: '{login_id}'")
-            print(f"      PASSWORD: {'*' * len(password) if password else 'empty'}")
-            print(f"      SERVER: '{server}'")
-            investors_skipped_count += 1
+            investors_skipped.append(f"{inv_id} (missing: {', '.join(missing_fields)})")
             continue
         
-        # Extract required fields for investors.json
-        try:
-            # Create minimal investor record
-            minimal_investor = {
-                "LOGIN_ID": str(login_id).strip(),
-                "PASSWORD": password,
-                "SERVER": server,
-                "INVESTED_WITH": invested_with,
-                "TERMINAL_PATH": terminal_path
-            }
-            
-            # Update investors.json data
-            investors_data[inv_id] = minimal_investor
-            print(f"  ✅ Added/Updated in investors.json")
-            print(f"      LOGIN_ID: {minimal_investor['LOGIN_ID']}")
-            print(f"      SERVER: {minimal_investor['SERVER']}")
-            print(f"      INVESTED_WITH: {minimal_investor['INVESTED_WITH']}")
-            print(f"      TERMINAL_PATH: {minimal_investor['TERMINAL_PATH'][:50]}...")  # Truncate for display
-            
-            investors_updated_count += 1
-            
-        except Exception as e:
-            print(f"  ❌ Error creating minimal investor record: {e}")
-            investors_error_count += 1
-            continue
+        # Create minimal investor record
+        minimal_investor = {
+            "LOGIN_ID": str(login_id).strip(),
+            "PASSWORD": password,
+            "SERVER": server,
+            "INVESTED_WITH": invested_with,
+            "TERMINAL_PATH": terminal_path
+        }
+        
+        investors_data[inv_id] = minimal_investor
+        investors_updated.append(inv_id)
     
     # Save updated investors.json
-    if investors_updated_count > 0:
-        try:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(INVESTOR_USERS), exist_ok=True)
-            
-            with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
-                json.dump(investors_data, f, indent=4)
-            print(f"\n✅ Successfully saved {investors_updated_count} investors to {INVESTOR_USERS}")
-        except Exception as e:
-            print(f"\n❌ Error saving investors.json: {e}")
-            return False
+    if investors_updated:
+        os.makedirs(os.path.dirname(INVESTOR_USERS), exist_ok=True)
+        with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
+            json.dump(investors_data, f, indent=4)
+        
+        print(f"\n  ✅ Added/Updated: {len(investors_updated)} investors")
+        if investors_updated:
+            print(f"     {', '.join(investors_updated[:5])}{'...' if len(investors_updated) > 5 else ''}")
+        if investors_skipped:
+            print(f"  ⏭️  Skipped: {len(investors_skipped)} investors")
     
     # ============================================
     # STEP 2: Create activities.json in existing strategy folders
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 2: CREATING ACTIVITIES.JSON IN EXISTING STRATEGY FOLDERS")
-    print("="*80)
+    print(f"\n{'─'*70}")
+    print(f"🔹 STEP 2: CREATING ACTIVITIES.JSON IN STRATEGY FOLDERS")
+    print(f"{'─'*70}")
     
-    processed_count = 0
-    skipped_count = 0
-    error_count = 0
-    no_strategy_folder_count = 0
+    processed_summary = []
+    skipped_summary = []
+    missing_folders_summary = []
     
     for inv_id, investor_data in verified_data.items():
-        print(f"\n{'='*50}")
-        print(f"👤 Processing Investor ID: {inv_id} for strategy folders")
-        print(f"{'='*50}")
-        
-        # CASE INSENSITIVE: Create a case-insensitive lookup
+        # Case-insensitive lookup
         investor_data_upper = {k.upper(): v for k, v in investor_data.items()}
         
-        # Check if investor has all required fields (using case-insensitive lookup)
         invested_with = investor_data_upper.get('INVESTED_WITH', '').strip()
         execution_start = investor_data_upper.get('EXECUTION_START_DATE', '').strip()
         contract_days = investor_data_upper.get('CONTRACT_DAYS_LEFT', '').strip()
         terminal_path = investor_data_upper.get('TERMINAL_PATH', '').strip()
         
-        missing_fields = []
-        if not invested_with:
-            missing_fields.append('INVESTED_WITH')
-        if not execution_start:
-            missing_fields.append('execution_start_date')
-        if not contract_days:
-            missing_fields.append('contract_days_left')
-        if not terminal_path:
-            missing_fields.append('TERMINAL_PATH')
-        
-        if missing_fields:
-            print(f"  ⚠️  Investor missing required fields: {', '.join(missing_fields)}")
-            print(f"      INVESTED_WITH: '{invested_with}'")
-            print(f"      execution_start_date: '{execution_start}'")
-            print(f"      contract_days_left: '{contract_days}'")
-            print(f"      TERMINAL_PATH: '{terminal_path}'")
-            skipped_count += 1
+        # Skip if missing required fields
+        if not all([invested_with, execution_start, contract_days, terminal_path]):
+            skipped_summary.append(inv_id)
             continue
         
-        # Extract strategy name by splitting on first underscore
+        # Split INVESTED_WITH by comma to handle multiple strategies
+        strategies = [s.strip() for s in invested_with.split(",") if s.strip()]
+        
+        # Format execution start date
+        formatted_start_date = execution_start
         try:
-            # Split on first underscore only
-            underscore_index = invested_with.find('_')
-            if underscore_index == -1:
-                print(f"  ❌ INVESTED_WITH format invalid: '{invested_with}' - no underscore found")
-                error_count += 1
-                continue
-            
-            strategy_name = invested_with[underscore_index + 1:]  # e.g., "structural-liquidity"
-            
-            print(f"  📊 INVESTED_WITH: '{invested_with}'")
-            print(f"  📁 Target Strategy: '{strategy_name}'")
-            
-        except Exception as e:
-            print(f"  ❌ Error parsing INVESTED_WITH '{invested_with}': {e}")
-            error_count += 1
-            continue
+            date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
+            formatted_start_date = date_obj.strftime("%B %d, %Y")
+        except:
+            pass
         
-        # Check if strategy folder exists before proceeding
-        inv_root = Path(INV_PATH) / inv_id
-        strategy_folder = inv_root / strategy_name
-        pending_orders_folder = strategy_folder / "pending_orders"
-        
-        if not strategy_folder.exists():
-            print(f"  ⚠️  Strategy folder does not exist: {strategy_folder}")
-            print(f"      You need to create this folder structure for the investor")
-            print(f"      Skipping activities.json creation for this investor")
-            no_strategy_folder_count += 1
-            continue
-        
-        print(f"  ✅ Strategy folder exists: {strategy_folder}")
-        
+        # Calculate contract duration and expiry
+        contract_duration_val = 30
+        expiry_date_str = ""
         try:
-            # Create pending_orders folder if it doesn't exist
-            pending_orders_folder.mkdir(parents=True, exist_ok=True)
-            print(f"  📁 Created/Verified folder: {pending_orders_folder}")
-            
-            # Path to activities.json
-            activities_path = pending_orders_folder / "activities.json"
-            
-            # Format execution start date from YYYY-MM-DD to "Month DD, YYYY"
-            formatted_start_date = execution_start
+            contract_duration_val = int(contract_days)
+            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
+            expiry_date = start_date + timedelta(days=contract_duration_val)
+            expiry_date_str = expiry_date.strftime("%B %d, %Y")
+        except:
+            pass
+        
+        investor_strategies_found = []
+        investor_strategies_missing = []
+        
+        for strat_full in strategies:
+            # Extract strategy name by splitting on first underscore
             try:
-                # Try to parse YYYY-MM-DD format
-                date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
-                formatted_start_date = date_obj.strftime("%B %d, %Y")
-                print(f"  📅 Formatted date: {execution_start} → {formatted_start_date}")
+                underscore_index = strat_full.find('_')
+                if underscore_index == -1:
+                    continue
+                strategy_name = strat_full[underscore_index + 1:]
             except:
-                print(f"  ⚠️  Could not parse date '{execution_start}', using as-is")
-            
-            # Load existing activities.json if it exists
-            existing_activities = {}
-            if activities_path.exists():
-                try:
-                    with open(activities_path, 'r', encoding='utf-8') as f:
-                        existing_activities = json.load(f)
-                    print(f"  📄 Found existing activities.json")
-                except Exception as e:
-                    print(f"  ⚠️  Error reading existing activities.json: {e}")
-                    existing_activities = {}
-            
-            # Determine which fields need to be updated
-            updated_activities = existing_activities.copy()
-            fields_updated = []
-            
-            # Check each field from DEFAULT_ACTIVITIES
-            for field, default_value in DEFAULT_ACTIVITIES.items():
-                current_value = existing_activities.get(field)
-                
-                if field == "execution_start_date":
-                    # Special handling for execution_start_date
-                    expected_value = formatted_start_date
-                    if current_value != expected_value:
-                        if current_value is None or current_value == "":
-                            updated_activities[field] = expected_value
-                            fields_updated.append(field)
-                        else:
-                            print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
-                
-                elif field == "contract_duration":
-                    # Convert contract_days_left to integer
-                    try:
-                        expected_value = int(contract_days)
-                        if current_value != expected_value:
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = expected_value
-                                fields_updated.append(field)
-                            else:
-                                print(f"      ℹ️  {field} already set to {current_value} (not changing)")
-                    except ValueError:
-                        print(f"  ⚠️  Invalid contract_days_left value: '{contract_days}'")
-                        expected_value = default_value
-                        if current_value != expected_value:
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = expected_value
-                                fields_updated.append(field)
-                
-                elif field == "contract_expiry_date":
-                    # Calculate expiry date based on contract_duration
-                    try:
-                        duration = int(contract_days)
-                        # Parse execution start date
-                        try:
-                            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
-                            expiry_date = start_date + timedelta(days=duration)
-                            expected_value = expiry_date.strftime("%B %d, %Y")
-                            
-                            if current_value != expected_value:
-                                if current_value is None or current_value == "":
-                                    updated_activities[field] = expected_value
-                                    fields_updated.append(field)
-                                else:
-                                    print(f"      ℹ️  {field} already set to '{current_value}' (not changing)")
-                        except:
-                            # If can't calculate, leave as empty string
-                            if current_value is None or current_value == "":
-                                updated_activities[field] = ""
-                                fields_updated.append(field)
-                    except:
-                        if current_value is None or current_value == "":
-                            updated_activities[field] = ""
-                            fields_updated.append(field)
-                
-                elif field in ["unauthorized_trades", "unauthorized_withdrawals"]:
-                    # These should always be empty dictionaries initially
-                    if current_value is None or current_value == "" or not isinstance(current_value, dict):
-                        updated_activities[field] = {}
-                        fields_updated.append(field)
-                
-                elif field == "unauthorized_action_detected":
-                    # This should always be False initially
-                    if current_value is None or current_value == "" or current_value is True:
-                        updated_activities[field] = False
-                        fields_updated.append(field)
-                
-                else:
-                    # For other fields (activate_autotrading, bypass_restriction)
-                    if current_value is None or current_value == "":
-                        updated_activities[field] = default_value
-                        fields_updated.append(field)
-                    else:
-                        print(f"      ℹ️  {field} already set to {current_value} (not changing)")
-            
-            # If no fields were updated and file exists, skip writing
-            if not fields_updated and activities_path.exists():
-                print(f"  ✅ activities.json is already complete and up to date")
-                processed_count += 1
                 continue
             
-            # Write updated activities.json
-            with open(activities_path, 'w', encoding='utf-8') as f:
-                json.dump(updated_activities, f, indent=4)
+            # Check if strategy folder exists
+            inv_root = Path(INV_PATH) / inv_id
+            strategy_folder = inv_root / strategy_name
+            pending_orders_folder = strategy_folder / "pending_orders"
             
-            if fields_updated:
-                print(f"  ✅ Updated activities.json with fields: {', '.join(fields_updated)}")
-            else:
-                print(f"  ✅ Created new activities.json")
+            if not strategy_folder.exists():
+                investor_strategies_missing.append(strategy_name)
+                continue
             
-            processed_count += 1
+            investor_strategies_found.append(strategy_name)
             
-        except Exception as e:
-            print(f"  ❌ Error processing investor {inv_id}: {e}")
-            error_count += 1
+            try:
+                # Create pending_orders folder if needed
+                pending_orders_folder.mkdir(parents=True, exist_ok=True)
+                
+                # Path to activities.json
+                activities_path = pending_orders_folder / "activities.json"
+                
+                # Load existing activities.json if it exists
+                existing_activities = {}
+                if activities_path.exists():
+                    try:
+                        with open(activities_path, 'r', encoding='utf-8') as f:
+                            existing_activities = json.load(f)
+                    except:
+                        existing_activities = {}
+                
+                # Prepare activities data
+                activities_data = existing_activities.copy()
+                
+                # Set execution_start_date
+                if activities_data.get("execution_start_date") != formatted_start_date:
+                    activities_data["execution_start_date"] = formatted_start_date
+                
+                # Set contract_duration
+                if activities_data.get("contract_duration") != contract_duration_val:
+                    activities_data["contract_duration"] = contract_duration_val
+                
+                # Set contract_expiry_date
+                if activities_data.get("contract_expiry_date") != expiry_date_str:
+                    activities_data["contract_expiry_date"] = expiry_date_str
+                
+                # Set default values for other fields if missing
+                for field, default_value in DEFAULT_ACTIVITIES.items():
+                    if field not in activities_data or activities_data[field] is None:
+                        activities_data[field] = default_value
+                
+                # Save activities.json
+                with open(activities_path, 'w', encoding='utf-8') as f:
+                    json.dump(activities_data, f, indent=4)
+                
+            except Exception as e:
+                print(f"  ⚠️ Error processing {inv_id}/{strategy_name}: {e}")
+        
+        # Track investor result
+        if investor_strategies_found:
+            processed_summary.append(f"{inv_id}({len(investor_strategies_found)} strat)")
+        elif investor_strategies_missing:
+            missing_folders_summary.append(f"{inv_id}(missing: {', '.join(investor_strategies_missing[:2])}{'...' if len(investor_strategies_missing) > 2 else ''})")
     
     # ============================================
-    # STEP 3: REMOVED - Investors are NOT removed from verified_investors.json
+    # STEP 3: Summary
     # ============================================
-    print("\n" + "="*80)
-    print("🔹 STEP 3: VERIFIED INVESTORS FILE PRESERVED")
-    print("="*80)
-    print("  ✅ All investors remain in verified_investors.json (no removal)")
+    print(f"\n{'─'*70}")
+    print(f"📊 SUMMARY")
+    print(f"{'─'*70}")
     
-    # Print summary
-    print("\n" + "="*80)
-    print("📊 MOVE VERIFIED INVESTORS SUMMARY")
-    print("="*80)
-    print("🔹 STEP 1 - INVESTORS.JSON:")
-    print(f"   ✅ Successfully added/updated: {investors_updated_count}")
-    print(f"   ⏭️  Skipped (missing fields): {investors_skipped_count}")
-    print("\n🔹 STEP 2 - STRATEGY FOLDERS:")
-    print(f"   ✅ Successfully processed: {processed_count}")
-    print(f"   ⏭️  Skipped (missing fields): {skipped_count}")
-    print(f"   🚫 Skipped (strategy folder missing): {no_strategy_folder_count}")
-    print("\n🔹 STEP 3 - VERIFIED LIST STATUS:")
-    print(f"   📁 All investors remain in verified list: {len(verified_data)}")
-    print("="*80)
+    print(f"\n🔹 STEP 1 - INVESTORS.JSON:")
+    print(f"   ✅ Added/Updated: {len(investors_updated)}")
+    if investors_updated:
+        print(f"      {', '.join(investors_updated[:3])}{'...' if len(investors_updated) > 3 else ''}")
+    if investors_skipped:
+        print(f"   ⏭️  Skipped: {len(investors_skipped)}")
+        for skip in investors_skipped[:2]:
+            print(f"      • {skip}")
+    
+    print(f"\n🔹 STEP 2 - STRATEGY FOLDERS:")
+    print(f"   ✅ Processed: {len(processed_summary)} investors")
+    if processed_summary:
+        for inv in processed_summary[:5]:
+            print(f"      • {inv}")
+        if len(processed_summary) > 5:
+            print(f"      ... and {len(processed_summary)-5} more")
+    
+    if missing_folders_summary:
+        print(f"   ⚠️  Missing folders: {len(missing_folders_summary)} investors")
+        for inv in missing_folders_summary[:3]:
+            print(f"      • {inv}")
+    
+    if skipped_summary:
+        print(f"   ⏭️  Skipped (missing fields): {len(skipped_summary)}")
+    
+    print(f"\n🔹 STEP 3 - VERIFIED LIST:")
+    print(f"   📁 All {len(verified_data)} investors remain in verified_investors.json")
+    
+    print(f"\n{'='*70}")
+    print(f"✅ MOVE COMPLETE".center(70))
+    print(f"{'='*70}")
     
     return True
 
@@ -8211,6 +10004,7 @@ def sync_dev_investors(dev_broker_id):
     Worker: Synchronizes investor strategy folders with developer data.
     Creates a requirements.json in the investor folder containing the 
     developer's minimum_balance setting.
+    Supports multi-strategy (comma-separated INVESTED_WITH values).
     """
     move_verified_investors()
     try:
@@ -8230,135 +10024,196 @@ def sync_dev_investors(dev_broker_id):
         with open(DEV_USERS, 'r', encoding='utf-8') as f:
             developers_data = json.load(f)
 
-        print(f"\n{'='*10} SYNCING STRATEGY DATA FOR DEVELOPER: {dev_broker_id} {'='*10}")
+        print(f"\n{'='*60}")
+        print(f"🔄 SYNCING INVESTORS FOR DEVELOPER: {dev_broker_id}")
+        print(f"{'='*60}")
 
-        # 2. Find investors linked to this developer
+        # 2. Find investors linked to this developer (with multi-strategy support)
         linked_investors = []
         for inv_broker_id, inv_info in investors_data.items():
             invested_string = inv_info.get("INVESTED_WITH", "")
-            if "_" in invested_string:
-                parts = invested_string.split("_", 1)
-                if parts[0] == dev_broker_id:
-                    linked_investors.append((inv_broker_id, inv_info))
+            if invested_string:  # Only process if there's an INVESTED_WITH value
+                # Split by comma to handle multiple strategies
+                strategies = [s.strip() for s in invested_string.split(",")]
+                for strat in strategies:
+                    if "_" in strat:
+                        parts = strat.split("_", 1)
+                        if parts[0] == dev_broker_id:
+                            # Store investor info along with the specific strategy name
+                            linked_investors.append({
+                                "inv_broker_id": inv_broker_id,
+                                "inv_info": inv_info,
+                                "target_strat_name": parts[1]
+                            })
 
         if not linked_investors:
+            print(f"  No linked investors found for developer {dev_broker_id}")
+            print(f"{'='*60}")
             return f" [{dev_broker_id}] 🔘 No linked investors found."
 
         total_synced = 0
-        synced_investors = [] 
+        synced_summary = []  # Track which investors+strategies were synced
+        
+        # Group by investor for cleaner output
+        investors_grouped = {}
+        for link in linked_investors:
+            inv_id = link["inv_broker_id"]
+            if inv_id not in investors_grouped:
+                investors_grouped[inv_id] = []
+            investors_grouped[inv_id].append(link)
 
-        # 3. Process each linked investor
-        for inv_broker_id, inv_info in linked_investors:
+        print(f"\n📊 Found {len(linked_investors)} strategy links across {len(investors_grouped)} investors\n")
+
+        # 3. Process each investor and their strategies
+        for inv_broker_id, links in investors_grouped.items():
+            inv_info = links[0]["inv_info"]  # Same investor info for all links
             inv_name = inv_info.get("NAME", inv_broker_id)
-            print(f" [{dev_broker_id}] 🔄 Syncing Strategy for: {inv_name} ({inv_broker_id})...")
-
             invested_string = inv_info.get("INVESTED_WITH", "")
             inv_server = inv_info.get("SERVER", "")
             
-            parts = invested_string.split("_", 1)
-            target_strat_name = parts[1]
-
-            # Broker Matching Logic
+            print(f"\n┌─{'─'*50}─┐")
+            print(f"│  👤 INVESTOR: {inv_name} ({inv_broker_id})")
+            print(f"├─{'─'*50}─┤")
+            
+            # Broker Matching Check
             dev_broker_name = developers_data[dev_broker_id].get("BROKER", "").lower()
             if dev_broker_name not in inv_server.lower():
-                print(f"  └─ ❌ Broker Mismatch: Dev requires {dev_broker_name.upper()}")
+                print(f"│  ❌ Broker Mismatch: Dev requires {dev_broker_name.upper()}, Investor has {inv_server}")
+                print(f"└─{'─'*50}─┘")
                 continue
-
-            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
-            inv_user_folder = os.path.join(INV_PATH, inv_broker_id)
             
-            # Paths
+            dev_user_folder = os.path.join(DEV_PATH, dev_broker_id)
+            
+            # Load developer's minimum_balance once for all strategies
+            min_balance = 0
             dev_acc_mgmt_path = os.path.join(dev_user_folder, "accountmanagement.json")
-            dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
-            inv_strat_path = os.path.join(inv_user_folder, target_strat_name)
-
-            # --- LOGIC: Create requirements.json from Developer's Account Management ---
-            requirements_data = {"minimum_balance": 0}
             if os.path.exists(dev_acc_mgmt_path):
                 try:
                     with open(dev_acc_mgmt_path, 'r', encoding='utf-8') as am_file:
                         am_data = json.load(am_file)
-                        # Extract minimum_balance from the developer's settings
-                        min_val = am_data.get("settings", {}).get("minimum_balance", 0)
-                        requirements_data["minimum_balance"] = min_val
+                        min_balance = am_data.get("settings", {}).get("minimum_balance", 0)
                 except Exception as e:
-                    print(f"  └─ ⚠️ Could not read Dev accountmanagement.json: {e}")
-
-            # 4. Strategy Logic: Update vs Clone
-            if os.path.exists(dev_strat_path):
+                    print(f"│  ⚠️ Could not read Dev accountmanagement.json: {e}")
+            
+            requirements_data = {"minimum_balance": min_balance}
+            
+            # Track synced strategies for this investor
+            investor_synced = []
+            
+            # Process each strategy for this investor
+            for link in links:
+                target_strat_name = link["target_strat_name"]
+                
+                print(f"│  \n│  📁 Strategy: {target_strat_name}")
+                
+                dev_strat_path = os.path.join(dev_user_folder, target_strat_name)
+                inv_strat_path = os.path.join(INV_PATH, inv_broker_id, target_strat_name)
+                
+                if not os.path.exists(dev_strat_path):
+                    print(f"│     ❌ Dev strategy folder missing")
+                    continue
+                
                 try:
-                    # Determine if we need to full clone or just update folders
-                    if not os.path.exists(inv_strat_path):
-                        print(f"  └─ 🆕 New strategy folder. Performing clean clone...")
-                        
-                        # Create a temporary directory for cleaned strategy
-                        import tempfile
-                        temp_dir = tempfile.mkdtemp()
-                        
-                        # Copy the entire strategy to temp directory
-                        shutil.copytree(dev_strat_path, os.path.join(temp_dir, target_strat_name))
-                        temp_strat_path = os.path.join(temp_dir, target_strat_name)
-                        
-                        # Remove all subfolders except pending_orders
-                        for item in os.listdir(temp_strat_path):
-                            item_path = os.path.join(temp_strat_path, item)
-                            if os.path.isdir(item_path) and item != "pending_orders":
-                                shutil.rmtree(item_path)
-                                print(f"  └─ 🗑️ Removed folder: {item}")
-                        
-                        # Copy the cleaned strategy to investor folder
-                        shutil.copytree(temp_strat_path, inv_strat_path)
-                        
-                        # Clean up temp directory
-                        shutil.rmtree(temp_dir)
-                        
-                    else:
-                        print(f"  └─ 📂 Folder exists. Updating only pending_orders files...")
-                        # Sync ONLY pending_orders folder
-                        dev_pending_path = os.path.join(dev_strat_path, "pending_orders")
-                        inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
-                        
-                        if os.path.exists(dev_pending_path):
-                            # Create pending_orders folder if it doesn't exist
-                            os.makedirs(inv_pending_path, exist_ok=True)
-                            
-                            # Copy only files from pending_orders (no subfolders)
-                            for file in os.listdir(dev_pending_path):
-                                s = os.path.join(dev_pending_path, file)
-                                d = os.path.join(inv_pending_path, file)
-                                if os.path.isfile(s):
-                                    shutil.copy2(s, d)
-                                    print(f"  └─ 📄 Updated pending order file: {file}")
-
-                    # --- SYNC CORE FILES ---
-                    # 1. Copy limit orders as-is (no injection)
+                    # ALWAYS perform clean clone (overwrite existing)
+                    print(f"│     🔄 Performing clean sync (overwriting)...")
+                    
+                    # Create a temporary directory for cleaned strategy
+                    import tempfile
+                    temp_dir = tempfile.mkdtemp()
+                    
+                    # Copy the entire strategy to temp directory
+                    temp_strat_path = os.path.join(temp_dir, target_strat_name)
+                    shutil.copytree(dev_strat_path, temp_strat_path)
+                    
+                    # Remove all subfolders except pending_orders
+                    removed_folders = []
+                    for item in os.listdir(temp_strat_path):
+                        item_path = os.path.join(temp_strat_path, item)
+                        if os.path.isdir(item_path) and item != "pending_orders":
+                            shutil.rmtree(item_path)
+                            removed_folders.append(item)
+                    
+                    if removed_folders:
+                        folder_summary = ', '.join(removed_folders[:3])
+                        if len(removed_folders) > 3:
+                            folder_summary += f" and {len(removed_folders)-3} more"
+                    
+                    # Remove existing investor strategy folder if it exists (for clean overwrite)
+                    if os.path.exists(inv_strat_path):
+                        shutil.rmtree(inv_strat_path)
+                    
+                    # Copy the cleaned strategy to investor folder
+                    shutil.copytree(temp_strat_path, inv_strat_path)
+                    
+                    # Clean up temp directory
+                    shutil.rmtree(temp_dir)
+                    
+                    # --- COPY CORE FILES ---
+                    copied_files = []
                     files_to_copy = ["limit_orders.json", "limit_orders_backup.json"]
                     for json_file in files_to_copy:
                         src_json = os.path.join(dev_strat_path, json_file)
                         dest_json = os.path.join(inv_strat_path, json_file)
                         if os.path.exists(src_json):
                             shutil.copy2(src_json, dest_json)
-                            print(f"  └─ 📄 Copied: {json_file}")
-
-                    # 2. Create/Overwrite requirements.json in the SAME destination
+                            copied_files.append(json_file)
+                    
+                    if copied_files:
+                        print(f"│     📄 Copied core files: {', '.join(copied_files)}")
+                    
+                    # Create/Overwrite requirements.json
                     req_dest_path = os.path.join(inv_strat_path, "requirements.json")
                     with open(req_dest_path, 'w', encoding='utf-8') as req_file:
                         json.dump(requirements_data, req_file, indent=4)
                     
+                    # Check pending_orders files after sync (for reporting)
+                    inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
+                    if os.path.exists(inv_pending_path):
+                        pending_files = [f for f in os.listdir(inv_pending_path) if os.path.isfile(os.path.join(inv_pending_path, f))]
+                        if pending_files:
+                            file_summary = ', '.join(pending_files[:3])
+                            if len(pending_files) > 3:
+                                file_summary += f" and {len(pending_files)-3} more"
+                            print(f"│     📁 Pending orders: {file_summary}")
+                    
+                    # Track successful sync
+                    investor_synced.append(target_strat_name)
                     total_synced += 1
-                    synced_investors.append(inv_name)
-                    print(f"  └─ ✅ Strategy '{target_strat_name}' synced with only pending_orders folder.")
+                    print(f"│     ✅ Synced successfully")
                     
                 except Exception as e:
-                    print(f"  └─ ❌ Folder Sync Error for {inv_name}: {e}")
+                    print(f"│     ❌ Error: {e}")
+            
+            # Investor summary
+            if investor_synced:
+                synced_summary.append(f"{inv_name}({len(investor_synced)} strat)")
+                print(f"│  \n│  ✅ Investor complete: {len(investor_synced)} strategies synced")
             else:
-                print(f"  └─ ⚠️  Dev Strategy folder '{target_strat_name}' missing")
+                print(f"│  ⚠️ No strategies synced for this investor")
+            
+            print(f"└─{'─'*50}─┘")
+        
         move_verified_investors()
-        return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} investors updated: {', '.join(synced_investors)}"
+        
+        # Final summary
+        print(f"\n{'='*60}")
+        if total_synced > 0:
+            summary_str = ', '.join(synced_summary)
+            print(f"✅ SYNC COMPLETE: {total_synced} strategies updated for {len(investors_grouped)} investors")
+            print(f"   Investors: {summary_str}")
+            print(f"{'='*60}")
+            return f" [{dev_broker_id}] ✅ Sync complete. {total_synced} strategies updated for investors: {summary_str}"
+        else:
+            print(f"⚠️ No strategies were synced")
+            print(f"{'='*60}")
+            return f" [{dev_broker_id}] ⚠️ No strategies were synced."
     
     except Exception as e:
-        return f" [{dev_broker_id}] ❌ Sync Error: {e}"
-           
+        error_msg = f" [{dev_broker_id}] ❌ Sync Error: {e}"
+        print(f"\n{error_msg}")
+        print(f"{'='*60}")
+        return error_msg
+               
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -8371,36 +10226,41 @@ def single():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
+        sync_results = pool.map(swing_points, broker_names)
+        #for r in sync_results: print(r)
         sync_results = pool.map(entry_point_of_interest, broker_names)
         for r in sync_results: print(r)
-        sync_results = pool.map(entries_confirmation, broker_names)
-        for r in sync_results: print(r)
+        #sync_results = pool.map(entries_confirmation, broker_names)
+        #for r in sync_results: print(r)
+        #sync_results = pool.map(sync_dev_investors, broker_names)
+        #for r in sync_results: print(r)
 
-def process_single_developer_pipeline(broker_name):
+def process_single_developer_pipeline(broker_name, max_symbols_parallel=5):
     """
     Orchestrator: Runs the full suite of tasks for one developer sequentially.
     This allows multiprocessing to happen at the 'Account Level'.
     """
     results = []
-    try:
+    try:  
         # Step 1: Data Sync
-        res_ticks = sync_ticks_data(broker_name)
         res_candles = copy_full_candle_data(broker_name)
         
-        # Step 2: HH/LL Analysis
-        res_hhll = higher_highs_lower_lows(broker_name)
+        # Step 2: HH/LL Analysis with symbol-level multiprocessing
+        res_hhll = swing_points(broker_name, max_symbols_parallel)
         
-        # Step 3: Liquidity
-        res_liq = liquidity_candles(broker_name)
-        
-        # Step 4: POI
+        # Step 3: POI
         res_poi = entry_point_of_interest(broker_name)
         
+        # Step 4: Entries Confirmation
+        res_entries = entries_confirmation(broker_name)
+        
         # Step 5: Cleanup
-        #res_clean = clear_unathorized_entries_folders(broker_name)
+        res_clean = clear_unathorized_entries_folders(broker_name)
         
         # Step 6: Investor Sync
-        #res_sync = sync_dev_investors(broker_name)
+        res_sync = sync_dev_investors(broker_name)
+        
+        return f"[{broker_name}] Pipeline completed successfully"
         
     except Exception as e:
         return f"--- [{broker_name}] PIPELINE FAILED: {e} ---"
@@ -8414,20 +10274,26 @@ def main():
     broker_names = sorted(dev_dict.keys())
     cores = cpu_count()
     
+    # You can adjust this value - number of symbols to process in parallel per broker
+    MAX_SYMBOLS_PARALLEL = 5  # Change this to control concurrency per broker
+    
     print(f"--- STARTING ACCOUNT-LEVEL MULTIPROCESSING ---")
     print(f"Cores: {cores} | Total Developers: {len(broker_names)}")
+    print(f"Symbols per broker processed in parallel: {MAX_SYMBOLS_PARALLEL}")
 
-    # We use the pool to map the 'orchestrator' instead of individual steps
+    # Use multiprocessing Pool for broker-level parallelism
     with Pool(processes=cores) as pool:
-        final_results = pool.map(process_single_developer_pipeline, broker_names)
+        # Pass max_symbols_parallel to each broker process
+        from functools import partial
+        process_func = partial(process_single_developer_pipeline, max_symbols_parallel=MAX_SYMBOLS_PARALLEL)
+        final_results = pool.map(process_func, broker_names)
         
         # Print summaries as they finish
         for report in final_results:
             print(report)
 
     print("\n[SUCCESS] All developer pipelines completed.")
-    
 
 if __name__ == "__main__":
-   single()
+    main()
 

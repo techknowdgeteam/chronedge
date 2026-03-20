@@ -120,7 +120,6 @@ def initialize_mt5(terminal_path, login_id, password, server):
             mt5.shutdown()
             return False, error_log
 
-        log_and_print(f"MT5 initialized and logged in successfully (loginid={login_id}, server={server})", "SUCCESS")
         return True, error_log
     except Exception as e:
         error_log.append({
@@ -199,7 +198,6 @@ def identifyparenthighsandlows(df, neighborcandles_left, neighborcandles_right):
         save_errors(error_log)
         log_and_print(f"Failed to identify PH/PL: {str(e)}", "ERROR")
         return [], [], error_log
-
 
 def fetch_ohlcv_data(symbol, mt5_timeframe, bars):
     """
@@ -302,7 +300,7 @@ def save_newest_oldest_df(df, symbol, timeframe_str, timeframe_folder):
         with open(latest_json_path, 'w', encoding='utf-8') as f:
             json.dump(previous_latest_candle, f, indent=4)
 
-        log_and_print(f"SAVED: newest_oldest.json for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"✓ {symbol} {timeframe_str} | JSON saved | {len(all_candles)} candles", "SUCCESS")
 
     except Exception as e:
         err = f"save_newest_oldest_df failed: {str(e)}"
@@ -319,6 +317,73 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
     chart_path = os.path.join(timeframe_folder, "chart.png")
     
     try:
+        # -----------------------------------------------------------------
+        # DYNAMIC WIDTH CALCULATION
+        # -----------------------------------------------------------------
+        num_candles = len(df)
+        
+        # Configuration for readable candles
+        MIN_CANDLE_WIDTH = 20  # Minimum pixels per candle for readability
+        MAX_CANDLE_WIDTH = 40  # Maximum pixels per candle (prevents extremely wide images)
+        MIN_CANDLE_SPACING = 10  # Minimum pixels between candles
+        BASE_HEIGHT = 100  # Base height in inches (original was 10)
+        MAX_IMAGE_WIDTH = 90000000  # Maximum width to prevent insane image sizes
+        
+        # Determine optimal candle width based on number of candles
+        if num_candles <= 50:
+            # Few candles - make them larger for better visibility
+            base_candle_width = 30
+            base_spacing_multiplier = 1.8
+        elif num_candles <= 200:
+            # Medium number of candles - moderate size
+            base_candle_width = 20
+            base_spacing_multiplier = 1.6
+        elif num_candles <= 1000:
+            # Many candles - smaller but still readable
+            base_candle_width = 12
+            base_spacing_multiplier = 1.4
+        else:
+            # Very many candles - minimum readable size
+            base_candle_width = MIN_CANDLE_WIDTH
+            base_spacing_multiplier = 1.3
+        
+        # Apply constraints to candle width
+        target_candle_width = max(base_candle_width, MIN_CANDLE_WIDTH)
+        target_candle_width = min(target_candle_width, MAX_CANDLE_WIDTH)
+        
+        # Calculate spacing based on candle width and multiplier
+        desired_spacing = target_candle_width * base_spacing_multiplier
+        
+        # Apply minimum spacing constraint
+        actual_spacing = max(desired_spacing, MIN_CANDLE_SPACING)
+        
+        # Calculate total width needed in pixels
+        if num_candles > 1:
+            total_width_pixels = actual_spacing * (num_candles - 1) + target_candle_width
+        else:
+            total_width_pixels = target_candle_width * 2  # For single candle, give it some space
+        
+        # Add padding for margins (left and right)
+        padding_pixels = 200  # Extra space for labels, titles, etc.
+        img_width_pixels = int(total_width_pixels + padding_pixels)
+        
+        # Cap width to prevent insane image sizes
+        img_width_pixels = min(img_width_pixels, MAX_IMAGE_WIDTH)
+        
+        # If width is less than minimum, use minimum
+        min_width_pixels = 800
+        if img_width_pixels < min_width_pixels:
+            img_width_pixels = min_width_pixels
+        
+        # Convert pixels to inches for matplotlib (assuming 100 dpi as base)
+        img_width_inches = img_width_pixels / 100
+        
+        # Log the dynamic sizing
+        log_and_print(f"📊 {symbol} {timeframe_str} | {num_candles} candles → {img_width_pixels}px", "INFO")
+        
+        # -----------------------------------------------------------------
+        # ORIGINAL CHART GENERATION WITH DYNAMIC WIDTH
+        # -----------------------------------------------------------------
         custom_style = mpf.make_mpf_style(
             base_mpl_style="default",
             marketcolors=mpf.make_marketcolors(
@@ -327,44 +392,77 @@ def generate_and_save_chart_df(df, symbol, timeframe_str, timeframe_folder):
             )
         )
 
-        # Generate and save only the full chart
+        # Check DataFrame columns to handle different naming conventions
+        required_cols = ['Open', 'High', 'Low', 'Close']
+        df_cols = df.columns.tolist()
+        
+        # Check if required columns exist (case-insensitive)
+        col_mapping = {}
+        for req_col in required_cols:
+            found = False
+            for df_col in df_cols:
+                if df_col.lower() == req_col.lower():
+                    col_mapping[req_col] = df_col
+                    found = True
+                    break
+            if not found:
+                # If column not found, raise error with helpful message
+                raise KeyError(f"Required column '{req_col}' not found in DataFrame. Available columns: {df_cols}")
+        
+        # Rename columns if necessary to match expected format
+        if col_mapping:
+            df_plot = df.rename(columns={v: k for k, v in col_mapping.items()})
+        else:
+            df_plot = df
+
+        # Generate and save only the full chart with dynamic size
         fig, axlist = mpf.plot(
-            df, 
+            df_plot, 
             type='candle', 
             style=custom_style, 
             volume=False,
-            title=f"{symbol} ({timeframe_str})", 
+            title=f"{symbol} ({timeframe_str}) - {num_candles} candles", 
             returnfig=True,
-            warn_too_much_data=5000
+            warn_too_much_data=5000,
+            figsize=(img_width_inches, BASE_HEIGHT),  # Dynamic width, fixed height
+            scale_padding={'left': 0.5, 'right': 1.5, 'top': 0.5, 'bottom': 0.5}  # Add padding
         )
         
-        fig.set_size_inches(25, 10)
+        # Set size explicitly (redundant but safe)
+        fig.set_size_inches(img_width_inches, BASE_HEIGHT)
+        
+        # Customize the plot
         for ax in axlist:
             ax.grid(False)
             for line in ax.get_lines():
                 if line.get_label() == '':
                     line.set_linewidth(0.5)
 
-        fig.savefig(chart_path, bbox_inches="tight", dpi=200)
+        # Save with appropriate DPI - NO CROPPING, save directly
+        fig.savefig(chart_path, bbox_inches="tight", dpi=100)  # 100 DPI gives good quality
         plt.close(fig)
 
-        log_and_print(f"SAVED: chart.png for {symbol} {timeframe_str}", "SUCCESS")
+        log_and_print(f"✓ {symbol} {timeframe_str} | Chart saved | {num_candles} candles", "SUCCESS")
 
         return chart_path, error_log
 
+    except KeyError as e:
+        log_and_print(f"Error in chart generation - column error: {e}", "ERROR")
+        error_log.append(str(e))
+        return None, error_log
     except Exception as e:
         log_and_print(f"Error in chart generation: {e}", "ERROR")
         error_log.append(str(e))
         return None, error_log
-        
-def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
-    """Generate sliced charts + return list of slice counts actually generated"""
+
+def generate_and_save_chart_slice(symbol, timeframe_str, timeframe_folder):
+    """Generate sliced charts with dynamic sizing + return list of slice counts actually generated"""
     error_log = []
 
     target_subfolder = os.path.join(timeframe_folder, "candlesdetails")
     json_path = os.path.join(target_subfolder, "newest_oldest.json")
 
-    candle_slices = [300, 2000]
+    candle_slices = [500]
 
     generated_slice_counts = []  # To pass to JSON slicers
 
@@ -403,6 +501,70 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
             if len(df) >= count:
                 df_slice = df.iloc[-count:]
                 slice_path = os.path.join(timeframe_folder, f"chart_{count}.png")
+                
+                # -----------------------------------------------------------------
+                # DYNAMIC WIDTH CALCULATION FOR SLICED CHART
+                # -----------------------------------------------------------------
+                num_candles = len(df_slice)
+                
+                # Configuration for readable candles
+                MIN_CANDLE_WIDTH = 20  # Minimum pixels per candle for readability
+                MAX_CANDLE_WIDTH = 40  # Maximum pixels per candle (prevents extremely wide images)
+                MIN_CANDLE_SPACING = 10  # Minimum pixels between candles
+                BASE_HEIGHT = 50  # Base height in inches (original was 10)
+                MAX_IMAGE_WIDTH = 90000000  # Maximum width to prevent insane image sizes
+                
+                # Determine optimal candle width based on number of candles
+                if num_candles <= 50:
+                    # Few candles - make them larger for better visibility
+                    base_candle_width = 30
+                    base_spacing_multiplier = 1.8
+                elif num_candles <= 200:
+                    # Medium number of candles - moderate size
+                    base_candle_width = 20
+                    base_spacing_multiplier = 1.6
+                elif num_candles <= 1000:
+                    # Many candles - smaller but still readable
+                    base_candle_width = 12
+                    base_spacing_multiplier = 1.4
+                else:
+                    # Very many candles - minimum readable size
+                    base_candle_width = MIN_CANDLE_WIDTH
+                    base_spacing_multiplier = 1.3
+                
+                # Apply constraints to candle width
+                target_candle_width = max(base_candle_width, MIN_CANDLE_WIDTH)
+                target_candle_width = min(target_candle_width, MAX_CANDLE_WIDTH)
+                
+                # Calculate spacing based on candle width and multiplier
+                desired_spacing = target_candle_width * base_spacing_multiplier
+                
+                # Apply minimum spacing constraint
+                actual_spacing = max(desired_spacing, MIN_CANDLE_SPACING)
+                
+                # Calculate total width needed in pixels
+                if num_candles > 1:
+                    total_width_pixels = actual_spacing * (num_candles - 1) + target_candle_width
+                else:
+                    total_width_pixels = target_candle_width * 2  # For single candle, give it some space
+                
+                # Add padding for margins (left and right)
+                padding_pixels = 200  # Extra space for labels, titles, etc.
+                img_width_pixels = int(total_width_pixels + padding_pixels)
+                
+                # Cap width to prevent insane image sizes
+                img_width_pixels = min(img_width_pixels, MAX_IMAGE_WIDTH)
+                
+                # If width is less than minimum, use minimum
+                min_width_pixels = 800
+                if img_width_pixels < min_width_pixels:
+                    img_width_pixels = min_width_pixels
+                
+                # Convert pixels to inches for matplotlib (assuming 100 dpi as base)
+                img_width_inches = img_width_pixels / 100
+                
+                # Log the dynamic sizing
+                log_and_print(f"📊 {symbol} {timeframe_str} | Last {count}: {num_candles} candles → {img_width_pixels}px", "INFO")
 
                 fig, axlist = mpf.plot(
                     df_slice,
@@ -410,23 +572,30 @@ def generate_and_save_chart(symbol, timeframe_str, timeframe_folder):
                     style=custom_style,
                     title=f"{symbol} ({timeframe_str}) - Last {count}",
                     returnfig=True,
-                    warn_too_much_data=5000
+                    warn_too_much_data=5000,
+                    figsize=(img_width_inches, BASE_HEIGHT),  # Dynamic width, fixed height
+                    scale_padding={'left': 0.5, 'right': 1.5, 'top': 0.5, 'bottom': 0.5}  # Add padding
                 )
 
-                fig.set_size_inches(25, 10)
+                fig.set_size_inches(img_width_inches, BASE_HEIGHT)
+                
                 for ax in axlist:
                     ax.grid(False)
                     for line in ax.get_lines():
                         if line.get_label() == '':
                             line.set_linewidth(0.5)
 
+                # Save with appropriate DPI - NO CROPPING, save directly
                 fig.savefig(slice_path, bbox_inches="tight", dpi=100)
                 plt.close(fig)
 
                 generated_slice_counts.append(count)
                 generated_slices += 1
+                
+                log_and_print(f"✓ {symbol} {timeframe_str} | chart_{count}.png saved | {num_candles} candles", "SUCCESS")
 
-        log_and_print(f"SAVED: {generated_slices} sliced charts (from JSON) for {symbol} {timeframe_str}", "SUCCESS")
+        if generated_slices > 0:
+            log_and_print(f"✓ {symbol} {timeframe_str} | {generated_slices} sliced charts saved", "SUCCESS")
         return generated_slice_counts, error_log
 
     except Exception as e:
@@ -494,7 +663,7 @@ def save_sliced_newest_oldest_json(symbol, timeframe_str, timeframe_folder, slic
             generated += 1
 
         if generated > 0:
-            log_and_print(f"SAVED: {generated} sliced new_old_*.json + latest_completed for {symbol} {timeframe_str}", "SUCCESS")
+            log_and_print(f"✓ {symbol} {timeframe_str} | {generated} sliced JSONs saved", "SUCCESS")
 
     except Exception as e:
         err = f"save_sliced_newest_oldest_json failed: {str(e)}"
@@ -639,24 +808,42 @@ def ticks_value(symbol, symbol_folder, user_brokerid, base_folder, all_symbols):
     return error_log
 
 def crop_chart(chart_path, symbol, timeframe_str, timeframe_folder):
-    """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions."""
+    """Crop all charts in the folder including slices (chart_XX.png) and analyzed versions.
+    Skips cropping for very large images to avoid decompression bomb errors."""
     error_log = []
     
     # List of all images to crop: the main ones and all the slices
     images_to_crop = [f for f in os.listdir(timeframe_folder) if f.endswith(".png") and "chart" in f]
 
     try:
+        cropped_count = 0
+        skipped_count = 0
+        
         for filename in images_to_crop:
             full_path = os.path.join(timeframe_folder, filename)
-            with Image.open(full_path) as img:
-                # Set your crop margins here if needed (currently 0)
-                left, top, right, bottom = 0, 0, 0, 0 
-                crop_box = (left, top, img.width - right, img.height - bottom)
-                cropped_img = img.crop(crop_box)
-                cropped_img.save(full_path, "PNG")
+            
+            try:
+                with Image.open(full_path) as img:
+                    # Check if image exceeds Pillow's safe limit (leave some margin)
+                    if img.width * img.height > 150000000:  # 150 million pixels (under Pillow's 179M limit)
+                        log_and_print(f"SKIPPED cropping for {filename} - image too large ({img.width}×{img.height} = {img.width * img.height} pixels)", "WARNING")
+                        skipped_count += 1
+                        continue
+                    
+                    # Set your crop margins here if needed (currently 0)
+                    left, top, right, bottom = 0, 0, 0, 0 
+                    crop_box = (left, top, img.width - right, img.height - bottom)
+                    cropped_img = img.crop(crop_box)
+                    cropped_img.save(full_path, "PNG")
+                    cropped_count += 1
+                    
+            except Exception as e:
+                log_and_print(f"Failed to crop {filename}: {str(e)}", "WARNING")
+                skipped_count += 1
+                continue
         
-        log_and_print(f"All {len(images_to_crop)} charts cropped for {symbol} ({timeframe_str})", "SUCCESS")
-
+        log_and_print(f"Chart cropping for {symbol} ({timeframe_str}): {cropped_count} cropped, {skipped_count} skipped (too large)", "SUCCESS")
+        
     except Exception as e:
         err_msg = f"Failed to crop charts: {str(e)}"
         log_and_print(err_msg, "ERROR")
@@ -671,8 +858,6 @@ def backup_developers_dictionary():
     main_path.parent.mkdir(parents=True, exist_ok=True)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     
-    print(f"Main file   : {main_path}")
-    print(f"Backup file : {backup_path}")
 
     def read_json_safe(path: Path) -> dict | None:
         if not path.exists() or path.stat().st_size == 0:
@@ -698,7 +883,6 @@ def backup_developers_dictionary():
         # Main has real data → copy to backup (and make backup pretty)
         print("Main has valid data → syncing to backup")
         write_json(backup_path, main_data)
-        print(f"Copied valid data: {main_path} → {backup_path}")
         return
 
     # Step 2: Main is empty {} or invalid → check backup
@@ -904,6 +1088,17 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
     """
     processed_count = 0
     
+    # Group symbols by category for cleaner logging
+    categories = {}
+    for symbol, cat in symbol_chunk:
+        if cat not in categories:
+            categories[cat] = []
+        categories[cat].append(symbol)
+    
+    # Log the workload for this account
+    total_in_chunk = len(symbol_chunk)
+    log_and_print(f"\n  ⚙️  {account_key.upper()} | Starting | {total_in_chunk} symbols", "INFO")
+    
     for symbol, cat in symbol_chunk:
         # Initialize MT5 for this specific terminal
         ok, _ = initialize_mt5(
@@ -914,11 +1109,11 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
         )
         
         if not ok:
-            log_and_print(f"  [!] {account_key.upper()} failed to connect for {symbol}", "ERROR")
+            log_and_print(f"  ⚠️  {account_key.upper()} | Connection failed | {symbol}", "ERROR")
             continue
 
         try:
-            log_and_print(f"  [→] {account_key.upper()} | Processing: {symbol} ({cat})", "INFO")
+            log_and_print(f"  📈 {account_key.upper()} | Processing | {symbol} ({cat})", "INFO")
             
             sym_folder = os.path.join(account_cfg["BASE_FOLDER"], symbol.replace(" ", "_"))
             os.makedirs(sym_folder, exist_ok=True)
@@ -931,32 +1126,36 @@ def process_account_worker(account_key, account_cfg, symbol_chunk, bars, TIMEFRA
                 if df is not None and not df.empty:
                     df["symbol"] = symbol
                     save_newest_oldest_df(df, symbol, tf_str, tf_folder)
+                    
+                    # Generate charts directly without cropping
                     chart_path, _ = generate_and_save_chart_df(df, symbol, tf_str, tf_folder)
-                    slice_counts, _ = generate_and_save_chart(symbol, tf_str, tf_folder)
+                    slice_counts, _ = generate_and_save_chart_slice(symbol, tf_str, tf_folder)
                     
                     if slice_counts:
                         save_sliced_newest_oldest_json(symbol, tf_str, tf_folder, slice_counts)
-                    if chart_path:
-                        crop_chart(chart_path, symbol, tf_str, tf_folder)
+                    
+                    # CROP CHART REMOVED - Charts are saved as-is without cropping
             
             # Pass account_key as the broker name for identification
             ticks_value(symbol, sym_folder, account_key, account_cfg["BASE_FOLDER"], [symbol])
             processed_count += 1
+            log_and_print(f"  ✅ {account_key.upper()} | Completed | {symbol}", "SUCCESS")
             
         except Exception as e:
-            log_and_print(f"  [!] {account_key.upper()} Error on {symbol}: {e}", "ERROR")
+            log_and_print(f"  ❌ {account_key.upper()} | Error on {symbol}: {str(e)[:50]}", "ERROR")
         finally:
             mt5.shutdown()
     
     result_dict[account_key] = processed_count
+    log_and_print(f"  🏁 {account_key.upper()} | Finished | {processed_count}/{total_in_chunk} symbols processed\n", "SUCCESS")
 
 def fetch_charts_all_brokers(bars):
     backup_developers_dictionary()
     category_path = r"C:\xampp\htdocs\chronedge\synarex\symbolscategory.json"
 
-    log_and_print("\n" + "="*60, "INFO")
-    log_and_print("🚀 SYNCHRONIZING MULTI-ACCOUNT ENGINE", "INFO")
-    log_and_print("="*60 + "\n", "INFO")
+    log_and_print("\n" + "╔" + "═"*58 + "╗", "INFO")
+    log_and_print("║           🚀 MULTI-ACCOUNT SYNCHRONIZATION ENGINE           ║", "INFO")
+    log_and_print("╚" + "═"*58 + "╝\n", "INFO")
 
     try:
         # 1. Load symbols
@@ -964,14 +1163,18 @@ def fetch_charts_all_brokers(bars):
             categories_data = json.load(f)
 
         # 2. Get the master list of all symbols to process
+        log_and_print("📡 Discovering available symbols...", "INFO")
+        
         # We use the first available terminal to see what symbols are actually on the server
-        master_symbol_list = []
         first_cfg = list(ohlcdictionary.values())[0]
         
         ok, _ = initialize_mt5(first_cfg["TERMINAL_PATH"], first_cfg["LOGIN_ID"], first_cfg["PASSWORD"], first_cfg["SERVER"])
         if ok:
             mt5_available, _ = get_symbols()
             mt5.shutdown()
+            
+            # Build master list with validation
+            master_symbol_list = []
             for cat, symbol_list in categories_data.items():
                 for sym in symbol_list:
                     if sym in mt5_available:
@@ -979,11 +1182,11 @@ def fetch_charts_all_brokers(bars):
         
         total_symbols = len(master_symbol_list)
         if total_symbols == 0:
-            log_and_print("No symbols found to process.", "WARNING")
+            log_and_print("⚠️  No symbols found to process.", "WARNING")
             return True
 
         # 3. Split symbols equally across all accounts in ohlcdictionary
-        accounts = list(ohlcdictionary.items()) # [('deriv_terminal_1', cfg), ('deriv_terminal_2', cfg)...]
+        accounts = list(ohlcdictionary.items())
         num_accounts = len(accounts)
         
         # Math to divide symbols into chunks
@@ -996,8 +1199,19 @@ def fetch_charts_all_brokers(bars):
             chunks.append(master_symbol_list[start:end])
             start = end
 
-        log_and_print(f"📋 WORKLOAD DISTRIBUTION ({total_symbols} symbols total):", "INFO")
+        log_and_print("\n" + "─"*60, "INFO")
+        log_and_print("📋 WORKLOAD DISTRIBUTION", "INFO")
+        log_and_print("─"*60, "INFO")
         
+        for i, (acc_key, _) in enumerate(accounts):
+            chunk_size = len(chunks[i])
+            percentage = (chunk_size / total_symbols) * 100
+            bar = "█" * int(percentage/5) + "░" * (20 - int(percentage/5))
+            log_and_print(f"   {acc_key:20} | {bar} | {chunk_size:3} symbols ({percentage:5.1f}%)", "SUCCESS")
+        
+        log_and_print("─"*60 + "\n", "INFO")
+        log_and_print(f"🚀 Launching {num_accounts} parallel processes...\n", "INFO")
+
         # 4. Launch Processes
         manager = multiprocessing.Manager()
         final_counts = manager.dict()
@@ -1005,8 +1219,6 @@ def fetch_charts_all_brokers(bars):
 
         for i, (acc_key, acc_cfg) in enumerate(accounts):
             chunk = chunks[i]
-            log_and_print(f"   ➤ {acc_key}: Assigned {len(chunk)} symbols", "SUCCESS")
-            
             if not chunk: continue
             
             p = multiprocessing.Process(
@@ -1016,34 +1228,55 @@ def fetch_charts_all_brokers(bars):
             processes.append(p)
             p.start()
 
-        print("-" * 60)
-
         # Wait for all accounts to finish their work
         for p in processes:
             p.join()
 
         # 5. Final Summary
-        log_and_print("\n" + "="*60, "SUCCESS")
-        log_and_print("🏁 ALL ACCOUNTS FINISHED PROCESSING", "SUCCESS")
+        total_processed = sum(final_counts.values())
+        
+        log_and_print("\n" + "╔" + "═"*58 + "╗", "SUCCESS")
+        log_and_print("║                    🏁 PROCESSING COMPLETE                    ║", "SUCCESS")
+        log_and_print("╠" + "═"*58 + "╣", "SUCCESS")
+        
         for acc_key, count in final_counts.items():
-            log_and_print(f"   ✔ {acc_key}: Processed {count} symbols", "SUCCESS")
-        log_and_print("="*60 + "\n", "SUCCESS")
+            percentage = (count / total_processed) * 100 if total_processed > 0 else 0
+            log_and_print(f"║ {acc_key:30} │ {count:3} symbols │ {percentage:5.1f}%", "SUCCESS")
+        
+        log_and_print("╠" + "═"*58 + "╣", "SUCCESS")
+        log_and_print(f"║ {'TOTAL':30} │ {total_processed:3} symbols │ 100.0%", "SUCCESS")
+        log_and_print("╚" + "═"*58 + "╝\n", "SUCCESS")
 
         return True
 
     except Exception as e:
-        log_and_print(f"💥 SYSTEM ERROR: {e}", "CRITICAL")
+        log_and_print("\n" + "╔" + "═"*58 + "╗", "CRITICAL")
+        log_and_print("║                    💥 SYSTEM ERROR                            ║", "CRITICAL")
+        log_and_print("╠" + "═"*58 + "╣", "CRITICAL")
+        log_and_print(f"║ {str(e):56}", "CRITICAL")
+        log_and_print("╚" + "═"*58 + "╝\n", "CRITICAL")
         return False
 
 def main():
-    success = fetch_charts_all_brokers(
-        bars=2001
-    )
+    log_and_print("\n" + "┌" + "─"*58 + "┐", "INFO")
+    log_and_print("│                 🔄 SYNAREX DATA PIPELINE                   │", "INFO")
+    log_and_print("└" + "─"*58 + "┘\n", "INFO")
+    
+    success = fetch_charts_all_brokers(bars=500)
 
     if success:
-        log_and_print("Chart generation, cropping, arrow detection, PH/PL analysis, and candle data saving completed successfully for all brokers!", "SUCCESS")
+        log_and_print("\n" + "┌" + "─"*58 + "┐", "SUCCESS")
+        log_and_print("│                   ✅ PIPELINE COMPLETED                     │", "SUCCESS")
+        log_and_print("├" + "─"*58 + "┤", "SUCCESS")
+        log_and_print("│ • Charts generated                • Candle data saved        │", "SUCCESS")
+        log_and_print("│ • PH/PL analysis completed        • Arrow detection done     │", "SUCCESS")
+        log_and_print("└" + "─"*58 + "┘\n", "SUCCESS")
     else:
-        log_and_print("Process failed. Check error log for details.", "ERROR")   
+        log_and_print("\n" + "┌" + "─"*58 + "┐", "ERROR")
+        log_and_print("│                   ❌ PIPELINE FAILED                        │", "ERROR")
+        log_and_print("├" + "─"*58 + "┤", "ERROR")
+        log_and_print("│ Check error log for details                                  │", "ERROR")
+        log_and_print("└" + "─"*58 + "┘\n", "ERROR")
 
 if __name__ == "__main__":
     main()
