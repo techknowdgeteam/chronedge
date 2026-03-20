@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pytz
 from multiprocessing import Pool, cpu_count
+from multiprocessing.pool import ThreadPool
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import mplfinance as mpf
@@ -478,7 +479,7 @@ def label_objects(
         cv2.putText(img, str(fvg_swing_type), (cx - 8, int(fvg_swing_type_y)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
 
-def swing_points(broker_name):
+def swing_points(broker_name, max_symbols_parallel=5):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -518,8 +519,9 @@ def swing_points(broker_name):
     print("\n" + "="*80)
     print(f"🚀 SWING POINTS ANALYSIS - {broker_name}".center(80))
     print("="*80)
-    log(f"Starting HH/LL analysis for {broker_name}")
+    log(f"Starting HH/LL analysis for {broker_name} with {max_symbols_parallel} symbols parallel processing")
 
+    # Process each config
     for config_key, hlll_cfg in matching_configs:
         bars = hlll_cfg.get("BARS", 101)
         output_filename_base = hlll_cfg.get("filename", "highers.json")
@@ -544,199 +546,234 @@ def swing_points(broker_name):
         hh_cm_obj, hh_cm_dbl = resolve_marker(label_at.get("swing_highs_contourmaker_marker", ""))
         ll_cm_obj, ll_cm_dbl = resolve_marker(label_at.get("swing_lows_contourmaker_marker", ""))
 
-
+        # Get all symbols to process
+        symbols = []
         for sym in sorted(os.listdir(base_folder)):
             sym_p = os.path.join(base_folder, sym)
-            if not os.path.isdir(sym_p): continue
+            if os.path.isdir(sym_p):
+                symbols.append(sym)
+        
+        if not symbols:
+            log(f"No symbols found in {base_folder}", "WARNING")
+            continue
+
+        # Prepare arguments for parallel processing
+        symbol_args = []
+        for sym in symbols:
+            symbol_args.append((
+                sym, base_folder, broker_name, config_key, hlll_cfg,
+                neighbor_left, neighbor_right, hh_text, ll_text, cm_text,
+                hh_pos, ll_pos, hh_col, ll_col, hh_obj, ll_obj, hh_dbl, ll_dbl,
+                hh_cm_obj, ll_cm_obj, hh_cm_dbl, ll_cm_dbl,
+                bars, direction, output_filename_base
+            ))
+        
+        # Use ThreadPool instead of Pool to avoid nested daemon processes
+        with ThreadPool(processes=max_symbols_parallel) as symbol_pool:
+            symbol_results = symbol_pool.map(process_single_symbol, symbol_args)
             
-            # Symbol header with nice formatting
-            symbol_swings_high = 0
-            symbol_swings_low = 0
-            symbol_timeframes = []
-            
-            for tf in sorted(os.listdir(sym_p)):
-                paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
-                config_path = os.path.join(paths["output_dir"], "config.json")
+            # Aggregate results
+            for symbol_swings_high, symbol_swings_low, symbol_timeframes, symbol_name in symbol_results:
+                total_marked_all += (symbol_swings_high + symbol_swings_low)
+                processed_charts_all += len(symbol_timeframes)
                 
-                if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
-                    continue
-                
-                try:
-                    with open(paths["source_json"], 'r', encoding='utf-8') as f:
-                        data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
-                    
-                    img = cv2.imread(paths["source_chart"])
-                    if img is None: 
-                        log(f"   Skipping: Could not load image {paths['source_chart']}", "WARNING")
-                        continue
-                    
-                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    if len(contours) == 0: 
-                        log(f"   No contours found for {sym} {tf}")
-                        continue
-
-                    contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
-                    
-                    if len(data) != len(contours):
-                        min_len = min(len(data), len(contours))
-                        data = data[:min_len]
-                        contours = contours[:min_len]
-
-                    for idx, contour in enumerate(contours):
-                        x, y, w, h = cv2.boundingRect(contour)
-                        data[idx].update({
-                            "candle_x": x + (w // 2),
-                            "candle_y": y,
-                            "candle_width": w,
-                            "candle_height": h,
-                            "candle_left": x,
-                            "candle_right": x + w,
-                            "candle_top": y,
-                            "candle_bottom": y + h
-                        })
-
-                    n = len(data)
-                    swing_count_in_chart = 0
-                    swing_highs_in_chart = 0
-                    swing_lows_in_chart = 0
-                    start_idx = neighbor_left
-                    end_idx = n - neighbor_right
-
-                    for i in range(start_idx, end_idx):
-                        curr_h, curr_l = data[i]['high'], data[i]['low']
-                        
-                        l_h = [d['high'] for d in data[i - neighbor_left:i]]
-                        l_l = [d['low'] for d in data[i - neighbor_left:i]]
-                        r_h = [d['high'] for d in data[i + 1:i + 1 + neighbor_right]]
-                        r_l = [d['low'] for d in data[i + 1:i + 1 + neighbor_right]]
-                        
-                        is_hh = curr_h > max(l_h) and curr_h > max(r_h)
-                        is_ll = curr_l < min(l_l) and curr_l < min(r_l)
-                        
-                        if not (is_hh or is_ll):
-                            continue
-                        
-                        swing_count_in_chart += 1
-                        is_bull = is_ll
-                        
-                        if is_bull:
-                            swing_lows_in_chart += 1
-                            symbol_swings_low += 1
-                        else:
-                            swing_highs_in_chart += 1
-                            symbol_swings_high += 1
-                            
-                        active_color = ll_col if is_bull else hh_col
-                        custom_text = ll_text if is_bull else hh_text
-                        obj_type = ll_obj if is_bull else hh_obj
-                        dbl_arrow = ll_dbl if is_bull else hh_dbl
-                        position = ll_pos if is_bull else hh_pos
-
-                        label_objects_and_text(
-                            img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
-                            fvg_swing_type=data[i]['candle_number'],
-                            custom_text=custom_text,
-                            object_type=obj_type,
-                            is_bullish_arrow=is_bull,
-                            is_marked=True,
-                            double_arrow=dbl_arrow,
-                            arrow_color=active_color,
-                            label_position=position
-                        )
-
-                        m_idx = i + neighbor_right
-                        contour_maker_entry = None
-                        if m_idx < n:
-                            cm_obj = ll_cm_obj if is_bull else hh_cm_obj
-                            cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
-                            
-                            label_objects_and_text(
-                                img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
-                                custom_text=cm_text,
-                                object_type=cm_obj,
-                                is_bullish_arrow=is_bull,
-                                is_marked=True,
-                                double_arrow=cm_dbl,
-                                arrow_color=active_color,
-                                label_position=position
-                            )
-
-                            data[m_idx]["is_contour_maker"] = True
-                            contour_maker_entry = data[m_idx].copy()
-                            contour_maker_entry.update({
-                                "draw_x": data[m_idx]["candle_x"], "draw_y": data[m_idx]["candle_y"],
-                                "draw_w": data[m_idx]["candle_width"], "draw_h": data[m_idx]["candle_height"],
-                                "draw_left": data[m_idx]["candle_left"], "draw_right": data[m_idx]["candle_right"],
-                                "draw_top": data[m_idx]["candle_top"], "draw_bottom": data[m_idx]["candle_bottom"],
-                                "is_contour_maker": True
-                            })
-
-                        data[i].update({
-                            "swing_type": "swing_low" if is_bull else "swing_high",
-                            "is_swing": True,
-                            "active_color": active_color,
-                            "draw_x": data[i]["candle_x"], "draw_y": data[i]["candle_y"],
-                            "draw_w": data[i]["candle_width"], "draw_h": data[i]["candle_height"],
-                            "draw_left": data[i]["candle_left"], "draw_right": data[i]["candle_right"],
-                            "draw_top": data[i]["candle_top"], "draw_bottom": data[i]["candle_bottom"],
-                            "contour_maker": contour_maker_entry,
-                            "m_idx": m_idx if m_idx < n else None
-                        })
-
-                    # Finalize outputs for this specific TF
-                    os.makedirs(paths["output_dir"], exist_ok=True)
-                    cv2.imwrite(paths["output_chart"], img)
-
-                    config_json = {}
-                    if os.path.exists(config_path):
-                        try:
-                            with open(config_path, 'r', encoding='utf-8') as f:
-                                config_json = json.load(f)
-                        except:
-                            config_json = {}
-                    
-                    config_json[config_key] = data
-                    config_json[f"{config_key}_candle_list"] = data 
-
-                    with open(config_path, 'w', encoding='utf-8') as f:
-                        json.dump(config_json, f, indent=4)
-                    
-                    # Aesthetic print for each timeframe
-                    if swing_count_in_chart > 0:
-                        swings_display = f"🔴 HH:{swing_highs_in_chart:3d} | 🟢 LL:{swing_lows_in_chart:3d} | Total:{swing_count_in_chart:3d}"
-                    else:
-                        swings_display = "⚪ No swings found"
-                    
-                    #print(f"   📈 {sym:<10} | {tf:<6} | {swings_display}")
-                    
-                    symbol_timeframes.append(tf)
-                    processed_charts_all += 1
-                    total_marked_all += swing_count_in_chart
-
-                except Exception as e:
-                    log(f"   [ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
-            
-            # Symbol summary with nice formatting
-            if symbol_timeframes:
-                total_symbol_swings = symbol_swings_high + symbol_swings_low
-                if total_symbol_swings > 0:
-                    print(f"\n {sym} SWING POINTS:")
-                    print(f"   ├─ Timeframes processed: {len(symbol_timeframes)}")
-                    print(f"   ├─ 🔴 SWING HIGHS: {symbol_swings_high}")
-                    print(f"   ├─ 🟢 SWING LOWS: {symbol_swings_low}")
-                    print(f"   └─ 📊 TOTAL SWINGS: {total_symbol_swings}")
-                    print(f"   {'.' * 50}")
+                # Print symbol summary
+                if symbol_timeframes:
+                    total_symbol_swings = symbol_swings_high + symbol_swings_low
+                    if total_symbol_swings > 0:
+                        print(f"\n {symbol_name} SWING POINTS:")
+                        print(f"   ├─ Timeframes processed: {len(symbol_timeframes)}")
+                        print(f"   ├─ 🔴 SWING HIGHS: {symbol_swings_high}")
+                        print(f"   ├─ 🟢 SWING LOWS: {symbol_swings_low}")
+                        print(f"   └─ 📊 TOTAL SWINGS: {total_symbol_swings}")
+                        print(f"   {'.' * 50}")
 
     # Final summary with beautiful formatting
     print("\n" + "="*80)
     print("🎯 SWING POINTS COMPLETED".center(80))
+    print(f"📊 Total Swings: {total_marked_all} | Charts Processed: {processed_charts_all}".center(80))
     print("="*80)
     
-    return
+    return f"[{broker_name}] Swing points analysis completed. Total swings: {total_marked_all}"
 
+def process_single_symbol(args):
+    """Process a single symbol across all its timeframes"""
+    (sym, base_folder, broker_name, config_key, hlll_cfg,
+     neighbor_left, neighbor_right, hh_text, ll_text, cm_text,
+     hh_pos, ll_pos, hh_col, ll_col, hh_obj, ll_obj, hh_dbl, ll_dbl,
+     hh_cm_obj, ll_cm_obj, hh_cm_dbl, ll_cm_dbl,
+     bars, direction, output_filename_base) = args
+    
+    lagos_tz = pytz.timezone('Africa/Lagos')
+    def log(msg, level="INFO"):
+        ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{ts}] [{level}] [{broker_name}/{sym}] {msg}")
+    
+    symbol_swings_high = 0
+    symbol_swings_low = 0
+    symbol_timeframes = []
+    
+    sym_p = os.path.join(base_folder, sym)
+    if not os.path.isdir(sym_p):
+        return (0, 0, [], sym)
+    
+    for tf in sorted(os.listdir(sym_p)):
+        paths = get_analysis_paths(base_folder, broker_name, sym, tf, direction, bars, output_filename_base)
+        config_path = os.path.join(paths["output_dir"], "config.json")
+        
+        if not os.path.exists(paths["source_json"]) or not os.path.exists(paths["source_chart"]):
+            continue
+        
+        try:
+            with open(paths["source_json"], 'r', encoding='utf-8') as f:
+                data = sorted(json.load(f), key=lambda x: x.get('candle_number', 0))
+            
+            img = cv2.imread(paths["source_chart"])
+            if img is None: 
+                log(f"Skipping: Could not load image {paths['source_chart']}", "WARNING")
+                continue
+            
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255)) | cv2.inRange(hsv, (0, 50, 50), (10, 255, 255))
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if len(contours) == 0: 
+                log(f"No contours found for {sym} {tf}")
+                continue
+
+            contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
+            
+            if len(data) != len(contours):
+                min_len = min(len(data), len(contours))
+                data = data[:min_len]
+                contours = contours[:min_len]
+
+            for idx, contour in enumerate(contours):
+                x, y, w, h = cv2.boundingRect(contour)
+                data[idx].update({
+                    "candle_x": x + (w // 2),
+                    "candle_y": y,
+                    "candle_width": w,
+                    "candle_height": h,
+                    "candle_left": x,
+                    "candle_right": x + w,
+                    "candle_top": y,
+                    "candle_bottom": y + h
+                })
+
+            n = len(data)
+            swing_count_in_chart = 0
+            swing_highs_in_chart = 0
+            swing_lows_in_chart = 0
+            start_idx = neighbor_left
+            end_idx = n - neighbor_right
+
+            for i in range(start_idx, end_idx):
+                curr_h, curr_l = data[i]['high'], data[i]['low']
+                
+                l_h = [d['high'] for d in data[i - neighbor_left:i]]
+                l_l = [d['low'] for d in data[i - neighbor_left:i]]
+                r_h = [d['high'] for d in data[i + 1:i + 1 + neighbor_right]]
+                r_l = [d['low'] for d in data[i + 1:i + 1 + neighbor_right]]
+                
+                is_hh = curr_h > max(l_h) and curr_h > max(r_h)
+                is_ll = curr_l < min(l_l) and curr_l < min(r_l)
+                
+                if not (is_hh or is_ll):
+                    continue
+                
+                swing_count_in_chart += 1
+                is_bull = is_ll
+                
+                if is_bull:
+                    swing_lows_in_chart += 1
+                    symbol_swings_low += 1
+                else:
+                    swing_highs_in_chart += 1
+                    symbol_swings_high += 1
+                    
+                active_color = ll_col if is_bull else hh_col
+                custom_text = ll_text if is_bull else hh_text
+                obj_type = ll_obj if is_bull else hh_obj
+                dbl_arrow = ll_dbl if is_bull else hh_dbl
+                position = ll_pos if is_bull else hh_pos
+
+                # Assuming label_objects_and_text function exists
+                label_objects_and_text(
+                    img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
+                    fvg_swing_type=data[i]['candle_number'],
+                    custom_text=custom_text,
+                    object_type=obj_type,
+                    is_bullish_arrow=is_bull,
+                    is_marked=True,
+                    double_arrow=dbl_arrow,
+                    arrow_color=active_color,
+                    label_position=position
+                )
+
+                m_idx = i + neighbor_right
+                contour_maker_entry = None
+                if m_idx < n:
+                    cm_obj = ll_cm_obj if is_bull else hh_cm_obj
+                    cm_dbl = ll_cm_dbl if is_bull else hh_cm_dbl
+                    
+                    label_objects_and_text(
+                        img, data[m_idx]["candle_x"], data[m_idx]["candle_y"], data[m_idx]["candle_height"],
+                        custom_text=cm_text,
+                        object_type=cm_obj,
+                        is_bullish_arrow=is_bull,
+                        is_marked=True,
+                        double_arrow=cm_dbl,
+                        arrow_color=active_color,
+                        label_position=position
+                    )
+
+                    data[m_idx]["is_contour_maker"] = True
+                    contour_maker_entry = data[m_idx].copy()
+                    contour_maker_entry.update({
+                        "draw_x": data[m_idx]["candle_x"], "draw_y": data[m_idx]["candle_y"],
+                        "draw_w": data[m_idx]["candle_width"], "draw_h": data[m_idx]["candle_height"],
+                        "draw_left": data[m_idx]["candle_left"], "draw_right": data[m_idx]["candle_right"],
+                        "draw_top": data[m_idx]["candle_top"], "draw_bottom": data[m_idx]["candle_bottom"],
+                        "is_contour_maker": True
+                    })
+
+                data[i].update({
+                    "swing_type": "swing_low" if is_bull else "swing_high",
+                    "is_swing": True,
+                    "active_color": active_color,
+                    "draw_x": data[i]["candle_x"], "draw_y": data[i]["candle_y"],
+                    "draw_w": data[i]["candle_width"], "draw_h": data[i]["candle_height"],
+                    "draw_left": data[i]["candle_left"], "draw_right": data[i]["candle_right"],
+                    "draw_top": data[i]["candle_top"], "draw_bottom": data[i]["candle_bottom"],
+                    "contour_maker": contour_maker_entry,
+                    "m_idx": m_idx if m_idx < n else None
+                })
+
+            # Finalize outputs for this specific TF
+            os.makedirs(paths["output_dir"], exist_ok=True)
+            cv2.imwrite(paths["output_chart"], img)
+
+            config_json = {}
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_json = json.load(f)
+                except:
+                    config_json = {}
+            
+            config_json[config_key] = data
+            config_json[f"{config_key}_candle_list"] = data 
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config_json, f, indent=4)
+            
+            symbol_timeframes.append(tf)
+
+        except Exception as e:
+            log(f"[ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
+    
+    return (symbol_swings_high, symbol_swings_low, symbol_timeframes, sym)
 
 def fair_value_gaps(broker_name):
     lagos_tz = pytz.timezone('Africa/Lagos')
@@ -2252,28 +2289,6 @@ def entry_point_of_interest(broker_name):
                     
                     logic_met = check_logic(c_type, curr_h, curr_l, r_type, ref_h, ref_l, mode)
 
-                    # 2. Check Collective Beyond Requirement
-                    min_collective = def_cfg.get("minimum_collectivebeyondcandles")
-                    if logic_met and mode == "beyond" and isinstance(min_collective, int) and min_collective > 0:
-                        # Find index of current candle to look behind in the list
-                        try:
-                            curr_idx = candles.index(target_candle)
-                            # Check the 'n' candles before this one
-                            for i in range(1, min_collective + 1):
-                                prev_idx = curr_idx - i
-                                if prev_idx < 0:
-                                    logic_met = False # Not enough history
-                                    break
-                                
-                                prev_c = candles[prev_idx]
-                                p_h, p_l = prev_c.get("high"), prev_c.get("low")
-                                # We use the target's swing type for the collective check as they are "with" the target
-                                if not check_logic(c_type, p_h, p_l, r_type, ref_h, ref_l, mode):
-                                    logic_met = False
-                                    break
-                        except ValueError:
-                            pass
-
                     if logic_met:
                         target_candle[f"{conn_key}_met"] = True
 
@@ -2322,15 +2337,16 @@ def entry_point_of_interest(broker_name):
         # --- SECTION 3: FINAL PATTERN VALIDATION ---
         validated_patterns = {}
         
-        # Create a lookup for ALL candles to check collective beyond
-        candle_lookup = {c.get('candle_number'): c for c in candles if isinstance(c, dict) and c.get('candle_number')}
-        candle_indices = {c.get('candle_number'): idx for idx, c in enumerate(candles) if isinstance(c, dict) and c.get('candle_number')}
+        # Build lookup for original candles by candle_number for neighbor checks
+        original_candle_lookup = {}
+        for candle in candles:
+            if isinstance(candle, dict) and candle.get('candle_number') is not None:
+                original_candle_lookup[candle['candle_number']] = candle
         
         for pattern_key, pattern_candles in patterns_dict.items():
             if not pattern_candles:
                 continue
                 
-            print(f"\nValidating final pattern: {pattern_key}")
             pattern_valid = True
             
             # Collect definition candles
@@ -2344,7 +2360,6 @@ def entry_point_of_interest(broker_name):
                                 def_num = int(parts[1])
                                 if def_num not in definition_candles:
                                     definition_candles[def_num] = candle
-                                    print(f"  def_{def_num}: c{def_num==1 and '✅' or '⬆️'}{candle.get('candle_number')} ({candle.get('swing_type','')})")
                         except (ValueError, IndexError):
                             continue
             
@@ -2357,6 +2372,7 @@ def entry_point_of_interest(broker_name):
                     
                 def_cfg = identify_config.get(f"define_{def_num}", {})
                 condition_cfg = def_cfg.get("condition", "").lower()
+                min_collective = def_cfg.get("minimum_collectivebeyondcandles")
                 
                 if not condition_cfg:
                     continue
@@ -2373,7 +2389,6 @@ def entry_point_of_interest(broker_name):
                 ref_candle = definition_candles.get(ref_def_num)
                 
                 if not current_candle or not ref_candle:
-                    print(f"  ✗ def_{def_num}: missing reference def_{ref_def_num}")
                     pattern_valid = False
                     continue
                 
@@ -2384,85 +2399,120 @@ def entry_point_of_interest(broker_name):
                 ref_h, ref_l = ref_candle.get("high"), ref_candle.get("low")
                 ref_type = ref_candle.get("swing_type", "").lower()
                 
-                # Check price relationship
-                def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
-                    if mode == "behind":
-                        if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
-                        if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
-                        if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
-                        if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
-                    elif mode == "beyond":
-                        if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
-                        if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
-                        if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
-                        if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
-                    return False
-                
-                logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
-                
-                # DEBUG: Print the price comparison
-                price_comparison = ""
-                if curr_type == "swing_high" and ref_type == "swing_high":
-                    price_comparison = f"{curr_h:.5f} {'>' if mode=='beyond' else '<'} {ref_h:.5f}"
-                elif curr_type == "swing_low" and ref_type == "swing_low":
-                    price_comparison = f"{curr_l:.5f} {'<' if mode=='beyond' else '>'} {ref_l:.5f}"
-                elif curr_type == "swing_high" and ref_type == "swing_low":
-                    price_comparison = f"{curr_h:.5f} {'>' if mode=='beyond' else '?'} {ref_h:.5f}"
-                elif curr_type == "swing_low" and ref_type == "swing_high":
-                    price_comparison = f"{curr_l:.5f} {'<' if mode=='beyond' else '?'} {ref_l:.5f}"
-                
-                # Check collective beyond using ORIGINAL candle data, not just pattern
-                min_collective = def_cfg.get("minimum_collectivebeyondcandles")
-                collective_valid = True
-                collective_msg = ""
-                
-                if logic_met and mode == "beyond" and isinstance(min_collective, int) and min_collective > 0:
-                    # Find position of current candle in ORIGINAL data
-                    curr_candle_num = current_candle.get('candle_number')
-                    curr_idx = candle_indices.get(curr_candle_num)
+                # Check if we need to validate collective beyond candles
+                if min_collective and mode == "beyond" and min_collective >= 1:
+                    # Get the current candle's number to find neighbors in original candles
+                    current_candle_num = current_candle.get('candle_number')
                     
-                    if curr_idx is not None:
-                        collective_valid = True
-                        collective_failures = []
+                    if current_candle_num is not None:
+                        # Calculate left and right distribution
+                        # Give most search to left, least to right
+                        left_count = min_collective // 2 + (min_collective % 2)  # Ceiling division for left
+                        right_count = min_collective // 2  # Floor division for right
                         
-                        for i in range(1, min_collective + 1):
-                            check_idx = curr_idx - i
-                            if check_idx < 0:
-                                collective_valid = False
-                                collective_failures.append(f"no candle {-i}")
+                        # Collect neighbor candles from the original candles list
+                        neighbor_candles = []
+                        neighbor_candle_numbers = []
+                        
+                        # Get left neighbors
+                        for offset in range(1, left_count + 1):
+                            neighbor_num = current_candle_num - offset
+                            neighbor = original_candle_lookup.get(neighbor_num)
+                            if neighbor:
+                                neighbor_candles.append(neighbor)
+                                neighbor_candle_numbers.append(neighbor_num)
+                        
+                        # Get right neighbors
+                        for offset in range(1, right_count + 1):
+                            neighbor_num = current_candle_num + offset
+                            neighbor = original_candle_lookup.get(neighbor_num)
+                            if neighbor:
+                                neighbor_candles.append(neighbor)
+                                neighbor_candle_numbers.append(neighbor_num)
+                        
+                        # Check each neighbor individually
+                        all_neighbors_valid = True
+                        
+                        for neighbor in neighbor_candles:
+                            # Get neighbor's price (high or low based on current candle's swing type)
+                            if "high" in curr_type:
+                                neighbor_price = neighbor.get("high")
+                            else:
+                                neighbor_price = neighbor.get("low")
+                            
+                            if neighbor_price is None:
+                                all_neighbors_valid = False
                                 break
                             
-                            check_candle = candles[check_idx]
-                            check_h, check_l = check_candle.get("high"), check_candle.get("low")
-                            check_num = check_candle.get('candle_number')
+                            # Check if this neighbor is beyond the reference
+                            # Use the same swing type as the current candle for the neighbor
+                            neighbor_valid = False
                             
-                            if not check_logic(curr_type, check_h, check_l, ref_type, ref_h, ref_l, mode):
-                                collective_valid = False
-                                collective_failures.append(f"c{check_num}")
+                            if mode == "beyond":
+                                if "high" in curr_type:
+                                    # For swing high: check if neighbor high > ref high
+                                    if "high" in ref_type:
+                                        neighbor_valid = neighbor_price > ref_h
+                                    elif "low" in ref_type:
+                                        neighbor_valid = neighbor_price > ref_h
+                                elif "low" in curr_type:
+                                    # For swing low: check if neighbor low < ref low
+                                    if "low" in ref_type:
+                                        neighbor_valid = neighbor_price < ref_l
+                                    elif "high" in ref_type:
+                                        neighbor_valid = neighbor_price < ref_l
+                            
+                            if not neighbor_valid:
+                                all_neighbors_valid = False
+                                break
                         
-                        if collective_failures:
-                            collective_msg = f" ❌ collective beyond failed at {', '.join(collective_failures)}"
-                        else:
-                            collective_msg = f" ✅ {min_collective} candles beyond OK"
+                        # If neighbors check fails, pattern is invalid
+                        if not all_neighbors_valid:
+                            pattern_valid = False
+                            continue
+                        
+                        # Also check the current candle itself
+                        def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                            if mode == "behind":
+                                if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                                if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                                if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                                if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
+                            elif mode == "beyond":
+                                if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                                if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                                if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                                if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
+                            return False
+                        
+                        logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
+                        
+                        if not logic_met:
+                            pattern_valid = False
                     else:
-                        collective_valid = False
-                        collective_msg = " ❌ can't find candle position"
-                
-                # Print concise validation result
-                if logic_met and collective_valid:
-                    print(f"  ✓ def_{def_num}: {curr_type} c{current_candle.get('candle_number')} {mode} def_{ref_def_num} {price_comparison}{collective_msg}")
+                        pattern_valid = False
                 else:
+                    # Standard validation without collective candles
+                    def check_logic(c_type, c_h, c_l, r_type, r_h, r_l, mode):
+                        if mode == "behind":
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h < r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l > r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_l > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_h < r_l
+                        elif mode == "beyond":
+                            if c_type == "swing_high" and r_type == "swing_high": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_low": return c_l < r_l
+                            if c_type == "swing_high" and r_type == "swing_low": return c_h > r_h
+                            if c_type == "swing_low" and r_type == "swing_high": return c_l < r_l
+                        return False
+                    
+                    logic_met = check_logic(curr_type, curr_h, curr_l, ref_type, ref_h, ref_l, mode)
+                    
                     if not logic_met:
-                        print(f"  ✗ def_{def_num}: {curr_type} c{current_candle.get('candle_number')} NOT {mode} def_{ref_def_num} {price_comparison}")
-                    if not collective_valid and logic_met:
-                        print(f"  ✗ def_{def_num}: {collective_msg}")
-                    pattern_valid = False
+                        pattern_valid = False
             
             if pattern_valid:
-                print(f"  ✅ Pattern {pattern_key} PASSED")
                 validated_patterns[pattern_key] = pattern_candles
-            else:
-                print(f"  ❌ Pattern {pattern_key} FAILED")
         
         patterns_dict = validated_patterns
         return candles, patterns_dict
@@ -2488,7 +2538,6 @@ def entry_point_of_interest(broker_name):
         if not extreme_defs:
             return patterns_dict
         
-        print(f"Extreme definitions enabled: {list(extreme_defs.keys())}")
         
         # Build a quick lookup dictionary for all candles by candle_number
         candle_lookup = {candle.get('candle_number'): candle for candle in all_candles if isinstance(candle, dict) and candle.get('candle_number')}
@@ -10177,7 +10226,7 @@ def single():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
-        #sync_results = pool.map(swing_points, broker_names)
+        sync_results = pool.map(swing_points, broker_names)
         #for r in sync_results: print(r)
         sync_results = pool.map(entry_point_of_interest, broker_names)
         for r in sync_results: print(r)
@@ -10186,32 +10235,32 @@ def single():
         #sync_results = pool.map(sync_dev_investors, broker_names)
         #for r in sync_results: print(r)
 
-def process_single_developer_pipeline(broker_name):
+def process_single_developer_pipeline(broker_name, max_symbols_parallel=5):
     """
     Orchestrator: Runs the full suite of tasks for one developer sequentially.
     This allows multiprocessing to happen at the 'Account Level'.
     """
     results = []
-    try:
+    try:  
         # Step 1: Data Sync
         res_candles = copy_full_candle_data(broker_name)
         
-        # Step 2: HH/LL Analysis
-        res_hhll = swing_points(broker_name)
+        # Step 2: HH/LL Analysis with symbol-level multiprocessing
+        res_hhll = swing_points(broker_name, max_symbols_parallel)
         
-        
-        # Step 4: POI
+        # Step 3: POI
         res_poi = entry_point_of_interest(broker_name)
         
-        # Step 4: POI
-        res_poi = entries_confirmation(broker_name)
-        
+        # Step 4: Entries Confirmation
+        res_entries = entries_confirmation(broker_name)
         
         # Step 5: Cleanup
-        #res_clean = clear_unathorized_entries_folders(broker_name)
+        res_clean = clear_unathorized_entries_folders(broker_name)
         
         # Step 6: Investor Sync
         res_sync = sync_dev_investors(broker_name)
+        
+        return f"[{broker_name}] Pipeline completed successfully"
         
     except Exception as e:
         return f"--- [{broker_name}] PIPELINE FAILED: {e} ---"
@@ -10225,20 +10274,26 @@ def main():
     broker_names = sorted(dev_dict.keys())
     cores = cpu_count()
     
+    # You can adjust this value - number of symbols to process in parallel per broker
+    MAX_SYMBOLS_PARALLEL = 5  # Change this to control concurrency per broker
+    
     print(f"--- STARTING ACCOUNT-LEVEL MULTIPROCESSING ---")
     print(f"Cores: {cores} | Total Developers: {len(broker_names)}")
+    print(f"Symbols per broker processed in parallel: {MAX_SYMBOLS_PARALLEL}")
 
-    # We use the pool to map the 'orchestrator' instead of individual steps
+    # Use multiprocessing Pool for broker-level parallelism
     with Pool(processes=cores) as pool:
-        final_results = pool.map(process_single_developer_pipeline, broker_names)
+        # Pass max_symbols_parallel to each broker process
+        from functools import partial
+        process_func = partial(process_single_developer_pipeline, max_symbols_parallel=MAX_SYMBOLS_PARALLEL)
+        final_results = pool.map(process_func, broker_names)
         
         # Print summaries as they finish
         for report in final_results:
             print(report)
 
     print("\n[SUCCESS] All developer pipelines completed.")
-    
 
 if __name__ == "__main__":
-   single()
+    main()
 

@@ -52,7 +52,7 @@
                             "define_2": {
                                 "type": "define_1_type_identical",
                                 "condition": "beyond_define_1",
-                                "minimum_collectivebeyondcandles": 4,
+                                "minimum_collectivebeyondcandles": null,
                                 "enable_drawing": true,
                                 "tool": "dashed_horizontal_line",
                                 "text": "def 2"
@@ -70,6 +70,7 @@
                                 "type": "define_3_type_identical",
                                 "condition": "beyond_define_3",
                                 "enable_drawing": true,
+                                "minimum_collectivebeyondcandles": 2,
                                 "tool": "horizontal_line",
                                 "text": "def 4"
                             },
