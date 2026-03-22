@@ -17,7 +17,7 @@
         "LOGIN_ID": "5996427",
         "PASSWORD": "@Techknowdge12#",
         "SERVER": "deriv-demo",
-        "INVESTED_WITH": "deriv6_structural-liquidity-main1, deriv6_structural-liquidity-main2, deriv6_structural-liquidity-1, deriv6_structural-liquidity-2",
+        "INVESTED_WITH": "deriv6_structural-liquidity",
         "TERMINAL_PATH": "C:\\xampp\\htdocs\\synapse\\mt5\\MetaTrader 5 Deriv d\\terminal64.exe"
     }
 }

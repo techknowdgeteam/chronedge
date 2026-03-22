@@ -607,7 +607,7 @@ def process_single_symbol(args):
     lagos_tz = pytz.timezone('Africa/Lagos')
     def log(msg, level="INFO"):
         ts = datetime.now(lagos_tz).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[{ts}] [{level}] [{broker_name}/{sym}] {msg}")
+        print(f"[{ts}] [{level}] {msg}")
     
     symbol_swings_high = 0
     symbol_swings_low = 0
@@ -630,7 +630,6 @@ def process_single_symbol(args):
             
             img = cv2.imread(paths["source_chart"])
             if img is None: 
-                log(f"Skipping: Could not load image {paths['source_chart']}", "WARNING")
                 continue
             
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -638,7 +637,6 @@ def process_single_symbol(args):
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if len(contours) == 0: 
-                log(f"No contours found for {sym} {tf}")
                 continue
 
             contours = sorted(contours, key=lambda c: cv2.boundingRect(c)[0])
@@ -698,7 +696,6 @@ def process_single_symbol(args):
                 dbl_arrow = ll_dbl if is_bull else hh_dbl
                 position = ll_pos if is_bull else hh_pos
 
-                # Assuming label_objects_and_text function exists
                 label_objects_and_text(
                     img, data[i]["candle_x"], data[i]["candle_y"], data[i]["candle_height"],
                     fvg_swing_type=data[i]['candle_number'],
@@ -769,7 +766,18 @@ def process_single_symbol(args):
                 json.dump(config_json, f, indent=4)
             
             symbol_timeframes.append(tf)
-
+            
+            # Print exactly like original but during processing
+            if symbol_timeframes:
+                total_symbol_swings = symbol_swings_high + symbol_swings_low
+                if total_symbol_swings > 0:
+                    print(f"\n {sym} SWING POINTS:")
+                    print(f"   ├─ Timeframes processed: {len(symbol_timeframes)}")
+                    print(f"   ├─ 🔴 SWING HIGHS: {symbol_swings_high}")
+                    print(f"   ├─ 🟢 SWING LOWS: {symbol_swings_low}")
+                    print(f"   └─ 📊 TOTAL SWINGS: {total_symbol_swings}")
+                    print(f"   {'.' * 50}")
+            
         except Exception as e:
             log(f"[ERROR] Failed processing {sym}/{tf}: {e}", "ERROR")
     
@@ -9714,13 +9722,13 @@ def move_verified_investors():
     """
     Moves verified investors from verified_investors.json to:
     Step 1: investors.json (with limited fields: LOGIN_ID, PASSWORD, SERVER, INVESTED_WITH, TERMINAL_PATH)
-    Step 2: Strategy folders with activities.json (proper configuration)
+    Step 2: Create activities.json directly in investor root folder (NEW PATH STRUCTURE)
     
     Verified investors must have:
     - INVESTED_WITH (not empty)
     - execution_start_date (not empty)
     - contract_days_left (not empty)
-    - TERMINAL_PATH (not empty) - NEW MANDATORY FIELD
+    - TERMINAL_PATH (not empty) - MANDATORY FIELD
     
     Strategy name is extracted by splitting INVESTED_WITH on first underscore
     e.g., "deriv6_double-levels" → strategy = "double-levels"
@@ -9728,7 +9736,8 @@ def move_verified_investors():
     SUPPORTS MULTI-STRATEGY: INVESTED_WITH can contain comma-separated values
     e.g., "deriv6_strat1, deriv6_strat2, deriv6_strat3"
     
-    For Step 2, only proceeds if the strategy folder already exists for the investor.
+    For Step 2, activities.json is created directly in INV_PATH/{inv_id}/activities.json
+    This simplifies the structure and removes the need for strategy subfolders.
     
     NOTE: Investors are NOT removed from verified_investors.json after processing
     """
@@ -9737,7 +9746,7 @@ def move_verified_investors():
     print(f"📦 MOVE VERIFIED INVESTORS TO INVESTOR USERS".center(70))
     print(f"{'='*70}")
     
-    # Default activities template
+    # Default activities template for NEW PATH structure
     DEFAULT_ACTIVITIES = {
         "activate_autotrading": True,
         "bypass_restriction": True,
@@ -9746,7 +9755,8 @@ def move_verified_investors():
         "contract_expiry_date": "",
         "unauthorized_trades": {},
         "unauthorized_withdrawals": {},
-        "unauthorized_action_detected": False
+        "unauthorized_action_detected": False,
+        "strategies": []  # Store all strategies in a list for the new structure
     }
     
     # Check if verified investors file exists
@@ -9839,15 +9849,16 @@ def move_verified_investors():
             print(f"  ⏭️  Skipped: {len(investors_skipped)} investors")
     
     # ============================================
-    # STEP 2: Create activities.json in existing strategy folders
+    # STEP 2: Create activities.json in INVESTOR ROOT (NEW PATH)
     # ============================================
     print(f"\n{'─'*70}")
-    print(f"🔹 STEP 2: CREATING ACTIVITIES.JSON IN STRATEGY FOLDERS")
+    print(f"🔹 STEP 2: CREATING ACTIVITIES.JSON IN INVESTOR ROOT (NEW PATH)")
     print(f"{'─'*70}")
     
     processed_summary = []
     skipped_summary = []
-    missing_folders_summary = []
+    created_summary = []
+    updated_summary = []
     
     for inv_id, investor_data in verified_data.items():
         # Case-insensitive lookup
@@ -9866,97 +9877,127 @@ def move_verified_investors():
         # Split INVESTED_WITH by comma to handle multiple strategies
         strategies = [s.strip() for s in invested_with.split(",") if s.strip()]
         
+        # Extract strategy names (without the prefix)
+        strategy_names = []
+        for strat_full in strategies:
+            try:
+                underscore_index = strat_full.find('_')
+                if underscore_index != -1:
+                    strategy_name = strat_full[underscore_index + 1:]
+                    strategy_names.append(strategy_name)
+                else:
+                    strategy_names.append(strat_full)  # Use full name if no underscore
+            except:
+                strategy_names.append(strat_full)
+        
         # Format execution start date
         formatted_start_date = execution_start
         try:
             date_obj = datetime.strptime(execution_start, "%Y-%m-%d")
             formatted_start_date = date_obj.strftime("%B %d, %Y")
         except:
-            pass
+            try:
+                date_obj = datetime.strptime(execution_start, "%B %d, %Y")
+                formatted_start_date = execution_start
+            except:
+                pass
         
         # Calculate contract duration and expiry
         contract_duration_val = 30
         expiry_date_str = ""
         try:
             contract_duration_val = int(contract_days)
-            start_date = datetime.strptime(execution_start, "%Y-%m-%d")
+            try:
+                start_date = datetime.strptime(execution_start, "%Y-%m-%d")
+            except:
+                start_date = datetime.strptime(formatted_start_date, "%B %d, %Y")
             expiry_date = start_date + timedelta(days=contract_duration_val)
             expiry_date_str = expiry_date.strftime("%B %d, %Y")
         except:
             pass
         
-        investor_strategies_found = []
-        investor_strategies_missing = []
+        # Create investor root folder if it doesn't exist
+        inv_root = Path(INV_PATH) / inv_id
+        try:
+            inv_root.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"  ❌ Could not create investor folder: {e}")
+            continue
         
-        for strat_full in strategies:
-            # Extract strategy name by splitting on first underscore
+        # NEW PATH: activities.json directly in investor root
+        activities_path = inv_root / "activities.json"
+        
+        # Load existing activities.json if it exists
+        existing_activities = {}
+        is_new = False
+        if activities_path.exists():
             try:
-                underscore_index = strat_full.find('_')
-                if underscore_index == -1:
-                    continue
-                strategy_name = strat_full[underscore_index + 1:]
+                with open(activities_path, 'r', encoding='utf-8') as f:
+                    existing_activities = json.load(f)
+                print(f"  📄 Existing activities.json found")
             except:
-                continue
-            
-            # Check if strategy folder exists
-            inv_root = Path(INV_PATH) / inv_id
-            strategy_folder = inv_root / strategy_name
-            pending_orders_folder = strategy_folder / "pending_orders"
-            
-            if not strategy_folder.exists():
-                investor_strategies_missing.append(strategy_name)
-                continue
-            
-            investor_strategies_found.append(strategy_name)
-            
-            try:
-                # Create pending_orders folder if needed
-                pending_orders_folder.mkdir(parents=True, exist_ok=True)
-                
-                # Path to activities.json
-                activities_path = pending_orders_folder / "activities.json"
-                
-                # Load existing activities.json if it exists
                 existing_activities = {}
-                if activities_path.exists():
-                    try:
-                        with open(activities_path, 'r', encoding='utf-8') as f:
-                            existing_activities = json.load(f)
-                    except:
-                        existing_activities = {}
-                
-                # Prepare activities data
-                activities_data = existing_activities.copy()
-                
-                # Set execution_start_date
-                if activities_data.get("execution_start_date") != formatted_start_date:
-                    activities_data["execution_start_date"] = formatted_start_date
-                
-                # Set contract_duration
-                if activities_data.get("contract_duration") != contract_duration_val:
-                    activities_data["contract_duration"] = contract_duration_val
-                
-                # Set contract_expiry_date
-                if activities_data.get("contract_expiry_date") != expiry_date_str:
-                    activities_data["contract_expiry_date"] = expiry_date_str
-                
-                # Set default values for other fields if missing
-                for field, default_value in DEFAULT_ACTIVITIES.items():
-                    if field not in activities_data or activities_data[field] is None:
-                        activities_data[field] = default_value
-                
-                # Save activities.json
-                with open(activities_path, 'w', encoding='utf-8') as f:
-                    json.dump(activities_data, f, indent=4)
-                
-            except Exception as e:
-                print(f"  ⚠️ Error processing {inv_id}/{strategy_name}: {e}")
+                is_new = True
+        else:
+            is_new = True
         
-        # Track investor result
-        if investor_strategies_found:
-            processed_summary.append(f"{inv_id}({len(investor_strategies_found)} strat)")
-        elif investor_strategies_missing:
-            missing_folders_summary.append(f"{inv_id}(missing: {', '.join(investor_strategies_missing[:2])}{'...' if len(investor_strategies_missing) > 2 else ''})")
+        # Prepare activities data (merge with existing)
+        activities_data = DEFAULT_ACTIVITIES.copy()
+        activities_data.update(existing_activities)
+        
+        # Update with new values
+        changed = False
+        
+        # Update strategies list
+        if activities_data.get("strategies") != strategy_names:
+            activities_data["strategies"] = strategy_names
+            changed = True
+            print(f"  📋 Strategies: {', '.join(strategy_names)}")
+        
+        # Update execution_start_date
+        if activities_data.get("execution_start_date") != formatted_start_date:
+            activities_data["execution_start_date"] = formatted_start_date
+            changed = True
+        
+        # Update contract_duration
+        if activities_data.get("contract_duration") != contract_duration_val:
+            activities_data["contract_duration"] = contract_duration_val
+            changed = True
+        
+        # Update contract_expiry_date
+        if activities_data.get("contract_expiry_date") != expiry_date_str:
+            activities_data["contract_expiry_date"] = expiry_date_str
+            changed = True
+        
+        # Update terminal_path if provided
+        if terminal_path and activities_data.get("terminal_path") != terminal_path:
+            activities_data["terminal_path"] = terminal_path
+            changed = True
+        
+        # Ensure default values for other fields
+        for field, default_value in DEFAULT_ACTIVITIES.items():
+            if field not in activities_data or activities_data[field] is None:
+                activities_data[field] = default_value
+                changed = True
+        
+        # Save activities.json
+        try:
+            with open(activities_path, 'w', encoding='utf-8') as f:
+                json.dump(activities_data, f, indent=4)
+            
+            if is_new:
+                created_summary.append(inv_id)
+                print(f"  ✅ Created new activities.json")
+            elif changed:
+                updated_summary.append(inv_id)
+                print(f"  ✅ Updated existing activities.json")
+            else:
+                print(f"  ℹ️  No changes needed")
+            
+            processed_summary.append(inv_id)
+            
+        except Exception as e:
+            print(f"  ❌ Failed to save activities.json: {e}")
     
     # ============================================
     # STEP 3: Summary
@@ -9974,21 +10015,25 @@ def move_verified_investors():
         for skip in investors_skipped[:2]:
             print(f"      • {skip}")
     
-    print(f"\n🔹 STEP 2 - STRATEGY FOLDERS:")
-    print(f"   ✅ Processed: {len(processed_summary)} investors")
-    if processed_summary:
-        for inv in processed_summary[:5]:
+    print(f"\n🔹 STEP 2 - ACTIVITIES.JSON CREATION (NEW PATH):")
+    print(f"   ✅ Created: {len(created_summary)} new activities.json files")
+    if created_summary:
+        for inv in created_summary[:5]:
             print(f"      • {inv}")
-        if len(processed_summary) > 5:
-            print(f"      ... and {len(processed_summary)-5} more")
+        if len(created_summary) > 5:
+            print(f"      ... and {len(created_summary)-5} more")
     
-    if missing_folders_summary:
-        print(f"   ⚠️  Missing folders: {len(missing_folders_summary)} investors")
-        for inv in missing_folders_summary[:3]:
+    print(f"   🔄 Updated: {len(updated_summary)} existing activities.json files")
+    if updated_summary:
+        for inv in updated_summary[:3]:
             print(f"      • {inv}")
+        if len(updated_summary) > 3:
+            print(f"      ... and {len(updated_summary)-3} more")
     
     if skipped_summary:
         print(f"   ⏭️  Skipped (missing fields): {len(skipped_summary)}")
+        for inv in skipped_summary[:3]:
+            print(f"      • {inv}")
     
     print(f"\n🔹 STEP 3 - VERIFIED LIST:")
     print(f"   📁 All {len(verified_data)} investors remain in verified_investors.json")
@@ -10002,7 +10047,7 @@ def move_verified_investors():
 def sync_dev_investors(dev_broker_id):
     """
     Worker: Synchronizes investor strategy folders with developer data.
-    Creates a requirements.json in the investor folder containing the 
+    Creates a requirements.json in the INVESTOR ROOT folder (new path) containing the 
     developer's minimum_balance setting.
     Supports multi-strategy (comma-separated INVESTED_WITH values).
     """
@@ -10097,6 +10142,22 @@ def sync_dev_investors(dev_broker_id):
             
             requirements_data = {"minimum_balance": min_balance}
             
+            # NEW PATH: Create requirements.json directly in investor root folder
+            inv_root_path = os.path.join(INV_PATH, inv_broker_id)
+            req_dest_path = os.path.join(inv_root_path, "requirements.json")
+            
+            # Create investor root folder if it doesn't exist
+            os.makedirs(inv_root_path, exist_ok=True)
+            
+            # Save requirements.json to investor root (new path)
+            try:
+                with open(req_dest_path, 'w', encoding='utf-8') as req_file:
+                    json.dump(requirements_data, req_file, indent=4)
+                print(f"│  📋 Created/Updated requirements.json")
+                print(f"│     Minimum balance requirement: ${min_balance}")
+            except Exception as e:
+                print(f"│  ❌ Failed to save requirements.json: {e}")
+            
             # Track synced strategies for this investor
             investor_synced = []
             
@@ -10135,8 +10196,6 @@ def sync_dev_investors(dev_broker_id):
                     
                     if removed_folders:
                         folder_summary = ', '.join(removed_folders[:3])
-                        if len(removed_folders) > 3:
-                            folder_summary += f" and {len(removed_folders)-3} more"
                     
                     # Remove existing investor strategy folder if it exists (for clean overwrite)
                     if os.path.exists(inv_strat_path):
@@ -10148,23 +10207,8 @@ def sync_dev_investors(dev_broker_id):
                     # Clean up temp directory
                     shutil.rmtree(temp_dir)
                     
-                    # --- COPY CORE FILES ---
-                    copied_files = []
-                    files_to_copy = ["limit_orders.json", "limit_orders_backup.json"]
-                    for json_file in files_to_copy:
-                        src_json = os.path.join(dev_strat_path, json_file)
-                        dest_json = os.path.join(inv_strat_path, json_file)
-                        if os.path.exists(src_json):
-                            shutil.copy2(src_json, dest_json)
-                            copied_files.append(json_file)
-                    
-                    if copied_files:
-                        print(f"│     📄 Copied core files: {', '.join(copied_files)}")
-                    
-                    # Create/Overwrite requirements.json
-                    req_dest_path = os.path.join(inv_strat_path, "requirements.json")
-                    with open(req_dest_path, 'w', encoding='utf-8') as req_file:
-                        json.dump(requirements_data, req_file, indent=4)
+                    # Note: limit_orders files are handled within pending_orders folder
+                    # No need to copy them separately as they're already in pending_orders
                     
                     # Check pending_orders files after sync (for reporting)
                     inv_pending_path = os.path.join(inv_strat_path, "pending_orders")
@@ -10213,7 +10257,7 @@ def sync_dev_investors(dev_broker_id):
         print(f"\n{error_msg}")
         print(f"{'='*60}")
         return error_msg
-               
+                  
 def single():  
     dev_dict = load_developers_dictionary()
     if not dev_dict:
@@ -10226,14 +10270,14 @@ def single():
     print(f"--- STARTING MULTIPROCESSING (Cores: {cores}) ---")
 
     with Pool(processes=cores) as pool:
-        sync_results = pool.map(swing_points, broker_names)
+        #sync_results = pool.map(swing_points, broker_names)
         #for r in sync_results: print(r)
-        sync_results = pool.map(entry_point_of_interest, broker_names)
-        for r in sync_results: print(r)
+        #sync_results = pool.map(entry_point_of_interest, broker_names)
+        #for r in sync_results: print(r)
         #sync_results = pool.map(entries_confirmation, broker_names)
         #for r in sync_results: print(r)
-        #sync_results = pool.map(sync_dev_investors, broker_names)
-        #for r in sync_results: print(r)
+        sync_results = pool.map(sync_dev_investors, broker_names)
+        for r in sync_results: print(r)
 
 def process_single_developer_pipeline(broker_name, max_symbols_parallel=5):
     """

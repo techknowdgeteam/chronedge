@@ -88,7 +88,7 @@ def debug_print_all_broker_symbols():
             
         print(f"{'='*40}\nEND OF LIST\n{'='*40}")
 
-def update_verified_investors_file():
+def update_verified_investors_file_old():
     """
     Optional helper function to update the verified_investors.json file
     to remove the MESSAGE field after moving them to activities.json
@@ -125,7 +125,185 @@ def update_verified_investors_file():
     
     return True
 
-def get_requirements(inv_id):
+def update_verified_investors_file():
+    """
+    Updates verified_investors.json by:
+    1. Removing the MESSAGE field after moving them to activities.json
+    2. Verifying that investors have the required files at INV_PATH/{investor_id}/
+    3. Moving investors to issues if they're missing critical files
+    """
+    print("\n" + "="*80)
+    print("📋 CLEANING AND VERIFYING INVESTORS FILE")
+    print("="*80)
+    
+    verified_investors_path = Path(VERIFIED_INVESTORS)
+    updated_investors_path = Path(UPDATED_INVESTORS)
+    issues_investors_path = Path(ISSUES_INVESTORS)
+    
+    if not verified_investors_path.exists():
+        print(f"⚠️  {VERIFIED_INVESTORS} not found")
+        return False
+    
+    # Load existing files
+    try:
+        with open(verified_investors_path, 'r', encoding='utf-8') as f:
+            verified_investors = json.load(f)
+    except Exception as e:
+        print(f"❌ Error reading verified_investors.json: {e}")
+        return False
+    
+    # Load updated_investors if exists
+    if updated_investors_path.exists():
+        try:
+            with open(updated_investors_path, 'r', encoding='utf-8') as f:
+                updated_investors = json.load(f)
+        except:
+            updated_investors = {}
+    else:
+        updated_investors = {}
+    
+    # Load issues_investors if exists
+    if issues_investors_path.exists():
+        try:
+            with open(issues_investors_path, 'r', encoding='utf-8') as f:
+                issues_investors = json.load(f)
+        except:
+            issues_investors = {}
+    else:
+        issues_investors = {}
+    
+    updated = False
+    investors_to_remove = []
+    investors_to_move_to_issues = []
+    
+    for inv_id, investor_data in verified_investors.items():
+        print(f"\n📋 Checking investor: {inv_id}")
+        print("-" * 40)
+        
+        # Check if investor folder exists at new path
+        inv_folder = Path(INV_PATH) / inv_id
+        
+        if not inv_folder.exists():
+            print(f"  ❌ Investor folder not found at: {inv_folder}")
+            investors_to_remove.append(inv_id)
+            
+            # Add to issues_investors with reason
+            if inv_id not in issues_investors:
+                investor_data_copy = investor_data.copy()
+                investor_data_copy['MESSAGE'] = f"Investor folder missing at {inv_folder}"
+                investor_data_copy['verified_status'] = 'folder_missing'
+                issues_investors[inv_id] = investor_data_copy
+                print(f"  ⚠️  Added to issues_investors.json (folder missing)")
+            continue
+        
+        # Check for required files
+        required_files = ['activities.json', 'tradeshistory.json']
+        missing_files = []
+        
+        for file in required_files:
+            file_path = inv_folder / file
+            if not file_path.exists():
+                missing_files.append(file)
+        
+        if missing_files:
+            print(f"  ⚠️  Missing required files: {', '.join(missing_files)}")
+            
+            # Check if investor is already in updated_investors or issues_investors
+            if inv_id not in updated_investors and inv_id not in issues_investors:
+                investor_data_copy = investor_data.copy()
+                investor_data_copy['MESSAGE'] = f"Missing required files: {', '.join(missing_files)}"
+                investor_data_copy['verified_status'] = 'missing_files'
+                issues_investors[inv_id] = investor_data_copy
+                print(f"  ⚠️  Added to issues_investors.json (missing files)")
+                investors_to_remove.append(inv_id)
+            else:
+                print(f"  ℹ️  Investor already in updated/issues, skipping removal")
+        else:
+            print(f"  ✅ All required files present: {', '.join(required_files)}")
+            
+            # Check if activities.json has required data
+            activities_path = inv_folder / "activities.json"
+            try:
+                with open(activities_path, 'r', encoding='utf-8') as f:
+                    activities = json.load(f)
+                
+                # Validate critical fields
+                execution_start_date = activities.get('execution_start_date')
+                if not execution_start_date:
+                    print(f"  ⚠️  Missing execution_start_date in activities.json")
+                    
+                    if inv_id not in updated_investors and inv_id not in issues_investors:
+                        investor_data_copy = investor_data.copy()
+                        investor_data_copy['MESSAGE'] = "Missing execution_start_date in activities.json"
+                        investor_data_copy['verified_status'] = 'missing_start_date'
+                        issues_investors[inv_id] = investor_data_copy
+                        print(f"  ⚠️  Added to issues_investors.json (missing start date)")
+                        investors_to_remove.append(inv_id)
+                    continue
+                
+                # Check if tradeshistory.json has data
+                tradeshistory_path = inv_folder / "tradeshistory.json"
+                if tradeshistory_path.exists():
+                    with open(tradeshistory_path, 'r', encoding='utf-8') as f:
+                        tradeshistory = json.load(f)
+                    
+                    if tradeshistory:
+                        print(f"  ✅ Found {len(tradeshistory)} authorized trades in tradeshistory.json")
+                    else:
+                        print(f"  ℹ️  tradeshistory.json is empty")
+                
+                # Remove MESSAGE field if it exists
+                if 'MESSAGE' in investor_data:
+                    print(f"  🧹 Removing MESSAGE field for investor {inv_id}")
+                    del investor_data['MESSAGE']
+                    updated = True
+                
+                # Add verification status
+                investor_data['verified_status'] = 'verified'
+                
+            except Exception as e:
+                print(f"  ❌ Error reading activities.json: {e}")
+                if inv_id not in updated_investors and inv_id not in issues_investors:
+                    investor_data_copy = investor_data.copy()
+                    investor_data_copy['MESSAGE'] = f"Error reading activities.json: {str(e)}"
+                    investor_data_copy['verified_status'] = 'read_error'
+                    issues_investors[inv_id] = investor_data_copy
+                    investors_to_remove.append(inv_id)
+    
+    # Remove investors from verified_investors that were moved to issues
+    for inv_id in investors_to_remove:
+        if inv_id in verified_investors:
+            print(f"  🗑️  Removing {inv_id} from verified_investors.json")
+            del verified_investors[inv_id]
+            updated = True
+    
+    # Save updated files
+    try:
+        # Save verified_investors.json
+        with open(verified_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(verified_investors, f, indent=4)
+        
+        # Save issues_investors.json
+        with open(issues_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(issues_investors, f, indent=4)
+        
+        print(f"\n" + "="*80)
+        if updated:
+            print(f"✅ Updated verified_investors.json - removed {len(investors_to_remove)} investors and cleaned MESSAGE fields")
+        else:
+            print(f"ℹ️  No changes made to verified_investors.json")
+        
+        if issues_investors:
+            print(f"⚠️  Issues investors file updated with {len(issues_investors)} investors")
+        print("="*80)
+        
+    except Exception as e:
+        print(f"❌ Error saving files: {e}")
+        return False
+    
+    return True
+
+def get_requirements_old(inv_id):
     """
     Mirroring the logic of update_investor_info to find the date 
     in subfolders or root files. Also checks if investor balance
@@ -271,6 +449,204 @@ def get_requirements(inv_id):
 
         else:
             # --- NEW LOGIC: Handle Invalid Broker Login / No Account Info ---
+            print(f"  ⚠️  Could not get account info for {inv_id}")
+            print(f"  ❌ Moving investor {inv_id} to issues_investors.json due to invalid login")
+            
+            if os.path.exists(INVESTOR_USERS):
+                with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
+                    investors_data = json.load(f)
+                
+                investor_data_to_move = None
+                if isinstance(investors_data, list):
+                    for i, inv in enumerate(investors_data):
+                        if inv_id in inv:
+                            investor_data_to_move = inv[inv_id]
+                            investors_data.pop(i)
+                            break
+                else:
+                    if inv_id in investors_data:
+                        investor_data_to_move = investors_data[inv_id]
+                        del investors_data[inv_id]
+                
+                if investor_data_to_move:
+                    # Specific message for login failure
+                    investor_data_to_move['MESSAGE'] = "invalid broker login please check your login details"
+                    
+                    with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
+                        json.dump(investors_data, f, indent=4)
+                    
+                    issues_data = {}
+                    if os.path.exists(ISSUES_INVESTORS):
+                        try:
+                            with open(ISSUES_INVESTORS, 'r', encoding='utf-8') as f:
+                                issues_data = json.load(f)
+                        except: issues_data = {}
+                    
+                    issues_data[inv_id] = investor_data_to_move
+                    with open(ISSUES_INVESTORS, 'w', encoding='utf-8') as f:
+                        json.dump(issues_data, f, indent=4)
+                    
+                    print(f"  ✅ Successfully moved investor {inv_id} to issues_investors.json")
+                else:
+                    print(f"  ⚠️  Investor {inv_id} not found in investors.json")
+            
+            return None
+
+    else:
+        print(f"  ⚠️  Could not parse start date: {execution_start_date}")
+
+    return None
+
+def get_requirements(inv_id):
+    """
+    Mirroring the logic of update_investor_info to find the date 
+    directly in root files (new path structure). Also checks if investor balance
+    meets minimum requirement from requirements.json and moves
+    them to issues_investors.json with a message if not.
+    
+    Core Functions:
+    1. Read execution_start_date from activities.json in root folder
+    2. Connect to MT5 and calculate starting balance
+    3. Check minimum balance requirement from investor root folder
+    4. Move non-compliant investors to issues_investors.json with error messages
+    """
+    execution_start_date = None
+    inv_root = Path(INV_PATH) / inv_id
+    
+    if not inv_root.exists():
+        print(f"❌ Path not found: {inv_root}")
+        return None
+
+    # 1. Check activities.json directly in root folder (NEW PATH)
+    activities_path = inv_root / "activities.json"
+    if activities_path.exists():
+        try:
+            with open(activities_path, 'r', encoding='utf-8') as f:
+                activities = json.load(f)
+                execution_start_date = activities.get('execution_start_date')
+                if execution_start_date:
+                    print(f"  📋 Found execution_start_date in activities.json: {execution_start_date}")
+        except Exception as e:
+            print(f"  ⚠️  Error reading activities.json: {e}")
+
+    # 2. Backup: Check accountmanagement.json if not found in activities.json
+    if not execution_start_date:
+        acc_mgmt_path = inv_root / "accountmanagement.json"
+        if acc_mgmt_path.exists():
+            try:
+                with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                    acc_mgmt = json.load(f)
+                    execution_start_date = acc_mgmt.get('execution_start_date')
+                    if execution_start_date:
+                        print(f"  📋 Found execution_start_date in accountmanagement.json: {execution_start_date}")
+            except Exception as e:
+                print(f"  ⚠️  Error reading accountmanagement.json: {e}")
+
+    if not execution_start_date:
+        print(f"❌ Date not found for {inv_id} in activities.json or accountmanagement.json")
+        return None
+
+    # 3. MT5 Calculation
+    start_datetime = None
+    for fmt in ["%B %d, %Y", "%Y-%m-%d"]:
+        try:
+            start_datetime = datetime.strptime(execution_start_date, fmt).replace(hour=0, minute=0, second=0)
+            break
+        except: continue
+
+    if start_datetime:
+        print(f"  🔍 Fetching trades from: {start_datetime.strftime('%Y-%m-%d')}")
+        all_deals = mt5.history_deals_get(start_datetime, datetime.now())
+        account_info = mt5.account_info()
+        
+        if account_info:
+            # Calculate net profit (profit + swap + commission)
+            total_pnl = sum((d.profit + d.swap + d.commission) for d in all_deals if d.type in [0, 1])
+            starting_bal = account_info.balance - total_pnl
+            
+            print(f"📊 {inv_id} | Start: {execution_start_date} | Starting Balance: ${starting_bal:.2f}")
+            print(f"   Current Balance: ${account_info.balance:.2f} | Total P&L: ${total_pnl:.2f}")
+            
+            # --- CHECK minimum balance requirement from investor root folder (NEW PATH) ---
+            try:
+                # Look for requirements.json in the investor's root folder (NEW PATH)
+                requirements_path = inv_root / "requirements.json"
+                
+                if requirements_path.exists():
+                    print(f"  🔍 Found requirements.json at: {requirements_path}")
+                    with open(requirements_path, 'r', encoding='utf-8') as f:
+                        requirements_config = json.load(f)
+                        
+                        # Handle both list format and direct object format
+                        min_balance = None
+                        if isinstance(requirements_config, list) and len(requirements_config) > 0:
+                            # It's a list with config object
+                            min_balance = requirements_config[0].get('minimum_balance')
+                        elif isinstance(requirements_config, dict):
+                            # It's a direct object/dictionary
+                            min_balance = requirements_config.get('minimum_balance')
+                        else:
+                            print(f"  ⚠️  requirements.json has unexpected format: {type(requirements_config)}")
+                        
+                        if min_balance is not None:
+                            print(f"  📊 Minimum balance requirement: ${min_balance}")
+                            
+                            if starting_bal < min_balance:
+                                print(f"  ⚠️  Balance ${starting_bal:.2f} is BELOW minimum requirement ${min_balance}")
+                                print(f"  ❌ Moving investor {inv_id} to issues_investors.json")
+                                
+                                # Move investor logic
+                                if os.path.exists(INVESTOR_USERS):
+                                    with open(INVESTOR_USERS, 'r', encoding='utf-8') as f:
+                                        investors_data = json.load(f)
+                                    
+                                    investor_data_to_move = None
+                                    if isinstance(investors_data, list):
+                                        for i, inv in enumerate(investors_data):
+                                            if inv_id in inv:
+                                                investor_data_to_move = inv[inv_id]
+                                                investors_data.pop(i)
+                                                break
+                                    else:
+                                        if inv_id in investors_data:
+                                            investor_data_to_move = investors_data[inv_id]
+                                            del investors_data[inv_id]
+                                    
+                                    if investor_data_to_move:
+                                        investor_data_to_move['MESSAGE'] = f"Balance ${starting_bal:.2f} is below minimum requirement ${min_balance}"
+                                        with open(INVESTOR_USERS, 'w', encoding='utf-8') as f:
+                                            json.dump(investors_data, f, indent=4)
+                                        
+                                        issues_data = {}
+                                        if os.path.exists(ISSUES_INVESTORS):
+                                            try:
+                                                with open(ISSUES_INVESTORS, 'r', encoding='utf-8') as f:
+                                                    issues_data = json.load(f)
+                                            except: issues_data = {}
+                                        
+                                        issues_data[inv_id] = investor_data_to_move
+                                        with open(ISSUES_INVESTORS, 'w', encoding='utf-8') as f:
+                                            json.dump(issues_data, f, indent=4)
+                                        
+                                        print(f"  ✅ Successfully moved investor {inv_id} to issues_investors.json")
+                                    else:
+                                        print(f"  ⚠️  Investor {inv_id} not found in investors.json")
+                                
+                                return None  # Return None since investor is being moved
+                            else:
+                                print(f"  ✅ Balance ${starting_bal:.2f} MEETS minimum requirement (${min_balance})")
+                        else:
+                            print(f"  ⚠️  No minimum_balance found in requirements.json")
+                else:
+                    print(f"  ℹ️  No requirements.json found in investor root folder - skipping minimum balance check")
+                    
+            except Exception as e:
+                print(f"  ⚠️  Error checking minimum balance requirement: {e}")
+            
+            return starting_bal
+
+        else:
+            # --- Handle Invalid Broker Login / No Account Info ---
             print(f"  ⚠️  Could not get account info for {inv_id}")
             print(f"  ❌ Moving investor {inv_id} to issues_investors.json due to invalid login")
             
@@ -707,30 +1083,15 @@ def detect_unauthorized_action(inv_id=None):
     Detects unauthorized trading activities and withdrawals for investors.
     Compares MT5 activity with tradeshistory.json from execution start date.
     Ensures NO other trades exist in MT5 history except those recorded in tradeshistory.json
-    activities.json is located in the same pending_orders folder as signals.json
+    activities.json is located directly in INV_PATH/{investor_id}/ (new path structure)
     """
     
-    def find_pending_orders_folders(inv_root):
-        """Find all pending_orders folders under investor root (same as collect_orders_from_signals)"""
-        print(f"  📁 Scanning for pending_orders folders...")
-        pending_folders = []
-        
-        # Use rglob to find all signals.json files, then get their parent folders
-        signals_files = list(inv_root.rglob("*/pending_orders/signals.json"))
-        
-        for signals_path in signals_files:
-            pending_folder = signals_path.parent
-            if pending_folder not in pending_folders:
-                pending_folders.append(pending_folder)
-        
-        return pending_folders
-
-    def load_activities_config(pending_folder):
-        """Load activities.json from pending_orders folder"""
-        activities_path = pending_folder / "activities.json"
+    def load_activities_config(inv_root):
+        """Load activities.json directly from investor root folder"""
+        activities_path = inv_root / "activities.json"
         if not activities_path.exists():
-            print(f"    ⚠️  activities.json not found ")
-            return None
+            print(f"    ⚠️  activities.json not found at {activities_path}")
+            return None, None
         
         try:
             with open(activities_path, 'r', encoding='utf-8') as f:
@@ -738,13 +1099,13 @@ def detect_unauthorized_action(inv_id=None):
             return config, activities_path
         except Exception as e:
             print(f"    ❌ Error loading activities.json: {e}")
-            return None
+            return None, None
 
-    def load_trades_history(pending_folder):
-        """Load all trades from tradeshistory.json (the ONLY source of truth)"""
-        history_path = pending_folder / "tradeshistory.json"
+    def load_trades_history(inv_root):
+        """Load all trades from tradeshistory.json directly from investor root (the ONLY source of truth)"""
+        history_path = inv_root / "tradeshistory.json"
         if not history_path.exists():
-            print(f"    ⚠️  tradeshistory.json not found ")
+            print(f"    ⚠️  tradeshistory.json not found at {history_path}")
             return []
         
         try:
@@ -787,6 +1148,7 @@ def detect_unauthorized_action(inv_id=None):
         all_deals = mt5.history_deals_get(start_datetime, datetime.now()) or []
         
         print(f"    📊 Total MT5 deals found: {len(all_deals)}")
+        print(f"    📋 Authorized tickets in tradeshistory.json: {len(authorized_tickets)}")
         
         unauthorized_trades = []
         withdrawals = []
@@ -841,7 +1203,7 @@ def detect_unauthorized_action(inv_id=None):
                     'reason': f"Trade NOT in tradeshistory.json (Ticket: {deal_ticket})",
                     'detected_at': datetime.now().isoformat()
                 })
-                print(f"      ⚠️  Found unauthorized trade: Ticket {deal_ticket} not in tradeshistory.json")
+                print(f"      ⚠️  Found unauthorized trade: Ticket {deal_ticket} ({deal.symbol}) not in tradeshistory.json")
         
         return unauthorized_trades, withdrawals
 
@@ -859,131 +1221,119 @@ def detect_unauthorized_action(inv_id=None):
         print(f"\n📋 INVESTOR: {user_brokerid}")
         print("-" * 60)
         
-        # Setup paths
+        # Setup paths - DIRECTLY in investor root folder (new path structure)
         inv_root = Path(INV_PATH) / user_brokerid
         
         if not inv_root.exists():
             print(f"  ❌ Path not found: {inv_root}")
             continue
 
-        # Find all pending_orders folders (same method as place_usd_orders)
-        pending_folders = find_pending_orders_folders(inv_root)
-        
-        if not pending_folders:
-            print(f"  ⚠️  No pending_orders folders found for {user_brokerid}")
+        # Load activities.json directly from investor root
+        config, activities_path = load_activities_config(inv_root)
+        if not config:
+            print(f"  ⚠️  No activities.json found at {inv_root / 'activities.json'}, skipping...")
             continue
-
-        # Process each pending_orders folder
-        for pending_folder in pending_folders:
-            
-            # Load activities.json from this pending_orders folder
-            config_result = load_activities_config(pending_folder)
-            if not config_result:
-                print(f"    ⚠️  No activities.json in this folder, skipping...")
-                continue
-            else:
-                config, activities_path = config_result
-            
-            # Check if autotrading is activated
-            if not config.get('activate_autotrading', False):
-                print(f"    ⏭️  AutoTrading not activated")
-                continue
-            
-            # Get execution start date
-            execution_start = config.get('execution_start_date')
-            if not execution_start:
-                print(f"    ⚠️  No execution start date found, using today")
-                execution_start = datetime.now().strftime("%B %d, %Y")
-            
-            print(f"    📅 Checking activity since: {execution_start}")
-            
-            # Load trades history from tradeshistory.json (the ONLY authorized trades)
-            trades_history = load_trades_history(pending_folder)
-            print(f"    📊 Authorized trades in tradeshistory.json: {len(trades_history)}")
-            
-            # Get MT5 activity since execution start
-            unauthorized_trades, withdrawals = get_mt5_activity_since(
-                execution_start, 
-                trades_history
-            )
-            
-            # Update config with findings
-            config_updated = False
-            
-            # Format unauthorized trades for storage (using ticket numbers as keys)
-            new_unauthorized_trades = {}
-            for trade in unauthorized_trades:
-                ticket = trade.get('ticket')
-                if ticket:
-                    new_unauthorized_trades[f"ticket_{ticket}"] = trade
-            
-            if new_unauthorized_trades:
-                print(f"    ⚠️  Found {len(unauthorized_trades)} UNAUTHORIZED trades!")
-                print(f"    ⚠️  These trades exist in MT5 but NOT in tradeshistory.json")
-                if new_unauthorized_trades != config.get('unauthorized_trades', {}):
-                    config['unauthorized_trades'] = new_unauthorized_trades
-                    config_updated = True
-                    unauthorized_detected = True
-            else:
-                if config.get('unauthorized_trades'):
-                    config['unauthorized_trades'] = {}
-                    config_updated = True
-                print(f"    ✅ ALL trades in MT5 match tradeshistory.json - No unauthorized trades")
-            
-            # Format withdrawals for storage
-            new_withdrawals = {}
-            for wd in withdrawals:
-                ticket = wd.get('ticket')
-                if ticket:
-                    new_withdrawals[f"withdrawal_{ticket}"] = wd
-            
-            if new_withdrawals:
-                print(f"    ⚠️  Found {len(withdrawals)} unauthorized withdrawals!")
-                if new_withdrawals != config.get('unauthorized_withdrawals', {}):
-                    config['unauthorized_withdrawals'] = new_withdrawals
-                    config_updated = True
-                    unauthorized_detected = True
-            else:
-                if config.get('unauthorized_withdrawals'):
-                    config['unauthorized_withdrawals'] = {}
-                    config_updated = True
-                print(f"    ✅ No unauthorized withdrawals detected")
-            
-            # Update detection flag
-            new_detection_status = bool(unauthorized_trades or withdrawals)
-            if new_detection_status != config.get('unauthorized_action_detected', False):
-                config['unauthorized_action_detected'] = new_detection_status
+        
+        # Check if autotrading is activated
+        if not config.get('activate_autotrading', False):
+            print(f"  ⏭️  AutoTrading not activated, skipping...")
+            continue
+        
+        # Get execution start date
+        execution_start = config.get('execution_start_date')
+        if not execution_start:
+            print(f"  ⚠️  No execution start date found, using today")
+            execution_start = datetime.now().strftime("%B %d, %Y")
+        
+        print(f"  📅 Checking activity since: {execution_start}")
+        
+        # Load trades history from tradeshistory.json (the ONLY authorized trades)
+        trades_history = load_trades_history(inv_root)
+        print(f"  📊 Authorized trades in tradeshistory.json: {len(trades_history)}")
+        
+        # Get MT5 activity since execution start
+        unauthorized_trades, withdrawals = get_mt5_activity_since(
+            execution_start, 
+            trades_history
+        )
+        
+        # Update config with findings
+        config_updated = False
+        
+        # Format unauthorized trades for storage (using ticket numbers as keys)
+        new_unauthorized_trades = {}
+        for trade in unauthorized_trades:
+            ticket = trade.get('ticket')
+            if ticket:
+                new_unauthorized_trades[f"ticket_{ticket}"] = trade
+        
+        if new_unauthorized_trades:
+            print(f"  ⚠️  Found {len(unauthorized_trades)} UNAUTHORIZED trades!")
+            print(f"  ⚠️  These trades exist in MT5 but NOT in tradeshistory.json")
+            if new_unauthorized_trades != config.get('unauthorized_trades', {}):
+                config['unauthorized_trades'] = new_unauthorized_trades
                 config_updated = True
-            
-            # Save updated config if changes were made
-            if config_updated:
-                try:
-                    with open(activities_path, 'w', encoding='utf-8') as f:
-                        json.dump(config, f, indent=4)
-                    print(f"    💾 Updated activities.json ")
-                    
-                    # Print detailed summary of unauthorized activities
-                    if unauthorized_trades:
-                        print(f"\n    🚨 UNAUTHORIZED TRADES DETAILS:")
-                        for trade in unauthorized_trades:
-                            print(f"        - Ticket: {trade['ticket']} | {trade.get('symbol', 'N/A')} | "
-                                  f"{trade.get('type', 'N/A')} | {trade.get('volume', 'N/A')} lots | "
-                                  f"Price: {trade.get('price', 'N/A')} | Profit: {trade.get('profit', 'N/A')}")
-                            print(f"          Time: {trade.get('time', 'N/A')}")
-                            print(f"          Reason: {trade.get('reason', 'Unknown')}")
-                            print()
-                    
-                    if withdrawals:
-                        print(f"\n    🚨 UNAUTHORIZED WITHDRAWALS DETAILS:")
-                        for wd in withdrawals:
-                            print(f"        - Ticket: {wd['ticket']} | Amount: ${wd['amount']:.2f} | "
-                                  f"Time: {wd['time']} | Comment: {wd['comment']}")
-                            print()
-                            
-                except Exception as e:
-                    print(f"    ❌ Failed to save activities.json: {e}")
-            else:
-                print(f"    ℹ️  No changes to activities.json")
+                unauthorized_detected = True
+        else:
+            if config.get('unauthorized_trades'):
+                config['unauthorized_trades'] = {}
+                config_updated = True
+            print(f"  ✅ ALL trades in MT5 match tradeshistory.json - No unauthorized trades")
+        
+        # Format withdrawals for storage
+        new_withdrawals = {}
+        for wd in withdrawals:
+            ticket = wd.get('ticket')
+            if ticket:
+                new_withdrawals[f"withdrawal_{ticket}"] = wd
+        
+        if new_withdrawals:
+            print(f"  ⚠️  Found {len(withdrawals)} unauthorized withdrawals!")
+            if new_withdrawals != config.get('unauthorized_withdrawals', {}):
+                config['unauthorized_withdrawals'] = new_withdrawals
+                config_updated = True
+                unauthorized_detected = True
+        else:
+            if config.get('unauthorized_withdrawals'):
+                config['unauthorized_withdrawals'] = {}
+                config_updated = True
+            print(f"  ✅ No unauthorized withdrawals detected")
+        
+        # Update detection flag
+        new_detection_status = bool(unauthorized_trades or withdrawals)
+        if new_detection_status != config.get('unauthorized_action_detected', False):
+            config['unauthorized_action_detected'] = new_detection_status
+            config_updated = True
+        
+        # Save updated config if changes were made
+        if config_updated:
+            try:
+                with open(activities_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=4)
+                print(f"  💾 Updated activities.json at: {activities_path}")
+                
+                # Print detailed summary of unauthorized activities
+                if unauthorized_trades:
+                    print(f"\n  🚨 UNAUTHORIZED TRADES DETAILS:")
+                    for trade in unauthorized_trades:
+                        print(f"      - Ticket: {trade['ticket']} | {trade.get('symbol', 'N/A')} | "
+                              f"{trade.get('type', 'N/A')} | {trade.get('volume', 'N/A')} lots | "
+                              f"Price: {trade.get('price', 'N/A')} | Profit: ${trade.get('profit', 0):.2f}")
+                        print(f"        Time: {trade.get('time', 'N/A')}")
+                        print(f"        Reason: {trade.get('reason', 'Unknown')}")
+                        print()
+                
+                if withdrawals:
+                    print(f"\n  🚨 UNAUTHORIZED WITHDRAWALS DETAILS:")
+                    for wd in withdrawals:
+                        print(f"      - Ticket: {wd['ticket']} | Amount: ${wd['amount']:.2f} | "
+                              f"Time: {wd['time']} | Comment: {wd['comment']}")
+                        print()
+                        
+            except Exception as e:
+                print(f"  ❌ Failed to save activities.json: {e}")
+        else:
+            print(f"  ℹ️  No changes to activities.json")
 
     print("\n" + "="*80)
     if unauthorized_detected:
@@ -996,7 +1346,7 @@ def detect_unauthorized_action(inv_id=None):
     print("="*80)
     
     return unauthorized_detected
-  
+
 def filter_unauthorized_symbols(inv_id=None):
     """
     Verifies and filters pending order files based on allowed symbols defined in accountmanagement.json.
@@ -1814,23 +2164,25 @@ def enforce_investors_risk(inv_id=None):
 def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
     """
     Calculates Exit/Target prices for ALL orders in limit_orders.json files for investors.
-    Uses the selected_risk_reward value from accountmanagement.json for each investor.
+    Uses strategy-specific risk_reward from strategies_risk_reward object in accountmanagement.json,
+    falling back to selected_risk_reward if strategy not defined.
     
     Args:
         inv_id (str, optional): Specific investor ID to process. If None, processes all investors.
         callback_function (callable, optional): A function to call with the opened file data.
-            The callback will receive (inv_id, file_path, orders_list) parameters.
+            The callback will receive (inv_id, file_path, orders_list, strategy_name, rr_ratio) parameters.
     
     Returns:
         bool: True if any orders were calculated, False otherwise
     """
-    print(f"\n{'='*10} 📊 CALCULATING INVESTOR ORDER PRICES {'='*10}")
+    print(f"\n{'='*10} 📊 CALCULATING INVESTOR ORDER PRICES (Strategy-Specific R:R) {'='*10}")
     
     total_files_updated = 0
     total_orders_processed = 0
     total_orders_calculated = 0
     total_orders_skipped = 0
     total_symbols_normalized = 0
+    strategies_used = {}  # Track which strategies used which R:R
     inv_base_path = Path(INV_PATH)
 
     if not inv_base_path.exists():
@@ -1855,12 +2207,12 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
 
     for inv_folder in investor_folders:
         current_inv_id = inv_folder.name
-        print(f" [{current_inv_id}] 🔍 Processing orders...")
+        print(f"\n [{current_inv_id}] 🔍 Processing orders with strategy-aware R:R...")
 
         # --- INVESTOR LOCAL CACHE for symbol normalization ---
         resolution_cache = {}
 
-        # 1. Load accountmanagement.json to get selected_risk_reward
+        # 1. Load accountmanagement.json to get risk reward configurations
         acc_mgmt_path = inv_folder / "accountmanagement.json"
         if not acc_mgmt_path.exists():
             print(f"  └─ ⚠️  accountmanagement.json not found for {current_inv_id}, skipping")
@@ -1870,14 +2222,19 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
             with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
                 acc_mgmt_data = json.load(f)
             
-            # Get selected_risk_reward value (default to 1.0 if not found)
+            # Get default selected_risk_reward
             selected_rr = acc_mgmt_data.get("selected_risk_reward", [1.0])
             if isinstance(selected_rr, list) and len(selected_rr) > 0:
-                rr_ratio = float(selected_rr[0])
+                default_rr_ratio = float(selected_rr[0])
             else:
-                rr_ratio = float(selected_rr) if selected_rr else 1.0
+                default_rr_ratio = float(selected_rr) if selected_rr else 1.0
             
-            print(f"  └─ 📊 Using selected R:R ratio: {rr_ratio}")
+            # Get strategy-specific risk rewards
+            strategies_rr = acc_mgmt_data.get("strategies_risk_reward", {})
+            
+            print(f"  └─ 📊 Default R:R ratio: {default_rr_ratio}")
+            if strategies_rr:
+                print(f"  └─ 📋 Strategy-specific R:R configured for: {', '.join(strategies_rr.keys())}")
             
         except Exception as e:
             print(f"  └─ ❌ Failed to load accountmanagement.json: {e}")
@@ -1910,10 +2267,33 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
                 if not orders:
                     continue
                 
-                # Call callback function if provided with the original data
+                # --- GET STRATEGY NAME FROM FOLDER STRUCTURE ---
+                # Strategy folder is the parent of the pending_orders folder
+                strategy_name = file_path.parent.parent.name
+                
+                # --- DETERMINE WHICH R:R RATIO TO USE FOR THIS STRATEGY ---
+                # Check if this strategy has a specific R:R configured
+                if strategy_name in strategies_rr:
+                    rr_ratio = float(strategies_rr[strategy_name])
+                    rr_source = f"strategy-specific ({strategy_name}: {rr_ratio})"
+                else:
+                    rr_ratio = default_rr_ratio
+                    rr_source = f"default (selected_risk_reward: {rr_ratio})"
+                
+                # Track strategy usage
+                if strategy_name not in strategies_used:
+                    strategies_used[strategy_name] = {
+                        'investor': current_inv_id,
+                        'rr_ratio': rr_ratio,
+                        'source': 'specific' if strategy_name in strategies_rr else 'default'
+                    }
+                
+                print(f"  └─ 📂 Strategy: '{strategy_name}' using {rr_source}")
+                
+                # Call callback function if provided with the original data (now including strategy info)
                 if callback_function:
                     try:
-                        callback_function(current_inv_id, file_path, orders)
+                        callback_function(current_inv_id, file_path, orders, strategy_name, rr_ratio)
                     except Exception as e:
                         print(f"    └─ ⚠️  Callback error for {file_path.name}: {e}")
                 
@@ -2022,8 +2402,10 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
                                 file_orders_calculated += 1
                                 any_orders_calculated = True
                                 
-                                # Update metadata
+                                # Update metadata with strategy info
                                 order['risk_reward'] = rr_ratio
+                                order['risk_reward_source'] = 'strategy_specific' if strategy_name in strategies_rr else 'default'
+                                order['strategy_name'] = strategy_name
                                 order['status'] = "Calculated"
                                 order['calculated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 orders_updated = True
@@ -2120,15 +2502,17 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
                             
                             file_orders_calculated += 1
                             any_orders_calculated = True
-                            print(f"      ✅ Exit-based: {order.get('symbol')} - Target calculated: {order['target']}")
+                            print(f"      ✅ [{strategy_name}] {order.get('symbol')} - Target calculated: {order['target']} (R:R={rr_ratio})")
                         
                         # Case 3: Neither exit nor target provided, skip
                         else:
                             file_orders_skipped += 1
                             continue
                         
-                        # --- METADATA UPDATES ---
+                        # --- METADATA UPDATES with Strategy Info ---
                         order['risk_reward'] = rr_ratio
+                        order['risk_reward_source'] = 'strategy_specific' if strategy_name in strategies_rr else 'default'
+                        order['strategy_name'] = strategy_name
                         order['status'] = "Calculated"
                         order['calculated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         orders_updated = True
@@ -2151,9 +2535,9 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
                         investor_orders_calculated += file_orders_calculated
                         investor_orders_skipped += file_orders_skipped
                         
-                        print(f"    └─ 📁 {file_path.parent.name}/limit_orders.json: "
+                        print(f"    └─ 📁 {strategy_name}/{file_path.parent.name}/limit_orders.json: "
                               f"Processed: {original_count}, Calculated: {file_orders_calculated}, "
-                              f"Skipped: {file_orders_skipped}")
+                              f"Skipped: {file_orders_skipped} [R:R={rr_ratio}]")
                         
                     except Exception as e:
                         print(f"    └─ ❌ Failed to save {file_path}: {e}")
@@ -2168,7 +2552,7 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
             total_orders_calculated += investor_orders_calculated
             total_orders_skipped += investor_orders_skipped
             
-            print(f"  └─ ✨ Investor {current_inv_id} Summary:")
+            print(f"\n  └─ ✨ Investor {current_inv_id} Summary:")
             print(f"      Files updated: {investor_files_updated}")
             print(f"      Orders processed: {investor_orders_processed}")
             print(f"      Orders calculated: {investor_orders_calculated}")
@@ -2180,7 +2564,7 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
         else:
             print(f"  └─ ⚠️  No orders processed for {current_inv_id}")
 
-    # Final Global Summary
+    # Final Global Summary with Strategy Breakdown
     print(f"\n{'='*10} INVESTOR CALCULATION COMPLETE {'='*10}")
     if total_orders_processed > 0:
         print(f" Total Files Modified:    {total_files_updated}")
@@ -2192,6 +2576,13 @@ def calculate_investor_symbols_orders(inv_id=None, callback_function=None):
         if total_orders_processed > 0:
             overall_rate = (total_orders_calculated / total_orders_processed) * 100
             print(f" Overall Calculation Rate: {overall_rate:.1f}%")
+        
+        # Show strategy R:R usage breakdown
+        if strategies_used:
+            print(f"\n {'='*10} STRATEGY R:R USAGE {'='*10}")
+            for strategy, info in strategies_used.items():
+                source_indicator = "🎯" if info['source'] == 'specific' else "📋"
+                print(f" {source_indicator} {strategy}: R:R={info['rr_ratio']} ({info['source']})")
     else:
         print(" No orders were processed.")
     
@@ -2971,7 +3362,7 @@ def apply_default_prices(inv_id=None, callback_function=None):
     
     return any_orders_modified
 
-def place_usd_orders(inv_id=None):
+def place_usd_orders_old(inv_id=None):
     """
     Places pending orders from signals.json files for investors.
     Performs a global existence check at the start to filter out duplicates.
@@ -3278,7 +3669,409 @@ def place_usd_orders(inv_id=None):
     print("✅ PROCESS COMPLETE")
     print("="*80)
     return any_orders_placed
+
+def place_usd_orders(inv_id=None):
+    """
+    Places pending orders from signals.json files for investors.
+    Performs a global existence check at the start to filter out duplicates.
+    Syncs tradeshistory.json with actual MT5 terminal status (Pending vs Closed).
+    """
     
+    # --- SUB-FUNCTION 1: CHECK AUTHORIZATION STATUS ---
+    def check_authorization_status(pending_folder):
+        """Check activities.json for unauthorized actions and bypass status"""
+        activities_path = pending_folder / "activities.json"
+        if not activities_path.exists():
+            print(f"    ✅ No activities.json found - proceeding with order placement")
+            return True, None
+        
+        try:
+            with open(activities_path, 'r', encoding='utf-8') as f:
+                activities = json.load(f)
+            unauthorized_detected = activities.get('unauthorized_action_detected', False)
+            bypass_active = activities.get('bypass_restriction', False)
+            autotrading_active = activities.get('activate_autotrading', False)
+            
+            if unauthorized_detected:
+                if bypass_active and autotrading_active:
+                    print(f"    ✅ Unauthorized actions detected but BYPASS ACTIVE - proceeding with order placement")
+                    return True, activities
+                else:
+                    print(f"  Unauthorized actions detected")
+                    if not bypass_active: print(f"       - you have been restricted")
+                    if not autotrading_active: print(f"       - AutoTrading is FALSE")
+                    return False, activities
+            print(f"    ✅ No unauthorized actions detected - proceeding with order placement")
+            return True, activities
+        except Exception as e:
+            print(f"    ⚠️  Error reading activities.json: {e}")
+            return True, None
+
+    # --- SUB-FUNCTION 2: CANCEL AUTHORIZED ORDERS AND POSITIONS ---
+    def cancel_authorized_orders_and_positions(inv_root, pending_folder):
+        """Cancel ONLY authorized pending orders and close authorized positions"""
+        print(f"\n  🚫 RESTRICTION ACTIVE - Cancelling authorized orders and positions...")
+        try:
+            history_path = pending_folder / "tradeshistory.json"
+            authorized_tickets = set()
+            authorized_magics = set()
+            
+            if history_path.exists():
+                with open(history_path, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+                    for trade in history:
+                        if trade.get('ticket'): authorized_tickets.add(int(trade['ticket']))
+                        if trade.get('magic'): authorized_magics.add(int(trade['magic']))
+            
+            if not authorized_tickets and not authorized_magics:
+                print(f"  ℹ️  No authorized trades found in tradeshistory.json")
+                return
+            
+            pending_orders = mt5.orders_get() or []
+            orders_cancelled = 0
+            for order in pending_orders:
+                if order.ticket in authorized_tickets or order.magic in authorized_magics:
+                    request = {"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket}
+                    result = mt5.order_send(request)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"      ✅ Cancelled authorized pending order: {order.ticket} ({order.symbol})")
+                        orders_cancelled += 1
+
+            positions = mt5.positions_get() or []
+            positions_closed = 0
+            for position in positions:
+                if position.ticket in authorized_tickets or position.magic in authorized_magics:
+                    close_type = mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+                    tick = mt5.symbol_info_tick(position.symbol)
+                    if not tick: continue
+                    price = tick.ask if close_type == mt5.ORDER_TYPE_BUY else tick.bid
+                    request = {
+                        "action": mt5.TRADE_ACTION_DEAL, "symbol": position.symbol, "volume": position.volume,
+                        "type": close_type, "position": position.ticket, "price": price, "deviation": 20,
+                        "magic": position.magic, "comment": "Closed by restriction"
+                    }
+                    result = mt5.order_send(request)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"      ✅ Closed authorized position: {position.ticket} ({position.symbol})")
+                        positions_closed += 1
+            
+            print(f"  ✅ Cleanup complete: {orders_cancelled} cancelled, {positions_closed} closed")
+        except Exception as e:
+            print(f"  ❌ Error during cleanup: {e}")
+
+    # --- SUB-FUNCTION 3: COLLECT ORDERS FROM SIGNALS ---
+    def collect_orders_from_signals(inv_root, resolution_cache):
+        """Collect all orders from signals.json files in investor root"""
+        signals_files = list(inv_root.rglob("*/pending_orders/signals.json"))
+        entries_with_paths = [] 
+        for signals_path in signals_files:
+            try:
+                with open(signals_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for entry in data:
+                    raw_symbol = entry.get("symbol", "")
+                    if raw_symbol in resolution_cache: 
+                        normalized_symbol = resolution_cache[raw_symbol]
+                    else:
+                        normalized_symbol = get_normalized_symbol(raw_symbol)
+                        resolution_cache[raw_symbol] = normalized_symbol
+                    entry['symbol'] = normalized_symbol
+                    entries_with_paths.append({'data': entry, 'path': signals_path})
+            except Exception as e:
+                print(f"      ⚠️  Error reading signals file {signals_path}: {e}")
+                continue
+        return entries_with_paths
+
+    # --- SUB-FUNCTION 4: SYNC & SAVE HISTORY (UPDATED) ---
+    def sync_and_save_history(signals_path, new_trade=None):
+        """
+        Synchronizes tradeshistory.json with MT5 terminal.
+        Updates 'status' to 'pending' if still open, or 'closed' if found in MT5 history.
+        
+        NEW PATH STRUCTURE:
+        - tradeshistory.json is now stored directly in the investor root folder
+        - signals_path should be the path to signals.json in the investor root
+        """
+        try:
+            # Determine the investor root folder
+            # signals_path could be INV_PATH/{investor_id}/signals.json
+            # So parent of signals_path is the investor root
+            if signals_path.name == "signals.json":
+                investor_root = signals_path.parent
+            else:
+                # Fallback: try to find investor root from pending_orders structure (backward compatibility)
+                # Look for pending_orders folder in the path
+                if "pending_orders" in str(signals_path):
+                    investor_root = signals_path.parents[2] if len(signals_path.parents) > 2 else signals_path.parent
+                else:
+                    investor_root = signals_path.parent
+            
+            # NEW PATH: tradeshistory.json directly in investor root
+            history_path = investor_root / "tradeshistory.json"
+            
+            print(f"      📂 Tradeshistory path: {history_path}")
+            
+            history = []
+            if history_path.exists():
+                try:
+                    with open(history_path, 'r', encoding='utf-8') as f:
+                        history = json.load(f)
+                    print(f"      📋 Loaded {len(history)} existing trades from tradeshistory.json")
+                except Exception as e:
+                    print(f"      ⚠️  Error reading tradeshistory.json: {e}")
+                    history = []
+
+            # 1. Add new trade if provided
+            if new_trade:
+                # Check if trade already exists to avoid duplicates
+                existing_ticket = any(t.get('ticket') == new_trade.get('ticket') for t in history)
+                if not existing_ticket:
+                    history.append(new_trade)
+                    print(f"      ➕ Added new trade: Ticket {new_trade.get('ticket')}")
+                else:
+                    print(f"      ℹ️  Trade Ticket {new_trade.get('ticket')} already exists in history")
+
+            # 2. Sync all records with MT5
+            active_orders = {o.ticket for o in (mt5.orders_get() or [])}
+            active_positions = {p.ticket for p in (mt5.positions_get() or [])}
+            
+            # Fetch history for the last 24 hours to check recently closed
+            from_date = datetime.now() - timedelta(days=1)
+            history_deals = mt5.history_deals_get(from_date, datetime.now())
+            history_tickets = {d.order for d in history_deals} if history_deals else set()
+            
+            # Also fetch older history to ensure complete sync (up to 7 days)
+            from_date_7days = datetime.now() - timedelta(days=7)
+            older_history_deals = mt5.history_deals_get(from_date_7days, datetime.now())
+            if older_history_deals:
+                older_tickets = {d.order for d in older_history_deals}
+                history_tickets.update(older_tickets)
+            
+            print(f"      🔍 MT5 Status: {len(active_orders)} active orders, {len(active_positions)} active positions, {len(history_tickets)} recent closed trades")
+            
+            updated_count = 0
+            for trade in history:
+                ticket = trade.get('ticket')
+                if not ticket:
+                    continue
+                
+                old_status = trade.get('status', 'unknown')
+                
+                # Logic: If ticket is in active orders or active positions, it's pending/active
+                if ticket in active_orders or ticket in active_positions:
+                    trade['status'] = 'pending'
+                    if old_status != 'pending':
+                        print(f"      🔄 Trade {ticket}: {old_status} → pending (still open)")
+                        updated_count += 1
+                # If not active, check if it exists in MT5 history deals
+                elif ticket in history_tickets:
+                    trade['status'] = 'closed'
+                    if old_status != 'closed':
+                        # Get profit from history deals for closed trades
+                        for deal in (history_deals or older_history_deals or []):
+                            if deal.order == ticket:
+                                trade['profit'] = deal.profit
+                                trade['close_price'] = deal.price
+                                trade['close_time'] = datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d %H:%M:%S')
+                                break
+                        print(f"      🔄 Trade {ticket}: {old_status} → closed (found in MT5 history)")
+                        updated_count += 1
+                # If not found in either, mark as closed/expired (MT5 might have cleared it)
+                else:
+                    if trade.get('status') == 'pending':
+                        trade['status'] = 'closed'
+                        print(f"      🔄 Trade {ticket}: pending → closed (expired/not found in MT5)")
+                        updated_count += 1
+                    elif trade.get('status') != 'closed':
+                        trade['status'] = 'closed'
+                        print(f"      🔄 Trade {ticket}: {old_status} → closed (default)")
+                        updated_count += 1
+
+            # Save updated history
+            try:
+                with open(history_path, 'w', encoding='utf-8') as f:
+                    json.dump(history, f, indent=4)
+                
+                if new_trade:
+                    print(f"      ✅ Saved new trade to tradeshistory.json (Ticket: {new_trade['ticket']})")
+                elif updated_count > 0:
+                    print(f"      ✅ Updated {updated_count} trades in tradeshistory.json")
+                else:
+                    print(f"      ℹ️  No changes to tradeshistory.json")
+                    
+                # Also save a backup copy in the investor root for safety
+                backup_path = investor_root / "tradeshistory_backup.json"
+                try:
+                    with open(backup_path, 'w', encoding='utf-8') as f:
+                        json.dump(history, f, indent=4)
+                    print(f"      💾 Backup saved to: {backup_path}")
+                except Exception as e:
+                    print(f"      ⚠️  Could not save backup: {e}")
+                    
+            except Exception as e:
+                print(f"      ❌ Failed to save tradeshistory.json: {e}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            print(f"      ❌ Error in sync_and_save_history: {e}")
+            return False
+    
+    # --- SUB-FUNCTION 5: ORDER EXECUTION ---
+    def execute_missing_orders(valid_entries, default_magic, trade_allowed):
+        if not trade_allowed:
+            print("  ⚠️  AutoTrading is DISABLED in Terminal")
+            return 0, 0, 0
+        placed = failed = skipped = 0
+        for entry_wrapper in valid_entries:
+            entry = entry_wrapper['data']
+            symbol = entry["symbol"]
+            signals_path = entry_wrapper['path']
+            
+            if not mt5.symbol_select(symbol, True): failed += 1; continue
+            symbol_info = mt5.symbol_info(symbol)
+            
+            vol_key = next((k for k in entry.keys() if k.endswith("volume")), "volume")
+            raw_vol = float(entry.get(vol_key, 0))
+            volume = max(symbol_info.volume_min, min(symbol_info.volume_max, raw_vol))
+            
+            magic_number = int(entry.get("magic", default_magic))
+            request = {
+                "action": mt5.TRADE_ACTION_PENDING,
+                "symbol": symbol,
+                "volume": round(volume, 2),
+                "type": mt5.ORDER_TYPE_BUY_LIMIT if "buy" in entry.get("order_type", "").lower() else mt5.ORDER_TYPE_SELL_LIMIT,
+                "price": round(float(entry["entry"]), symbol_info.digits),
+                "sl": round(float(entry["exit"]), symbol_info.digits),
+                "tp": round(float(entry["target"]), symbol_info.digits),
+                "magic": magic_number,
+                "comment": f"RR{entry.get('risk_reward', '?')}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            res = mt5.order_send(request)
+            if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                print(f"      ✅ SUCCESS: {symbol} @ {request['price']} (Ticket: {res.order})")
+                new_rec = entry.copy()
+                new_rec.update({'ticket': res.order, 'magic': magic_number, 'placed_timestamp': datetime.now().isoformat(), 'status': 'pending'})
+                sync_and_save_history(signals_path, new_trade=new_rec)
+                placed += 1
+            else:
+                print(f"      ⚠️  REJECTED: {symbol} -> {res.comment if res else 'No Response'}")
+                failed += 1
+        return placed, failed, skipped
+
+    # --- SUB-FUNCTION 6: CLEANUP SIGNALS ---
+    def cleanup_signals_file(item):
+        try:
+            signals_path = item['path']
+            with open(signals_path, 'r', encoding='utf-8') as sf:
+                current_sigs = json.load(sf)
+            new_sigs = [s for s in current_sigs if not (s.get('symbol') == item['data'].get('symbol') and abs(float(s.get('entry', 0)) - float(item['data'].get('entry', 0))) < 0.00001)]
+            with open(signals_path, 'w', encoding='utf-8') as sf:
+                json.dump(new_sigs, sf, indent=4)
+        except: pass
+
+    # --- MAIN EXECUTION FLOW ---
+    print("\n" + "="*80)
+    print("🚀 STARTING USD ORDER PLACEMENT ENGINE (GLOBAL CHECK)")
+    print("="*80)
+    
+    investor_ids = [inv_id] if inv_id else list(usersdictionary.keys()) 
+    any_orders_placed = False
+
+    for user_brokerid in investor_ids:
+        print(f"\n📋 INVESTOR: {user_brokerid}")
+        resolution_cache = {}
+        inv_root = Path(INV_PATH) / user_brokerid 
+        if not inv_root.exists(): continue
+
+        # CALL COLLECT_ORDERS_FROM_SIGNALS - This is where the function is called
+        # Collect all orders from signals.json files
+        all_entries_with_paths = collect_orders_from_signals(inv_root, resolution_cache)
+        
+        if not all_entries_with_paths:
+            print(f"  ℹ️  No signals found for {user_brokerid}")
+            continue
+
+        # Group signals by their pending_orders folder for authorization checking
+        folders_to_process = {}
+        for entry_wrapper in all_entries_with_paths:
+            signals_path = entry_wrapper['path']
+            pending_folder = signals_path.parent
+            if pending_folder not in folders_to_process:
+                folders_to_process[pending_folder] = []
+            folders_to_process[pending_folder].append(entry_wrapper)
+        
+        authorized_entries = []
+        for pending_folder, folder_entries in folders_to_process.items():
+            # ALWAYS SYNC HISTORY first even if no new signals exist
+            if folder_entries:
+                sync_and_save_history(folder_entries[0]['path'])
+            
+            can_proceed, activities = check_authorization_status(pending_folder)
+            if can_proceed:
+                authorized_entries.extend(folder_entries)
+            else:
+                print(f"  ⛔ SKIPPING all orders in this folder due to authorization block")
+                if activities and activities.get('unauthorized_action_detected', False) and not activities.get('bypass_restriction', False):
+                    cancel_authorized_orders_and_positions(inv_root, pending_folder)
+        
+        if not authorized_entries:
+            print(f"  ℹ️  No authorized entries found for {user_brokerid}")
+            continue
+
+        print(f"  🔍 Performing Global Existence Check on {len(authorized_entries)} authorized signals...")
+        active_positions = mt5.positions_get() or []
+        pending_orders = mt5.orders_get() or []
+        existing_lookup = {(p.symbol, round(p.price_open, 5), round(p.volume, 2)) for p in active_positions}
+        existing_lookup.update({(o.symbol, round(o.price_open, 5), round(o.volume_initial, 2)) for o in pending_orders})
+
+        to_place = []
+        for item in authorized_entries:
+            data = item['data']
+            vol_key = next((k for k in data.keys() if k.endswith("volume")), "volume")
+            sig_key = (data['symbol'], round(float(data['entry']), 5), round(float(data.get(vol_key, 0)), 2))
+            
+            if sig_key in existing_lookup:
+                # Move to placed_orders.json logic
+                hist_path = item['path'].parent / "placed_orders.json"
+                current_hist = []
+                if hist_path.exists():
+                    try:
+                        with open(hist_path, 'r', encoding='utf-8') as hf: 
+                            current_hist = json.load(hf)
+                    except: pass
+                moved_record = item['data'].copy()
+                moved_record.update({'moved_timestamp': datetime.now().isoformat(), 'reason': 'already_exists'})
+                current_hist.append(moved_record)
+                with open(hist_path, 'w', encoding='utf-8') as hf: 
+                    json.dump(current_hist, hf, indent=4)
+                cleanup_signals_file(item)
+            else:
+                to_place.append(item)
+
+        if to_place:
+            print(f"  📊 Attempting to place {len(to_place)} new orders...")
+            acc_mgmt_path = inv_root / "accountmanagement.json"
+            if acc_mgmt_path.exists():
+                with open(acc_mgmt_path, 'r', encoding='utf-8') as f: 
+                    config = json.load(f)
+                p, f, s = execute_missing_orders(to_place, config.get("magic_number", 123456), mt5.terminal_info().trade_allowed)
+                if p > 0:
+                    any_orders_placed = True
+                    for item in to_place[:p]: 
+                        cleanup_signals_file(item)
+                print(f"      📊 Summary: {p} placed, {f} failed")
+        else:
+            print("  ℹ️  No new unique orders to place.")
+
+    print("\n" + "="*80)
+    print("✅ PROCESS COMPLETE")
+    print("="*80)
+    return any_orders_placed
+     
 def check_pending_orders_risk(inv_id=None):
     """
     Function 3: Validates live pending orders against the account's current risk bucket.
@@ -3569,7 +4362,7 @@ def check_pending_orders_risk(inv_id=None):
     print(f"\n{'='*10} 🏁 RISK AUDIT COMPLETE {'='*10}\n")
     return stats
 
-def orders_risk_correction(inv_id=None):
+def orders_risk_correction_old(inv_id=None):
     """
     Function: Checks both live pending orders AND open positions (LIMIT, STOP, and MARKET)
     and adjusts their take profit levels based on the selected risk-reward ratio from
@@ -4150,6 +4943,1826 @@ def orders_risk_correction(inv_id=None):
     print(f"\n{'='*10} 🏁 POSITIONS & PENDING ORDERS RISK-REWARD CORRECTION COMPLETE {'='*10}\n")
     return stats
 
+def orders_risk_correction(inv_id=None):
+    """
+    Function: Checks both live pending orders AND open positions (LIMIT, STOP, and MARKET)
+    and adjusts their take profit levels based on the NEAREST MATCHING strategy risk-reward ratio.
+    
+    INTELLIGENT APPROACH:
+    1. Calculate current R:R from order's exit/target prices
+    2. Compare with strategy-specific R:R values from accountmanagement.json
+    3. Find the nearest matching R:R (next higher value) and use that
+    4. Fall back to default selected_risk_reward if no match found
+    
+    Args:
+        inv_id: Optional specific investor ID to process. If None, processes all investors.
+        
+    Returns:
+        dict: Statistics about the processing
+    """
+    print(f"\n{'='*10} 📐 INTELLIGENT R:R CORRECTION: FINDING NEAREST STRATEGY MATCH {'='*10}")
+    if inv_id:
+        print(f" Processing single investor: {inv_id}")
+
+    # Track statistics
+    stats = {
+        "investor_id": inv_id if inv_id else "all",
+        "orders_checked": 0,
+        "orders_adjusted": 0,
+        "orders_skipped": 0,
+        "orders_error": 0,
+        "positions_checked": 0,
+        "positions_adjusted": 0,
+        "rr_matches": {},  # Track which R:R ratios were used
+        "rr_mismatches": 0,  # Track orders that didn't match any strategy
+        "processing_success": False
+    }
+
+    # Determine which investors to process
+    investors_to_process = [inv_id] if inv_id else usersdictionary.keys()
+    total_investors = len(investors_to_process) if not inv_id else 1
+    processed = 0
+
+    for user_brokerid in investors_to_process:
+        processed += 1
+        print(f"\n[{processed}/{total_investors}] {user_brokerid} 🔍 Loading R:R configurations...")
+        
+        # Get broker config
+        broker_cfg = usersdictionary.get(user_brokerid)
+        if not broker_cfg:
+            print(f"  └─ ❌ No broker config found")
+            continue
+        
+        inv_root = Path(INV_PATH) / user_brokerid
+        acc_mgmt_path = inv_root / "accountmanagement.json"
+
+        if not acc_mgmt_path.exists():
+            print(f"  └─ ⚠️  Account config missing. Skipping.")
+            continue
+
+        # --- LOAD CONFIG AND EXTRACT ALL AVAILABLE R:R VALUES ---
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Check if risk_reward_correction is enabled
+            settings = config.get("settings", {})
+            if not settings.get("risk_reward_correction", False):
+                print(f"  └─ ⏭️  Risk-reward correction disabled in settings. Skipping.")
+                continue
+            
+            # Get ALL available R:R values (both default and strategy-specific)
+            all_rr_values = []
+            
+            # Add default selected_risk_reward
+            selected_rr = config.get("selected_risk_reward", [2])
+            if isinstance(selected_rr, list) and selected_rr:
+                default_rr = float(selected_rr[0])
+                all_rr_values.append(default_rr)
+            else:
+                default_rr = 2.0
+                all_rr_values.append(default_rr)
+            
+            # Add all strategy-specific R:R values
+            strategies_rr = config.get("strategies_risk_reward", {})
+            strategy_rr_values = []
+            for strategy, rr_value in strategies_rr.items():
+                try:
+                    rr_float = float(rr_value)
+                    strategy_rr_values.append(rr_float)
+                    all_rr_values.append(rr_float)
+                except (ValueError, TypeError):
+                    continue
+            
+            # Sort and deduplicate all available R:R values
+            all_rr_values = sorted(set(all_rr_values))
+            
+            print(f"  └─ 📊 Default R:R: 1:{default_rr}")
+            if strategy_rr_values:
+                print(f"  └─ 📋 Strategy R:R values: {', '.join([f'1:{v}' for v in sorted(set(strategy_rr_values))])}")
+            print(f"  └─ 🎯 All available R:R targets: {', '.join([f'1:{v}' for v in all_rr_values])}")
+            
+            # Get risk management mapping for balance-based risk
+            risk_map = config.get("account_balance_default_risk_management", {})
+            
+        except Exception as e:
+            print(f"  └─ ❌ Failed to read config: {e}")
+            stats["orders_error"] += 1
+            continue
+
+        # --- ACCOUNT INITIALIZATION ---
+        print(f"  └─ 🔌 Initializing account connection...")
+        
+        login_id = int(broker_cfg['LOGIN_ID'])
+        mt5_path = broker_cfg["TERMINAL_PATH"]
+        
+        print(f"      • Terminal Path: {mt5_path}")
+        print(f"      • Login ID: {login_id}")
+
+        # Check login status
+        acc = mt5.account_info()
+        if acc is None or acc.login != login_id:
+            print(f"      🔑 Logging into account...")
+            if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
+                error = mt5.last_error()
+                print(f"  └─ ❌  login failed: {error}")
+                stats["orders_error"] += 1
+                continue
+            print(f"      ✅ Successfully logged into account")
+        else:
+            print(f"      ✅ Already logged into account")
+
+        acc_info = mt5.account_info()
+        if not acc_info:
+            print(f"  └─ ❌ Failed to get account info")
+            stats["orders_error"] += 1
+            continue
+            
+        balance = acc_info.balance
+
+        # Get terminal info for additional details
+        term_info = mt5.terminal_info()
+        
+        print(f"\n  └─ 📊 Account Details:")
+        print(f"      • Balance: ${acc_info.balance:,.2f}")
+        print(f"      • Equity: ${acc_info.equity:,.2f}")
+        print(f"      • Free Margin: ${acc_info.margin_free:,.2f}")
+        print(f"      • Margin Level: {acc_info.margin_level:.2f}%" if acc_info.margin_level else "      • Margin Level: N/A")
+        print(f"      • AutoTrading: {'✅ ENABLED' if term_info.trade_allowed else '❌ DISABLED'}")
+
+        # --- DETERMINE PRIMARY RISK VALUE BASED ON BALANCE ---
+        primary_risk = None
+        for range_str, r_val in risk_map.items():
+            try:
+                raw_range = range_str.split("_")[0]
+                low, high = map(float, raw_range.split("-"))
+                if low <= balance <= high:
+                    primary_risk = float(r_val)
+                    break
+            except Exception as e:
+                print(f"  └─ ⚠️  Error parsing range '{range_str}': {e}")
+                continue
+
+        if primary_risk is None:
+            print(f"  └─ ⚠️  No risk mapping for balance ${balance:,.2f}")
+            stats["orders_skipped"] += 1
+            continue
+
+        print(f"\n  └─ 💰 Balance: ${balance:,.2f} | Base Risk: ${primary_risk:.2f}")
+
+        # --- HELPER FUNCTION: Find nearest matching R:R ---
+        def find_nearest_rr(current_rr, available_rr_values):
+            """
+            Find the nearest matching R:R value from available options.
+            Prefers next higher value, but if none exists, uses the closest.
+            """
+            if not available_rr_values:
+                return None, "none"
+            
+            # Sort available values
+            sorted_values = sorted(available_rr_values)
+            
+            # Find the next higher value (preferred)
+            next_higher = None
+            for val in sorted_values:
+                if val >= current_rr:
+                    next_higher = val
+                    break
+            
+            if next_higher is not None:
+                return next_higher, "next_higher"
+            
+            # If no higher value, use the closest (should be the maximum)
+            closest = min(sorted_values, key=lambda x: abs(x - current_rr))
+            return closest, "closest"
+
+        # --- CHECK AND ADJUST ALL POSITIONS (OPEN MARKET ORDERS) ---
+        positions = mt5.positions_get()
+        investor_positions_checked = 0
+        investor_positions_adjusted = 0
+        investor_positions_skipped = 0
+        investor_positions_error = 0
+
+        # Define MT5 position/order types for better readability
+        POSITION_TYPES = {
+            mt5.POSITION_TYPE_BUY: "BUY (MARKET)",
+            mt5.POSITION_TYPE_SELL: "SELL (MARKET)"
+        }
+        
+        ORDER_TYPES = {
+            mt5.ORDER_TYPE_BUY_LIMIT: "BUY LIMIT",
+            mt5.ORDER_TYPE_SELL_LIMIT: "SELL LIMIT",
+            mt5.ORDER_TYPE_BUY_STOP: "BUY STOP",
+            mt5.ORDER_TYPE_SELL_STOP: "SELL STOP",
+            mt5.ORDER_TYPE_BUY_STOP_LIMIT: "BUY STOP-LIMIT",
+            mt5.ORDER_TYPE_SELL_STOP_LIMIT: "SELL STOP-LIMIT"
+        }
+
+        # Process OPEN POSITIONS first
+        if positions:
+            print(f"\n  └─ 🔍 Scanning {len(positions)} open positions (MARKET)...")
+            
+            for position in positions:
+                investor_positions_checked += 1
+                stats["positions_checked"] += 1
+                
+                position_type_name = POSITION_TYPES.get(position.type, f"Unknown Type {position.type}")
+                
+                # Get symbol info
+                symbol_info = mt5.symbol_info(position.symbol)
+                if not symbol_info:
+                    print(f"    └─ ⚠️  Cannot get symbol info for {position.symbol}")
+                    investor_positions_skipped += 1
+                    stats["orders_skipped"] += 1
+                    continue
+
+                # Determine position direction
+                is_buy = position.type == mt5.POSITION_TYPE_BUY
+                
+                print(f"\n    └─ 📋 Position #{position.ticket} | {position_type_name} | {position.symbol}")
+                
+                # Calculate current risk (stop loss distance in money)
+                if position.sl == 0:
+                    print(f"       ⚠️  No SL set - cannot calculate risk. Skipping TP adjustment.")
+                    investor_positions_skipped += 1
+                    stats["orders_skipped"] += 1
+                    continue
+                
+                # For positions, risk is from entry to SL
+                if is_buy:
+                    risk_distance = position.price_open - position.sl
+                else:
+                    risk_distance = position.sl - position.price_open
+                
+                # Calculate risk in money using MT5 profit calculator for accuracy
+                calc_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+                sl_profit = mt5.order_calc_profit(calc_type, position.symbol, position.volume, 
+                                                  position.price_open, position.sl)
+                
+                if sl_profit is not None:
+                    current_risk_usd = round(abs(sl_profit), 2)
+                else:
+                    # Fallback calculation
+                    risk_points = abs(risk_distance) / symbol_info.point
+                    point_value = symbol_info.trade_tick_value / symbol_info.trade_tick_size * symbol_info.point
+                    current_risk_usd = round(risk_points * point_value * position.volume, 2)
+                
+                # Calculate current R:R if TP exists
+                current_rr = None
+                if position.tp != 0:
+                    if is_buy:
+                        tp_distance = position.tp - position.price_open
+                    else:
+                        tp_distance = position.price_open - position.tp
+                    
+                    if risk_distance > 0:
+                        current_rr = round(tp_distance / risk_distance, 2)
+                        print(f"       Current R:R: 1:{current_rr}")
+                    else:
+                        current_rr = None
+                
+                # Find target R:R based on current value
+                if current_rr is not None:
+                    target_rr, match_type = find_nearest_rr(current_rr, all_rr_values)
+                    
+                    if match_type == "next_higher":
+                        print(f"       🔍 Using next higher R:R: 1:{target_rr} (from 1:{current_rr})")
+                    elif match_type == "closest":
+                        print(f"       🔍 Using closest R:R: 1:{target_rr} (from 1:{current_rr}) - no higher value")
+                    else:
+                        target_rr = default_rr
+                        print(f"       ℹ️  Using default R:R: 1:{target_rr}")
+                    
+                    # Track R:R usage
+                    rr_key = str(target_rr)
+                    if rr_key not in stats["rr_matches"]:
+                        stats["rr_matches"][rr_key] = 0
+                    stats["rr_matches"][rr_key] += 1
+                else:
+                    # If no current R:R, use default
+                    target_rr = default_rr
+                    print(f"       ℹ️  No current R:R found, using default: 1:{target_rr}")
+                    stats["rr_mismatches"] += 1
+                
+                # Calculate required take profit based on risk and target R:R ratio
+                target_profit_usd = current_risk_usd * target_rr
+                
+                print(f"       Risk: ${current_risk_usd:.2f} | Target Profit: ${target_profit_usd:.2f} (1:{target_rr})")
+                
+                # Calculate the take profit price that would achieve this profit
+                tick_value = symbol_info.trade_tick_value
+                tick_size = symbol_info.trade_tick_size
+                
+                if tick_value > 0 and tick_size > 0:
+                    # Calculate how many ticks we need to move to achieve target profit
+                    ticks_needed = target_profit_usd / (position.volume * tick_value)
+                    
+                    # Convert ticks to price movement
+                    price_move_needed = ticks_needed * tick_size
+                    
+                    # Round to symbol digits
+                    digits = symbol_info.digits
+                    price_move_needed = round(price_move_needed, digits)
+                    
+                    # Calculate new take profit price based on position type (from entry price)
+                    if is_buy:
+                        new_tp = round(position.price_open + price_move_needed, digits)
+                    else:
+                        new_tp = round(position.price_open - price_move_needed, digits)
+                    
+                    # Check if current TP is significantly different from calculated TP
+                    if position.tp == 0:
+                        target_move = abs(new_tp - position.price_open)
+                        print(f"       📝 No TP currently set")
+                        print(f"       Target TP: {new_tp:.{digits}f} (Move from entry: {target_move:.{digits}f})")
+                        should_adjust = True
+                    else:
+                        current_move = abs(position.tp - position.price_open)
+                        target_move = abs(new_tp - position.price_open)
+                        
+                        # Calculate threshold (10% of target move or 2 pips, whichever is larger)
+                        pip_threshold = max(target_move * 0.1, symbol_info.point * 20)
+                        
+                        if abs(current_move - target_move) > pip_threshold:
+                            print(f"       📐 TP needs adjustment")
+                            print(f"       Current TP: {position.tp:.{digits}f} (Move from entry: {current_move:.{digits}f})")
+                            print(f"       Target TP:  {new_tp:.{digits}f} (Move from entry: {target_move:.{digits}f})")
+                            should_adjust = True
+                        else:
+                            print(f"       ✅ TP already correct")
+                            print(f"       TP: {position.tp:.{digits}f} | Risk: ${current_risk_usd:.2f}")
+                            investor_positions_skipped += 1
+                            stats["orders_skipped"] += 1
+                            continue
+                    
+                    if should_adjust:
+                        # Prepare modification request for position
+                        modify_request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": position.ticket,
+                            "sl": position.sl,
+                            "tp": new_tp,
+                        }
+                        
+                        # Send modification
+                        result = mt5.order_send(modify_request)
+                        
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            investor_positions_adjusted += 1
+                            stats["positions_adjusted"] += 1
+                            stats["orders_adjusted"] += 1
+                            print(f"       ✅ TP adjusted successfully to {new_tp:.{digits}f} (Target R:R: 1:{target_rr})")
+                        else:
+                            investor_positions_error += 1
+                            stats["orders_error"] += 1
+                            error_msg = result.comment if result else f"Error code: {result.retcode if result else 'Unknown'}"
+                            print(f"       ❌ Modification failed: {error_msg}")
+                else:
+                    print(f"       ⚠️  Invalid tick values - using fallback calculation")
+                    # Fallback method using profit calculation for a small price movement
+                    try:
+                        test_move = symbol_info.point * 10
+                        if is_buy:
+                            test_price = position.price_open + test_move
+                        else:
+                            test_price = position.price_open - test_move
+                            
+                        test_profit = mt5.order_calc_profit(calc_type, position.symbol, position.volume, 
+                                                            position.price_open, test_price)
+                        
+                        if test_profit and test_profit != 0:
+                            point_value = abs(test_profit) / 10
+                            price_move_needed = target_profit_usd / point_value * symbol_info.point
+                            
+                            digits = symbol_info.digits
+                            price_move_needed = round(price_move_needed, digits)
+                            
+                            if is_buy:
+                                new_tp = round(position.price_open + price_move_needed, digits)
+                            else:
+                                new_tp = round(position.price_open - price_move_needed, digits)
+                            
+                            print(f"       Using fallback calculation")
+                            
+                            if position.tp == 0 or abs(position.tp - new_tp) > symbol_info.point * 20:
+                                modify_request = {
+                                    "action": mt5.TRADE_ACTION_SLTP,
+                                    "position": position.ticket,
+                                    "sl": position.sl,
+                                    "tp": new_tp,
+                                }
+                                
+                                result = mt5.order_send(modify_request)
+                                
+                                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                                    investor_positions_adjusted += 1
+                                    stats["positions_adjusted"] += 1
+                                    stats["orders_adjusted"] += 1
+                                    print(f"       ✅ TP adjusted using fallback method to {new_tp:.{digits}f}")
+                                else:
+                                    investor_positions_error += 1
+                                    stats["orders_error"] += 1
+                                    print(f"       ❌ Fallback modification failed")
+                            else:
+                                investor_positions_skipped += 1
+                                stats["orders_skipped"] += 1
+                                print(f"       ✅ TP already correct (fallback check)")
+                        else:
+                            investor_positions_skipped += 1
+                            stats["orders_skipped"] += 1
+                            print(f"       ⚠️  Cannot calculate using fallback method")
+                    except Exception as e:
+                        investor_positions_error += 1
+                        stats["orders_error"] += 1
+                        print(f"       ❌ Fallback calculation error: {e}")
+        
+        # --- CHECK AND ADJUST ALL PENDING ORDERS (LIMIT AND STOP) ---
+        pending_orders = mt5.orders_get()
+        investor_orders_checked = 0
+        investor_orders_adjusted = 0
+        investor_orders_skipped = 0
+        investor_orders_error = 0
+
+        if pending_orders:
+            print(f"\n  └─ 🔍 Scanning {len(pending_orders)} pending orders (LIMIT & STOP)...")
+            
+            for order in pending_orders:
+                # Skip if not a pending order (only process pending order types)
+                if order.type not in ORDER_TYPES.keys():
+                    continue
+
+                investor_orders_checked += 1
+                stats["orders_checked"] += 1
+                
+                order_type_name = ORDER_TYPES.get(order.type, f"Unknown Type {order.type}")
+                
+                # Get symbol info
+                symbol_info = mt5.symbol_info(order.symbol)
+                if not symbol_info:
+                    print(f"    └─ ⚠️  Cannot get symbol info for {order.symbol}")
+                    investor_orders_skipped += 1
+                    stats["orders_skipped"] += 1
+                    continue
+
+                # Determine order direction for calculations
+                is_buy = order.type in [mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP, mt5.ORDER_TYPE_BUY_STOP_LIMIT]
+                calc_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+                
+                print(f"\n    └─ 📋 Order #{order.ticket} | {order_type_name} | {order.symbol}")
+                
+                # Calculate current risk (stop loss distance in money)
+                if order.sl == 0:
+                    print(f"       ⚠️  No SL set - cannot calculate risk. Skipping TP adjustment.")
+                    investor_orders_skipped += 1
+                    stats["orders_skipped"] += 1
+                    continue
+                    
+                # For pending orders, risk is from entry to SL
+                sl_profit = mt5.order_calc_profit(calc_type, order.symbol, order.volume_initial, 
+                                                  order.price_open, order.sl)
+                
+                if sl_profit is None:
+                    print(f"       ⚠️  Cannot calculate risk. Skipping.")
+                    investor_orders_skipped += 1
+                    stats["orders_skipped"] += 1
+                    continue
+
+                current_risk_usd = round(abs(sl_profit), 2)
+                
+                # Calculate current R:R if TP exists
+                current_rr = None
+                if order.tp != 0:
+                    if is_buy:
+                        tp_distance = order.tp - order.price_open
+                    else:
+                        tp_distance = order.price_open - order.tp
+                    
+                    risk_distance = abs(order.sl - order.price_open)
+                    if risk_distance > 0:
+                        current_rr = round(tp_distance / risk_distance, 2)
+                        print(f"       Current R:R: 1:{current_rr}")
+                    else:
+                        current_rr = None
+                
+                # Find target R:R based on current value
+                if current_rr is not None:
+                    target_rr, match_type = find_nearest_rr(current_rr, all_rr_values)
+                    
+                    if match_type == "next_higher":
+                        print(f"       🔍 Using next higher R:R: 1:{target_rr} (from 1:{current_rr})")
+                    elif match_type == "closest":
+                        print(f"       🔍 Using closest R:R: 1:{target_rr} (from 1:{current_rr}) - no higher value")
+                    else:
+                        target_rr = default_rr
+                        print(f"       ℹ️  Using default R:R: 1:{target_rr}")
+                    
+                    # Track R:R usage
+                    rr_key = str(target_rr)
+                    if rr_key not in stats["rr_matches"]:
+                        stats["rr_matches"][rr_key] = 0
+                    stats["rr_matches"][rr_key] += 1
+                else:
+                    # If no current R:R, use default
+                    target_rr = default_rr
+                    print(f"       ℹ️  No current R:R found, using default: 1:{target_rr}")
+                    stats["rr_mismatches"] += 1
+                
+                # Calculate required take profit based on risk and target R:R ratio
+                target_profit_usd = current_risk_usd * target_rr
+                
+                print(f"       Risk: ${current_risk_usd:.2f} | Target Profit: ${target_profit_usd:.2f} (1:{target_rr})")
+                
+                # Calculate the take profit price that would achieve this profit
+                tick_value = symbol_info.trade_tick_value
+                tick_size = symbol_info.trade_tick_size
+                
+                if tick_value > 0 and tick_size > 0:
+                    # Calculate how many ticks we need to move to achieve target profit
+                    ticks_needed = target_profit_usd / (order.volume_initial * tick_value)
+                    
+                    # Convert ticks to price movement
+                    price_move_needed = ticks_needed * tick_size
+                    
+                    # Round to symbol digits
+                    digits = symbol_info.digits
+                    price_move_needed = round(price_move_needed, digits)
+                    
+                    # Calculate new take profit price based on order type
+                    if is_buy:
+                        new_tp = round(order.price_open + price_move_needed, digits)
+                    else:
+                        new_tp = round(order.price_open - price_move_needed, digits)
+                    
+                    # Check if current TP is significantly different from calculated TP
+                    current_move = abs(order.tp - order.price_open) if order.tp != 0 else 0
+                    target_move = abs(new_tp - order.price_open)
+                    
+                    # Calculate threshold (10% of target move or 2 pips, whichever is larger)
+                    pip_threshold = max(target_move * 0.1, symbol_info.point * 20)
+                    
+                    should_adjust = False
+                    
+                    if order.tp == 0:
+                        print(f"       📝 No TP currently set")
+                        print(f"       Target TP: {new_tp:.{digits}f} (Move: {target_move:.{digits}f})")
+                        should_adjust = True
+                    elif abs(current_move - target_move) > pip_threshold:
+                        print(f"       📐 TP needs adjustment")
+                        print(f"       Current TP: {order.tp:.{digits}f} (Move: {current_move:.{digits}f})")
+                        print(f"       Target TP:  {new_tp:.{digits}f} (Move: {target_move:.{digits}f})")
+                        should_adjust = True
+                    else:
+                        print(f"       ✅ TP already correct")
+                        print(f"       TP: {order.tp:.{digits}f} | Risk: ${current_risk_usd:.2f}")
+                        investor_orders_skipped += 1
+                        stats["orders_skipped"] += 1
+                        continue
+                    
+                    if should_adjust:
+                        # Prepare modification request
+                        modify_request = {
+                            "action": mt5.TRADE_ACTION_MODIFY,
+                            "order": order.ticket,
+                            "price": order.price_open,
+                            "sl": order.sl,
+                            "tp": new_tp,
+                        }
+                        
+                        # Send modification
+                        result = mt5.order_send(modify_request)
+                        
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            investor_orders_adjusted += 1
+                            stats["orders_adjusted"] += 1
+                            print(f"       ✅ TP adjusted successfully to {new_tp:.{digits}f} (Target R:R: 1:{target_rr})")
+                        else:
+                            investor_orders_error += 1
+                            stats["orders_error"] += 1
+                            error_msg = result.comment if result else f"Error code: {result.retcode if result else 'Unknown'}"
+                            print(f"       ❌ Modification failed: {error_msg}")
+                else:
+                    print(f"       ⚠️  Invalid tick values - using fallback calculation")
+                    # Fallback method using profit calculation for a small price movement
+                    try:
+                        test_move = symbol_info.point * 10
+                        if is_buy:
+                            test_price = order.price_open + test_move
+                        else:
+                            test_price = order.price_open - test_move
+                            
+                        test_profit = mt5.order_calc_profit(calc_type, order.symbol, order.volume_initial, 
+                                                            order.price_open, test_price)
+                        
+                        if test_profit and test_profit != 0:
+                            point_value = abs(test_profit) / 10
+                            price_move_needed = target_profit_usd / point_value * symbol_info.point
+                            
+                            digits = symbol_info.digits
+                            price_move_needed = round(price_move_needed, digits)
+                            
+                            if is_buy:
+                                new_tp = round(order.price_open + price_move_needed, digits)
+                            else:
+                                new_tp = round(order.price_open - price_move_needed, digits)
+                            
+                            print(f"       Using fallback calculation")
+                            
+                            if order.tp == 0 or abs(order.tp - new_tp) > symbol_info.point * 20:
+                                modify_request = {
+                                    "action": mt5.TRADE_ACTION_MODIFY,
+                                    "order": order.ticket,
+                                    "price": order.price_open,
+                                    "sl": order.sl,
+                                    "tp": new_tp,
+                                }
+                                
+                                result = mt5.order_send(modify_request)
+                                
+                                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                                    investor_orders_adjusted += 1
+                                    stats["orders_adjusted"] += 1
+                                    print(f"       ✅ TP adjusted using fallback method to {new_tp:.{digits}f}")
+                                else:
+                                    investor_orders_error += 1
+                                    stats["orders_error"] += 1
+                                    print(f"       ❌ Fallback modification failed")
+                            else:
+                                investor_orders_skipped += 1
+                                stats["orders_skipped"] += 1
+                                print(f"       ✅ TP already correct (fallback check)")
+                        else:
+                            investor_orders_skipped += 1
+                            stats["orders_skipped"] += 1
+                            print(f"       ⚠️  Cannot calculate using fallback method")
+                    except Exception as e:
+                        investor_orders_error += 1
+                        stats["orders_error"] += 1
+                        print(f"       ❌ Fallback calculation error: {e}")
+
+        # --- INVESTOR SUMMARY ---
+        total_checked = investor_positions_checked + investor_orders_checked
+        total_adjusted = investor_positions_adjusted + investor_orders_adjusted
+        
+        if total_checked > 0:
+            print(f"\n  └─ 📊 Intelligent R:R Correction Results for {user_brokerid}:")
+            if investor_positions_checked > 0:
+                print(f"       • Positions checked: {investor_positions_checked}")
+                print(f"       • Positions adjusted: {investor_positions_adjusted}")
+                print(f"       • Positions skipped: {investor_positions_skipped}")
+            if investor_orders_checked > 0:
+                print(f"       • Pending orders checked: {investor_orders_checked}")
+                print(f"       • Pending orders adjusted: {investor_orders_adjusted}")
+                print(f"       • Pending orders skipped: {investor_orders_skipped}")
+            if investor_positions_error + investor_orders_error > 0:
+                print(f"       • Errors: {investor_positions_error + investor_orders_error}")
+            else:
+                print(f"       ✅ All adjustments completed successfully")
+            stats["processing_success"] = True
+        else:
+            print(f"  └─ 🔘 No positions or pending orders found.")
+
+    # --- FINAL SUMMARY ---
+    print(f"\n{'='*10} 📊 INTELLIGENT R:R CORRECTION SUMMARY {'='*10}")
+    print(f"   Investor ID: {stats['investor_id']}")
+    print(f"   Positions checked: {stats['positions_checked']}")
+    print(f"   Positions adjusted: {stats['positions_adjusted']}")
+    print(f"   Pending orders checked: {stats['orders_checked']}")
+    print(f"   Pending orders adjusted: {stats['orders_adjusted']}")
+    print(f"   Total checked: {stats['positions_checked'] + stats['orders_checked']}")
+    print(f"   Total adjusted: {stats['positions_adjusted'] + stats['orders_adjusted']}")
+    print(f"   Orders skipped: {stats['orders_skipped']}")
+    print(f"   Errors: {stats['orders_error']}")
+    
+    if stats["rr_matches"]:
+        print(f"\n   📊 R:R Usage Breakdown:")
+        for rr, count in sorted(stats["rr_matches"].items()):
+            print(f"       • 1:{rr}: {count} orders")
+    if stats["rr_mismatches"] > 0:
+        print(f"   ⚠️  Orders using default R:R (no match): {stats['rr_mismatches']}")
+    
+    total_checked = stats['positions_checked'] + stats['orders_checked']
+    total_adjusted = stats['positions_adjusted'] + stats['orders_adjusted']
+    if total_checked > 0:
+        success_rate = (total_adjusted / total_checked) * 100
+        print(f"   Adjustment success rate: {success_rate:.1f}%")
+    
+    print(f"\n{'='*10} 🏁 INTELLIGENT R:R CORRECTION COMPLETE {'='*10}\n")
+    return stats
+
+def history_closed_orders_removal_in_pendingorders(inv_id=None):
+    """
+    Scans history for the last 48 hours. If a position was closed, 
+    any pending limit orders with the same first 4 digits in the price 
+    are cancelled to prevent re-entry.
+    
+    Args:
+        inv_id (str, optional): Specific investor ID to process. If None, processes all investors.
+        MT5 should already be initialized and logged in for this investor.
+    
+    Returns:
+        bool: True if any orders were removed, False otherwise
+    """
+    from datetime import datetime, timedelta
+    print(f"\n{'='*10} 📜 HISTORY AUDIT: PREVENTING RE-ENTRY {'='*10}")
+
+    # Determine which investors to process
+    if inv_id:
+        investor_ids = [inv_id]
+    else:
+        investor_ids = list(usersdictionary.keys())
+    
+    if not investor_ids:
+        print(" └─ 🔘 No investors found.")
+        return False
+
+    any_orders_removed = False
+
+    for user_brokerid in investor_ids:
+        print(f" [{user_brokerid}] 🔍 Checking 48h history for duplicates...")
+        
+        broker_cfg = usersdictionary.get(user_brokerid)
+        if not broker_cfg:
+            print(f"  └─ ❌ No broker config found for {user_brokerid}")
+            continue
+
+        # 1. Define the 48-hour window
+        from_date = datetime.now() - timedelta(hours=48)
+        to_date = datetime.now()
+
+        # 2. Get Closed Positions (Deals)
+        history_deals = mt5.history_deals_get(from_date, to_date)
+        if history_deals is None:
+            print(f"  └─ ⚠️ Could not access history for {user_brokerid}")
+            continue
+
+        # 3. Create a set of "Used Price Prefixes"
+        # We store: (symbol, price_prefix)
+        used_entries = set()
+        for deal in history_deals:
+            # Only look at actual trades (buy/sell) that were closed
+            if deal.entry in [mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT]:
+                # Extract first 3 significant digits of the price
+                # We remove the decimal to handle 0.856 and 1901 uniformly
+                clean_price = str(deal.price).replace('.', '')[:4]
+                used_entries.add((deal.symbol, clean_price))
+
+        if not used_entries:
+            print(f"  └─ ✅ No closed orders found in last 48h.")
+            continue
+
+        # 4. Check Current Pending Orders
+        pending_orders = mt5.orders_get()
+        removed_count = 0
+        orders_checked = 0
+
+        if pending_orders:
+            for order in pending_orders:
+                # Only target limit orders
+                if order.type in [mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_SELL_LIMIT]:
+                    orders_checked += 1
+                    order_price_prefix = str(order.price_open).replace('.', '')[:4]
+                    
+                    # If this symbol + price prefix exists in history, kill the order
+                    if (order.symbol, order_price_prefix) in used_entries:
+                        print(f"  └─ 🚫 DUPLICATE FOUND: {order.symbol} at {order.price_open}")
+                        print(f"     Match found in history (Prefix: {order_price_prefix}). Cancelling...")
+                        
+                        cancel_request = {
+                            "action": mt5.TRADE_ACTION_REMOVE,
+                            "order": order.ticket
+                        }
+                        res = mt5.order_send(cancel_request)
+                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                            removed_count += 1
+                            any_orders_removed = True
+                            print(f"     ✅ Order #{order.ticket} cancelled successfully")
+                        else:
+                            error_msg = res.comment if res else f"Error code: {res.retcode if res else 'Unknown'}"
+                            print(f"     ❌ Failed to cancel #{order.ticket}: {error_msg}")
+
+        print(f"  └─ 📊 Cleanup Result: {removed_count} duplicate limit orders removed out of {orders_checked} checked.")
+
+    print(f"\n{'='*10} 🏁 HISTORY AUDIT COMPLETE {'='*10}\n")
+    return any_orders_removed
+
+def apply_dynamic_breakeven(inv_id=None):
+    """
+    Function: Dynamically moves stop loss to breakeven or partial profit levels based on
+    running profit reward multiples. Uses breakeven_dictionary from accountmanagement.json
+    to determine at which reward levels to adjust SL.
+    
+    Args:
+        inv_id: Optional specific investor ID to process. If None, processes all investors.
+        
+    Returns:
+        dict: Statistics about the processing
+    """
+    print(f"\n{'='*10} 🎯 DYNAMIC BREAKEVEN: MONITORING RUNNING PROFIT REWARDS {'='*10}")
+    if inv_id:
+        print(f" Processing single investor: {inv_id}")
+
+    # Track statistics
+    stats = {
+        "investor_id": inv_id if inv_id else "all",
+        "positions_checked": 0,
+        "positions_adjusted": 0,
+        "positions_skipped": 0,
+        "positions_error": 0,
+        "breakeven_events": 0,
+        "processing_success": False
+    }
+
+    # Determine which investors to process
+    investors_to_process = [inv_id] if inv_id else usersdictionary.keys()
+    total_investors = len(investors_to_process) if not inv_id else 1
+    processed = 0
+
+    for user_brokerid in investors_to_process:
+        processed += 1
+        print(f"\n[{processed}/{total_investors}] {user_brokerid} 🔍 Checking breakeven configurations...")
+        
+        # Get broker config
+        broker_cfg = usersdictionary.get(user_brokerid)
+        if not broker_cfg:
+            print(f"  └─ ❌ No broker config found")
+            continue
+        
+        inv_root = Path(INV_PATH) / user_brokerid
+        acc_mgmt_path = inv_root / "accountmanagement.json"
+
+        if not acc_mgmt_path.exists():
+            print(f"  └─ ⚠️  Account config missing. Skipping.")
+            continue
+
+        # --- LOAD CONFIG AND CHECK SETTINGS ---
+        try:
+            with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Check if breakeven is enabled
+            settings = config.get("settings", {})
+            if not settings.get("enable_breakeven", False):
+                print(f"  └─ ⏭️  Breakeven disabled in settings. Skipping.")
+                continue
+            
+            # Get breakeven dictionary
+            breakeven_config = settings.get("breakeven_dictionary", [])
+            if not breakeven_config:
+                print(f"  └─ ⚠️  No breakeven configuration found. Using default.")
+                # Default configuration if none provided
+                breakeven_config = [
+                    {"reward": 1, "breakeven_at_reward": 0.5},
+                    {"reward": 2, "breakeven_at_reward": 1},
+                    {"reward": 3, "breakeven_at_reward": 1.5}
+                ]
+            
+            # Sort by reward level (ascending) to process in order
+            breakeven_config.sort(key=lambda x: x["reward"])
+            
+            print(f"  └─ ✅ Breakeven enabled with {len(breakeven_config)} reward levels:")
+            for level in breakeven_config:
+                print(f"       • At {level['reward']}R profit → Move SL to {level['breakeven_at_reward']}R")
+            
+        except Exception as e:
+            print(f"  └─ ❌ Failed to read config: {e}")
+            stats["positions_error"] += 1
+            continue
+
+        # --- ACCOUNT INITIALIZATION ---
+        print(f"  └─ 🔌 Initializing account connection...")
+        
+        login_id = int(broker_cfg['LOGIN_ID'])
+        mt5_path = broker_cfg["TERMINAL_PATH"]
+        
+        print(f"      • Terminal Path: {mt5_path}")
+        print(f"      • Login ID: {login_id}")
+
+        # Check login status
+        acc = mt5.account_info()
+        if acc is None or acc.login != login_id:
+            print(f"      🔑 Logging into account...")
+            if not mt5.login(login_id, password=broker_cfg["PASSWORD"], server=broker_cfg["SERVER"]):
+                error = mt5.last_error()
+                print(f"  └─ ❌ login failed: {error}")
+                stats["positions_error"] += 1
+                continue
+            print(f"      ✅ Successfully logged into account")
+        else:
+            print(f"      ✅ Already logged into account")
+
+        acc_info = mt5.account_info()
+        if not acc_info:
+            print(f"  └─ ❌ Failed to get account info")
+            stats["positions_error"] += 1
+            continue
+            
+        balance = acc_info.balance
+        print(f"\n  └─ 📊 Account Balance: ${balance:,.2f}")
+
+        # --- CHECK ALL OPEN POSITIONS ---
+        positions = mt5.positions_get()
+        investor_positions_checked = 0
+        investor_positions_adjusted = 0
+        investor_positions_skipped = 0
+        investor_positions_error = 0
+        investor_breakeven_events = 0
+
+        # Define position types for better readability
+        POSITION_TYPES = {
+            mt5.POSITION_TYPE_BUY: "BUY",
+            mt5.POSITION_TYPE_SELL: "SELL"
+        }
+
+        if positions:
+            print(f"\n  └─ 🔍 Scanning {len(positions)} open positions for breakeven opportunities...")
+            
+            for position in positions:
+                investor_positions_checked += 1
+                stats["positions_checked"] += 1
+                
+                position_type_name = POSITION_TYPES.get(position.type, f"Unknown Type {position.type}")
+                
+                # Skip positions without SL
+                if position.sl == 0:
+                    print(f"\n    └─ 📋 Position #{position.ticket} | {position_type_name} | {position.symbol}")
+                    print(f"       ⚠️  No SL set - cannot manage breakeven. Skipping.")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+                    continue
+
+                # Get symbol info
+                symbol_info = mt5.symbol_info(position.symbol)
+                if not symbol_info:
+                    print(f"\n    └─ 📋 Position #{position.ticket} | {position.symbol}")
+                    print(f"       ⚠️  Cannot get symbol info. Skipping.")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+                    continue
+
+                # Determine position direction
+                is_buy = position.type == mt5.POSITION_TYPE_BUY
+                
+                print(f"\n    └─ 📋 Position #{position.ticket} | {position_type_name} | {position.symbol}")
+                
+                # Calculate current risk (from entry to original SL)
+                if is_buy:
+                    risk_distance = position.price_open - position.sl
+                else:
+                    risk_distance = position.sl - position.price_open
+                
+                risk_points = abs(risk_distance) / symbol_info.point
+                
+                # Calculate point value
+                tick_value = symbol_info.trade_tick_value
+                tick_size = symbol_info.trade_tick_size
+                
+                if tick_value > 0 and tick_size > 0:
+                    point_value = tick_value / tick_size * symbol_info.point
+                    risk_usd = round(risk_points * point_value * position.volume, 2)
+                else:
+                    # Fallback: calculate risk using profit calculator
+                    calc_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+                    sl_profit = mt5.order_calc_profit(calc_type, position.symbol, position.volume, 
+                                                      position.price_open, position.sl)
+                    if sl_profit is not None:
+                        risk_usd = round(abs(sl_profit), 2)
+                    else:
+                        print(f"       ⚠️  Cannot calculate risk. Skipping.")
+                        investor_positions_skipped += 1
+                        stats["positions_skipped"] += 1
+                        continue
+
+                # Calculate current profit in R multiples
+                current_profit_usd = position.profit
+                
+                if risk_usd > 0:
+                    current_r_multiple = current_profit_usd / risk_usd
+                else:
+                    print(f"       ⚠️  Invalid risk value. Skipping.")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+                    continue
+
+                print(f"       • Risk: ${risk_usd:.2f} | Current P/L: ${current_profit_usd:.2f} ({current_r_multiple:.2f}R)")
+
+                # Skip if position is not in profit
+                if current_profit_usd <= 0:
+                    print(f"       ⏭️  Position not in profit. Skipping.")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+                    continue
+
+                # Find applicable breakeven rules
+                applicable_rules = []
+                for rule in breakeven_config:
+                    reward_threshold = rule["reward"]
+                    if current_r_multiple >= reward_threshold:
+                        applicable_rules.append(rule)
+                
+                if not applicable_rules:
+                    print(f"       ⏭️  No breakeven threshold reached (current: {current_r_multiple:.2f}R)")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+                    continue
+
+                # Get the highest applicable rule (last in sorted list)
+                highest_rule = applicable_rules[-1]
+                target_reward = highest_rule["breakeven_at_reward"]
+                
+                print(f"       🎯 Reached {highest_rule['reward']}R threshold")
+                print(f"       Target SL position: {target_reward}R")
+
+                # Calculate target SL price based on target reward
+                if target_reward >= 0:
+                    # For positive target reward, we want SL at entry + (risk_distance * target_reward)
+                    # But direction matters
+                    if is_buy:
+                        # For BUY: entry + (risk * target_reward)
+                        target_sl_price = position.price_open + (risk_distance * target_reward)
+                    else:
+                        # For SELL: entry - (risk * target_reward)
+                        target_sl_price = position.price_open - (risk_distance * target_reward)
+                    
+                    # Round to symbol digits
+                    digits = symbol_info.digits
+                    target_sl_price = round(target_sl_price, digits)
+                    
+                    print(f"       Current SL: {position.sl:.{digits}f}")
+                    print(f"       Target SL:  {target_sl_price:.{digits}f} ({target_reward}R)")
+                    
+                    # Check if SL needs adjustment
+                    current_sl_distance = abs(position.sl - position.price_open) if position.sl != 0 else 0
+                    target_sl_distance = abs(target_sl_price - position.price_open)
+                    
+                    # Calculate threshold (10% of target distance or 2 pips)
+                    pip_threshold = max(target_sl_distance * 0.1, symbol_info.point * 20)
+                    
+                    should_adjust = False
+                    
+                    if position.sl == 0:
+                        print(f"       📝 No SL currently set")
+                        should_adjust = True
+                    elif abs(current_sl_distance - target_sl_distance) > pip_threshold:
+                        print(f"       📐 SL needs adjustment")
+                        should_adjust = True
+                    else:
+                        # Check if we're moving in the right direction (should only move SL towards profit)
+                        if is_buy and target_sl_price > position.sl:
+                            print(f"       ✅ SL already at or beyond target")
+                            investor_positions_skipped += 1
+                            stats["positions_skipped"] += 1
+                            continue
+                        elif not is_buy and target_sl_price < position.sl:
+                            print(f"       ✅ SL already at or beyond target")
+                            investor_positions_skipped += 1
+                            stats["positions_skipped"] += 1
+                            continue
+                        else:
+                            should_adjust = True
+                    
+                    if should_adjust:
+                        # Ensure we're only moving SL in the profit direction
+                        if is_buy and target_sl_price <= position.sl:
+                            print(f"       ⚠️  Target SL would not improve position. Skipping.")
+                            investor_positions_skipped += 1
+                            stats["positions_skipped"] += 1
+                            continue
+                        elif not is_buy and target_sl_price >= position.sl:
+                            print(f"       ⚠️  Target SL would not improve position. Skipping.")
+                            investor_positions_skipped += 1
+                            stats["positions_skipped"] += 1
+                            continue
+                        
+                        # Prepare modification request
+                        modify_request = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": position.ticket,
+                            "sl": target_sl_price,
+                            "tp": position.tp,  # Keep existing TP
+                        }
+                        
+                        # Send modification
+                        result = mt5.order_send(modify_request)
+                        
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            investor_positions_adjusted += 1
+                            investor_breakeven_events += 1
+                            stats["positions_adjusted"] += 1
+                            stats["breakeven_events"] += 1
+                            print(f"       ✅ SL adjusted successfully to {target_sl_price:.{digits}f} ({target_reward}R)")
+                        else:
+                            investor_positions_error += 1
+                            stats["positions_error"] += 1
+                            error_msg = result.comment if result else f"Error code: {result.retcode if result else 'Unknown'}"
+                            print(f"       ❌ Modification failed: {error_msg}")
+                else:
+                    print(f"       ⚠️  Invalid target reward: {target_reward}")
+                    investor_positions_skipped += 1
+                    stats["positions_skipped"] += 1
+
+        # --- INVESTOR SUMMARY ---
+        if investor_positions_checked > 0:
+            print(f"\n  └─ 📊 Breakeven Results for {user_brokerid}:")
+            print(f"       • Positions checked: {investor_positions_checked}")
+            print(f"       • Positions adjusted: {investor_positions_adjusted}")
+            print(f"       • Breakeven events: {investor_breakeven_events}")
+            print(f"       • Positions skipped: {investor_positions_skipped}")
+            if investor_positions_error > 0:
+                print(f"       • Errors: {investor_positions_error}")
+            else:
+                print(f"       ✅ All breakeven checks completed successfully")
+            stats["processing_success"] = True
+        else:
+            print(f"  └─ 🔘 No open positions found.")
+
+    # --- FINAL SUMMARY ---
+    print(f"\n{'='*10} 📊 DYNAMIC BREAKEVEN SUMMARY {'='*10}")
+    print(f"   Investor ID: {stats['investor_id']}")
+    print(f"   Positions checked: {stats['positions_checked']}")
+    print(f"   Positions adjusted: {stats['positions_adjusted']}")
+    print(f"   Breakeven events: {stats['breakeven_events']}")
+    print(f"   Positions skipped: {stats['positions_skipped']}")
+    print(f"   Errors: {stats['positions_error']}")
+    
+    if stats['positions_checked'] > 0:
+        adjustment_rate = (stats['positions_adjusted'] / stats['positions_checked']) * 100
+        print(f"   Adjustment rate: {adjustment_rate:.1f}%")
+    
+    print(f"\n{'='*10} 🏁 DYNAMIC BREAKEVEN MONITORING COMPLETE {'='*10}\n")
+    return stats
+
+def update_investor_info_old(inv_id=None):
+    """
+    Updates investor information in UPDATED_INVESTORS.json including:
+    - Balance at execution start date
+    - P&L from authorized trades only
+    - Trade statistics (won/lost) with negative signs for losses
+    - Detailed authorized closed trades list (with buy/sell type)
+    - Unauthorized actions detection
+    
+    Investors with unauthorized actions (and no bypass) are moved to issues_investors.json
+    When investors are added to updated_investors.json, their application_status is set to "approved"
+    """
+    print("\n" + "="*80)
+    print("📊 UPDATING INVESTOR INFORMATION")
+    print("="*80)
+    
+    updated_investors_path = Path(UPDATED_INVESTORS)
+    issues_investors_path = Path(ISSUES_INVESTORS)
+    
+    if updated_investors_path.exists():
+        try:
+            with open(updated_investors_path, 'r', encoding='utf-8') as f:
+                updated_investors = json.load(f)
+        except:
+            updated_investors = {}
+    else:
+        updated_investors = {}
+    
+    # Load existing issues investors
+    if issues_investors_path.exists():
+        try:
+            with open(issues_investors_path, 'r', encoding='utf-8') as f:
+                issues_investors = json.load(f)
+        except:
+            issues_investors = {}
+    else:
+        issues_investors = {}
+    
+    investor_ids = [inv_id] if inv_id else list(usersdictionary.keys())
+    
+    for user_brokerid in investor_ids:
+        print(f"\n📋 INVESTOR: {user_brokerid} Current Info")
+        print("-" * 60)
+        
+        if user_brokerid not in usersdictionary:
+            print(f"  ❌ Investor {user_brokerid} not found in usersdictionary")
+            continue
+            
+        base_info = usersdictionary[user_brokerid].copy()
+        inv_root = Path(INV_PATH) / user_brokerid
+        
+        if not inv_root.exists():
+            print(f"  ❌ Path not found: {inv_root}")
+            continue
+        
+        pending_folders = list(inv_root.rglob("*/pending_orders"))
+        if not pending_folders:
+            print(f"  ⚠️  No pending_orders folders found")
+            continue
+        
+        # Initialize aggregated data
+        total_authorized_pnl = 0.0
+        authorized_closed_trades_list = []
+        won_trades = 0
+        lost_trades = 0
+        symbols_lost = {}
+        symbols_won = {}
+        execution_start_date = None
+        starting_balance = None
+        unauthorized_detected = False
+        bypass_active = False
+        autotrading_active = False
+        unauthorized_type = set()
+        unauthorized_trades_list = []
+        unauthorized_withdrawals_list = []
+        authorized_tickets = set()
+        
+        for pending_folder in pending_folders:
+            activities_path = pending_folder / "activities.json"
+            if activities_path.exists():
+                try:
+                    with open(activities_path, 'r', encoding='utf-8') as f:
+                        activities = json.load(f)
+                    
+                    # Check authorization status using same logic as place_usd_orders
+                    unauthorized_detected = activities.get('unauthorized_action_detected', False)
+                    bypass_active = activities.get('bypass_restriction', False)
+                    autotrading_active = activities.get('activate_autotrading', False)
+                    
+                    if unauthorized_detected:
+                        unauthorized_trades = activities.get('unauthorized_trades', {})
+                        if unauthorized_trades:
+                            unauthorized_type.add('trades')
+                            for ticket_key, trade in unauthorized_trades.items():
+                                unauthorized_trades_list.append({
+                                    'ticket': trade.get('ticket'),
+                                    'symbol': trade.get('symbol'),
+                                    'type': trade.get('type'),
+                                    'volume': trade.get('volume'),
+                                    'profit': round(float(trade.get('profit', 0)), 2),
+                                    'time': trade.get('time'),
+                                    'reason': trade.get('reason')
+                                })
+                        unauthorized_withdrawals = activities.get('unauthorized_withdrawals', {})
+                        if unauthorized_withdrawals:
+                            unauthorized_type.add('withdrawal')
+                            for wd_key, withdrawal in unauthorized_withdrawals.items():
+                                unauthorized_withdrawals_list.append({
+                                    'ticket': withdrawal.get('ticket'),
+                                    'amount': withdrawal.get('amount'),
+                                    'time': withdrawal.get('time'),
+                                    'comment': withdrawal.get('comment')
+                                })
+                    
+                    if not execution_start_date:
+                        execution_start_date = activities.get('execution_start_date')
+                except Exception as e:
+                    print(f"    ⚠️  Error reading activities.json: {e}")
+            
+            history_path = pending_folder / "tradeshistory.json"
+            if history_path.exists():
+                try:
+                    with open(history_path, 'r', encoding='utf-8') as f:
+                        authorized_trades = json.load(f)
+                    for trade in authorized_trades:
+                        if 'ticket' in trade and trade['ticket']:
+                            authorized_tickets.add(int(trade['ticket']))
+                    print(f"    📋 Found {len(authorized_tickets)} authorized tickets in tradeshistory.json")
+                except Exception as e:
+                    print(f"    ⚠️  Error reading tradeshistory.json: {e}")
+
+        if not execution_start_date:
+            acc_mgmt_path = inv_root / "accountmanagement.json"
+            if acc_mgmt_path.exists():
+                try:
+                    with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                        acc_mgmt = json.load(f)
+                    execution_start_date = acc_mgmt.get('execution_start_date')
+                except: pass
+        
+        if execution_start_date:
+            try:
+                start_datetime = None
+                for date_format in ["%B %d, %Y", "%Y-%m-%d"]:
+                    try:
+                        start_datetime = datetime.strptime(execution_start_date, date_format)
+                        start_datetime = start_datetime.replace(hour=0, minute=0, second=0)
+                        break
+                    except: continue
+                
+                if start_datetime:
+                    print(f"    🔍 Looking for trades from: {start_datetime.strftime('%Y-%m-%d')}")
+                    all_deals = mt5.history_deals_get(start_datetime, datetime.now())
+                    
+                    if all_deals and len(all_deals) > 0:
+                        all_deals = sorted(list(all_deals), key=lambda x: x.time)
+                        total_profit_all_trades = 0
+                        
+                        for deal in all_deals:
+                            if deal.type in [0, 1]:  # 0=BUY, 1=SELL
+                                total_profit_all_trades += deal.profit
+                                symbol = deal.symbol if hasattr(deal, 'symbol') else 'Unknown'
+                                
+                                # Process ONLY authorized trades for the summary and stats
+                                if deal.ticket in authorized_tickets:
+                                    total_authorized_pnl += deal.profit
+                                    
+                                    authorized_closed_trades_list.append({
+                                        'ticket': deal.ticket,
+                                        'symbol': symbol,
+                                        'type': 'BUY' if deal.type == 0 else 'SELL',
+                                        'volume': deal.volume,
+                                        'profit': round(deal.profit, 2),
+                                        'time': datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d %H:%M:%S')
+                                    })
+                                    
+                                    if deal.profit > 0:
+                                        won_trades += 1
+                                        symbols_won[symbol] = symbols_won.get(symbol, 0.0) + deal.profit
+                                    elif deal.profit < 0:
+                                        lost_trades += 1
+                                        # Keep the negative sign for losses in summary
+                                        symbols_lost[symbol] = symbols_lost.get(symbol, 0.0) + deal.profit
+                                else:
+                                    # Process as unauthorized
+                                    ticket_exists = any(t.get('ticket') == deal.ticket for t in unauthorized_trades_list)
+                                    if not ticket_exists:
+                                        unauthorized_trades_list.append({
+                                            'ticket': deal.ticket,
+                                            'symbol': symbol,
+                                            'type': 'BUY' if deal.type == 0 else 'SELL',
+                                            'volume': deal.volume,
+                                            'profit': round(deal.profit, 2),
+                                            'time': datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d %H:%M:%S'),
+                                            'reason': f"Trade NOT in tradeshistory.json (Ticket: {deal.ticket})"
+                                        })
+                                        if 'trades' not in unauthorized_type: unauthorized_type.add('trades')
+                                        unauthorized_detected = True
+                        
+                        account_info = mt5.account_info()
+                        if account_info:
+                            starting_balance = account_info.balance - total_profit_all_trades
+                            print(f"    ✅ Calculated starting balance: ${starting_balance:.2f}")
+                            print(f"       Current balance: ${account_info.balance:.2f}")
+                            print(f"       Total profits all trades: ${total_profit_all_trades:.2f}")
+                            print(f"       Authorized trades P&L: ${total_authorized_pnl:.2f}")
+                    else:
+                        account_info = mt5.account_info()
+                        if account_info:
+                            starting_balance = account_info.balance
+                            print(f"    ✅ No trades since start, using current balance: ${starting_balance:.2f}")
+            except Exception as e:
+                print(f"    ⚠️  Error getting starting balance: {e}")
+
+        # Build Structured Trades Dict with Negative signs preserved
+        trades_info = {
+            "summary": {
+                "total_trades": len(authorized_closed_trades_list),
+                "won": won_trades,
+                "lost": lost_trades,
+                "symbols_that_lost": {k: round(v, 2) for k, v in symbols_lost.items()},
+                "symbols_that_won": {k: round(v, 2) for k, v in symbols_won.items()}
+            },
+            "authorized_closed_trades": authorized_closed_trades_list
+        }
+
+        # Contract days logic
+        contract_days_left = "30"
+        if execution_start_date:
+            try:
+                start = None
+                for fmt in ["%Y-%m-%d", "%B %d, %Y"]:
+                    try: 
+                        start = datetime.strptime(execution_start_date, fmt)
+                        break
+                    except: continue
+                if start:
+                    days_passed = (datetime.now() - start).days
+                    contract_days_left = str(max(0, 30 - days_passed))
+            except: pass
+
+        investor_info = {
+            "id": user_brokerid,
+            "server": base_info.get("SERVER", base_info.get("server", "")),
+            "login": base_info.get("LOGIN_ID", base_info.get("login", "")),
+            "password": base_info.get("PASSWORD", base_info.get("password", "")),
+            "application_status": base_info.get("application_status", "pending"),
+            "broker_balance": round(starting_balance, 2) if starting_balance is not None else None,
+            "profitandloss": round(total_authorized_pnl, 2),
+            "contract_days_left": contract_days_left,
+            "execution_start_date": execution_start_date if execution_start_date else "",
+            "trades": trades_info,
+            "unauthorized_actions": {
+                "detected": unauthorized_detected,
+                "bypass_active": bypass_active,
+                "autotrading_active": autotrading_active,
+                "type": list(unauthorized_type) if unauthorized_type else [],
+                "unauthorized_trades": unauthorized_trades_list,
+                "unauthorized_withdrawals": unauthorized_withdrawals_list
+            }
+        }
+        
+        # --- CRITICAL: Check if investor should be moved to issues ---
+        # Using the EXACT same logic as place_usd_orders:
+        # From place_usd_orders:
+        # if unauthorized_detected:
+        #     if bypass_active:
+        #         # proceed with order placement
+        #     else:
+        #         # block orders
+        #
+        # Therefore:
+        # - If unauthorized_detected AND bypass_active → keep in updated_investors
+        # - If unauthorized_detected AND NOT bypass_active → move to issues_investors
+        
+        should_move_to_issues = False
+        issue_message = ""
+        
+        if unauthorized_detected:
+            if bypass_active:
+                # Bypass active - keep in updated investors (same as place_usd_orders allowing orders)
+                print(f"  ⚠️  Unauthorized actions detected but BYPASS ACTIVE - keeping in updated_investors.json")
+                should_move_to_issues = False
+            else:
+                # No bypass - move to issues (same as place_usd_orders blocking orders)
+                should_move_to_issues = True
+                issue_message = "Unauthorized action detected - restricted (bypass inactive)"
+        
+        if should_move_to_issues:
+            print(f"  ⛔ Investor has unauthorized actions without bypass - MOVING TO ISSUES INVESTORS")
+            print(f"      Message: {issue_message}")
+            
+            # Add message to investor info
+            investor_info['MESSAGE'] = issue_message
+            
+            # Remove from updated_investors if exists
+            if user_brokerid in updated_investors:
+                del updated_investors[user_brokerid]
+            
+            # Add to issues_investors
+            issues_investors[user_brokerid] = investor_info
+            
+        else:
+            # Investor is clean or has bypass - add to updated investors
+            # Set application_status to "approved" for investors in updated_investors
+            investor_info['application_status'] = "approved"
+            
+            print(f"\n  📊 INVESTOR SUMMARY (added to updated_investors.json with status: APPROVED):")
+            print(f"    • Starting Balance: ${investor_info['broker_balance'] if investor_info['broker_balance'] else 0.0:.2f}")
+            print(f"    • Authorized P&L: ${investor_info['profitandloss']:.2f}")
+            print(f"    • Authorized Trade Stats: {won_trades} Won / {lost_trades} Lost")
+            print(f"    • Unauthorized: {'YES (BYPASS ACTIVE)' if unauthorized_detected else 'NO'}")
+            print(f"    • Application Status: {investor_info['application_status']}")
+            
+            updated_investors[user_brokerid] = investor_info
+
+    # Save updated_investors.json
+    try:
+        with open(updated_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(updated_investors, f, indent=4)
+    except Exception as e:
+        print(f"\n❌ Failed to save updated_investors.json: {e}")
+    
+    # Save issues_investors.json
+    try:
+        with open(issues_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(issues_investors, f, indent=4)
+    except Exception as e:
+        print(f"\n❌ Failed to save issues_investors.json: {e}")
+    
+    print("\n" + "="*80)
+    print("✅ INVESTOR INFORMATION UPDATE COMPLETE")
+    print("="*80)
+    
+    return updated_investors
+
+def update_investor_info_old1(inv_id=None):
+    """
+    Updates investor information in UPDATED_INVESTORS.json including:
+    - Balance at execution start date
+    - P&L from authorized trades only
+    - Trade statistics (won/lost) with negative signs for losses
+    - Detailed authorized closed trades list (with buy/sell type)
+    - Unauthorized actions detection
+    
+    Investors with unauthorized actions (and no bypass) are moved to issues_investors.json
+    When investors are added to updated_investors.json, their application_status is set to "approved"
+    """
+    print("\n" + "="*80)
+    print("📊 UPDATING INVESTOR INFORMATION")
+    print("="*80)
+    
+    updated_investors_path = Path(UPDATED_INVESTORS)
+    issues_investors_path = Path(ISSUES_INVESTORS)
+    
+    if updated_investors_path.exists():
+        try:
+            with open(updated_investors_path, 'r', encoding='utf-8') as f:
+                updated_investors = json.load(f)
+        except:
+            updated_investors = {}
+    else:
+        updated_investors = {}
+    
+    # Load existing issues investors
+    if issues_investors_path.exists():
+        try:
+            with open(issues_investors_path, 'r', encoding='utf-8') as f:
+                issues_investors = json.load(f)
+        except:
+            issues_investors = {}
+    else:
+        issues_investors = {}
+    
+    investor_ids = [inv_id] if inv_id else list(usersdictionary.keys())
+    
+    for user_brokerid in investor_ids:
+        print(f"\n📋 INVESTOR: {user_brokerid} Current Info")
+        print("-" * 60)
+        
+        if user_brokerid not in usersdictionary:
+            print(f"  ❌ Investor {user_brokerid} not found in usersdictionary")
+            continue
+            
+        base_info = usersdictionary[user_brokerid].copy()
+        inv_root = Path(INV_PATH) / user_brokerid
+        
+        if not inv_root.exists():
+            print(f"  ❌ Path not found: {inv_root}")
+            continue
+        
+        pending_folders = list(inv_root.rglob("*/pending_orders"))
+        if not pending_folders:
+            print(f"  ⚠️  No pending_orders folders found")
+            continue
+        
+        # Initialize aggregated data
+        total_authorized_pnl = 0.0
+        authorized_closed_trades_list = []
+        won_trades = 0
+        lost_trades = 0
+        symbols_lost = {}
+        symbols_won = {}
+        execution_start_date = None
+        starting_balance = None
+        unauthorized_detected = False
+        bypass_active = False
+        autotrading_active = False
+        unauthorized_type = set()
+        unauthorized_trades_list = []
+        unauthorized_withdrawals_list = []
+        authorized_tickets = set()
+        
+        for pending_folder in pending_folders:
+            activities_path = pending_folder / "activities.json"
+            if activities_path.exists():
+                try:
+                    with open(activities_path, 'r', encoding='utf-8') as f:
+                        activities = json.load(f)
+                    
+                    # Check authorization status using same logic as place_usd_orders
+                    unauthorized_detected = activities.get('unauthorized_action_detected', False)
+                    bypass_active = activities.get('bypass_restriction', False)
+                    autotrading_active = activities.get('activate_autotrading', False)
+                    
+                    if unauthorized_detected:
+                        unauthorized_trades = activities.get('unauthorized_trades', {})
+                        if unauthorized_trades:
+                            unauthorized_type.add('trades')
+                            for ticket_key, trade in unauthorized_trades.items():
+                                unauthorized_trades_list.append({
+                                    'ticket': trade.get('ticket'),
+                                    'symbol': trade.get('symbol'),
+                                    'type': trade.get('type'),
+                                    'volume': trade.get('volume'),
+                                    'profit': round(float(trade.get('profit', 0)), 2),
+                                    'time': trade.get('time'),
+                                    'reason': trade.get('reason')
+                                })
+                        unauthorized_withdrawals = activities.get('unauthorized_withdrawals', {})
+                        if unauthorized_withdrawals:
+                            unauthorized_type.add('withdrawal')
+                            for wd_key, withdrawal in unauthorized_withdrawals.items():
+                                unauthorized_withdrawals_list.append({
+                                    'ticket': withdrawal.get('ticket'),
+                                    'amount': withdrawal.get('amount'),
+                                    'time': withdrawal.get('time'),
+                                    'comment': withdrawal.get('comment')
+                                })
+                    
+                    if not execution_start_date:
+                        execution_start_date = activities.get('execution_start_date')
+                except Exception as e:
+                    print(f"    ⚠️  Error reading activities.json: {e}")
+            
+            history_path = pending_folder / "tradeshistory.json"
+            if history_path.exists():
+                try:
+                    with open(history_path, 'r', encoding='utf-8') as f:
+                        authorized_trades = json.load(f)
+                    for trade in authorized_trades:
+                        if 'ticket' in trade and trade['ticket']:
+                            authorized_tickets.add(int(trade['ticket']))
+                    print(f"    📋 Found {len(authorized_tickets)} authorized tickets in tradeshistory.json")
+                except Exception as e:
+                    print(f"    ⚠️  Error reading tradeshistory.json: {e}")
+
+        if not execution_start_date:
+            acc_mgmt_path = inv_root / "accountmanagement.json"
+            if acc_mgmt_path.exists():
+                try:
+                    with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
+                        acc_mgmt = json.load(f)
+                    execution_start_date = acc_mgmt.get('execution_start_date')
+                except: pass
+        
+        if execution_start_date:
+            try:
+                start_datetime = None
+                for date_format in ["%B %d, %Y", "%Y-%m-%d"]:
+                    try:
+                        start_datetime = datetime.strptime(execution_start_date, date_format)
+                        start_datetime = start_datetime.replace(hour=0, minute=0, second=0)
+                        break
+                    except: continue
+                
+                if start_datetime:
+                    print(f"    🔍 Looking for trades from: {start_datetime.strftime('%Y-%m-%d')}")
+                    all_deals = mt5.history_deals_get(start_datetime, datetime.now())
+                    
+                    if all_deals and len(all_deals) > 0:
+                        all_deals = sorted(list(all_deals), key=lambda x: x.time)
+                        total_profit_all_trades = 0
+                        
+                        for deal in all_deals:
+                            if deal.type in [0, 1]:  # 0=BUY, 1=SELL
+                                total_profit_all_trades += deal.profit
+                                symbol = deal.symbol if hasattr(deal, 'symbol') else 'Unknown'
+                                
+                                # Process ONLY authorized trades for the summary and stats
+                                if deal.ticket in authorized_tickets:
+                                    total_authorized_pnl += deal.profit
+                                    
+                                    authorized_closed_trades_list.append({
+                                        'ticket': deal.ticket,
+                                        'symbol': symbol,
+                                        'type': 'BUY' if deal.type == 0 else 'SELL',
+                                        'volume': deal.volume,
+                                        'profit': round(deal.profit, 2),
+                                        'time': datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d %H:%M:%S')
+                                    })
+                                    
+                                    if deal.profit > 0:
+                                        won_trades += 1
+                                        symbols_won[symbol] = symbols_won.get(symbol, 0.0) + deal.profit
+                                    elif deal.profit < 0:
+                                        lost_trades += 1
+                                        # Keep the negative sign for losses in summary
+                                        symbols_lost[symbol] = symbols_lost.get(symbol, 0.0) + deal.profit
+                                else:
+                                    # Process as unauthorized
+                                    ticket_exists = any(t.get('ticket') == deal.ticket for t in unauthorized_trades_list)
+                                    if not ticket_exists:
+                                        unauthorized_trades_list.append({
+                                            'ticket': deal.ticket,
+                                            'symbol': symbol,
+                                            'type': 'BUY' if deal.type == 0 else 'SELL',
+                                            'volume': deal.volume,
+                                            'profit': round(deal.profit, 2),
+                                            'time': datetime.fromtimestamp(deal.time).strftime('%Y-%m-%d %H:%M:%S'),
+                                            'reason': f"Trade NOT in tradeshistory.json (Ticket: {deal.ticket})"
+                                        })
+                                        if 'trades' not in unauthorized_type: unauthorized_type.add('trades')
+                                        unauthorized_detected = True
+                        
+                        account_info = mt5.account_info()
+                        if account_info:
+                            starting_balance = account_info.balance - total_profit_all_trades
+                            print(f"    ✅ Calculated starting balance: ${starting_balance:.2f}")
+                            print(f"       Current balance: ${account_info.balance:.2f}")
+                            print(f"       Total profits all trades: ${total_profit_all_trades:.2f}")
+                            print(f"       Authorized trades P&L: ${total_authorized_pnl:.2f}")
+                    else:
+                        account_info = mt5.account_info()
+                        if account_info:
+                            starting_balance = account_info.balance
+                            print(f"    ✅ No trades since start, using current balance: ${starting_balance:.2f}")
+            except Exception as e:
+                print(f"    ⚠️  Error getting starting balance: {e}")
+
+        # Build Structured Trades Dict with Negative signs preserved
+        trades_info = {
+            "summary": {
+                "total_trades": len(authorized_closed_trades_list),
+                "won": won_trades,
+                "lost": lost_trades,
+                "symbols_that_lost": {k: round(v, 2) for k, v in symbols_lost.items()},
+                "symbols_that_won": {k: round(v, 2) for k, v in symbols_won.items()}
+            },
+            "authorized_closed_trades": authorized_closed_trades_list
+        }
+
+        # Contract days logic
+        contract_days_left = "30"
+        if execution_start_date:
+            try:
+                start = None
+                for fmt in ["%Y-%m-%d", "%B %d, %Y"]:
+                    try: 
+                        start = datetime.strptime(execution_start_date, fmt)
+                        break
+                    except: continue
+                if start:
+                    days_passed = (datetime.now() - start).days
+                    contract_days_left = str(max(0, 30 - days_passed))
+            except: pass
+
+        investor_info = {
+            "id": user_brokerid,
+            "server": base_info.get("SERVER", base_info.get("server", "")),
+            "login": base_info.get("LOGIN_ID", base_info.get("login", "")),
+            "password": base_info.get("PASSWORD", base_info.get("password", "")),
+            "application_status": base_info.get("application_status", "pending"),
+            "broker_balance": round(starting_balance, 2) if starting_balance is not None else None,
+            "profitandloss": round(total_authorized_pnl, 2),
+            "contract_days_left": contract_days_left,
+            "execution_start_date": execution_start_date if execution_start_date else "",
+            "trades": trades_info,
+            "unauthorized_actions": {
+                "detected": unauthorized_detected,
+                "bypass_active": bypass_active,
+                "autotrading_active": autotrading_active,
+                "type": list(unauthorized_type) if unauthorized_type else [],
+                "unauthorized_trades": unauthorized_trades_list,
+                "unauthorized_withdrawals": unauthorized_withdrawals_list
+            }
+        }
+        
+        # --- CRITICAL: Check if investor should be moved to issues ---
+        # Using the EXACT same logic as place_usd_orders:
+        # From place_usd_orders:
+        # if unauthorized_detected:
+        #     if bypass_active:
+        #         # proceed with order placement
+        #     else:
+        #         # block orders
+        #
+        # Therefore:
+        # - If unauthorized_detected AND bypass_active → keep in updated_investors
+        # - If unauthorized_detected AND NOT bypass_active → move to issues_investors
+        
+        should_move_to_issues = False
+        issue_message = ""
+        
+        if unauthorized_detected:
+            if bypass_active:
+                # Bypass active - keep in updated investors (same as place_usd_orders allowing orders)
+                print(f"  ⚠️  Unauthorized actions detected but BYPASS ACTIVE - keeping in updated_investors.json")
+                should_move_to_issues = False
+            else:
+                # No bypass - move to issues (same as place_usd_orders blocking orders)
+                should_move_to_issues = True
+                issue_message = "Unauthorized action detected - restricted (bypass inactive)"
+        
+        if should_move_to_issues:
+            print(f"  ⛔ Investor has unauthorized actions without bypass - MOVING TO ISSUES INVESTORS")
+            print(f"      Message: {issue_message}")
+            
+            # Add message to investor info
+            investor_info['MESSAGE'] = issue_message
+            
+            # Remove from updated_investors if exists
+            if user_brokerid in updated_investors:
+                del updated_investors[user_brokerid]
+            
+            # Add to issues_investors
+            issues_investors[user_brokerid] = investor_info
+            
+        else:
+            # Investor is clean or has bypass - add to updated investors
+            # Set application_status to "approved" for investors in updated_investors
+            investor_info['application_status'] = "approved"
+            
+            print(f"\n  📊 INVESTOR SUMMARY (added to updated_investors.json with status: APPROVED):")
+            print(f"    • Starting Balance: ${investor_info['broker_balance'] if investor_info['broker_balance'] else 0.0:.2f}")
+            print(f"    • Authorized P&L: ${investor_info['profitandloss']:.2f}")
+            print(f"    • Authorized Trade Stats: {won_trades} Won / {lost_trades} Lost")
+            print(f"    • Unauthorized: {'YES (BYPASS ACTIVE)' if unauthorized_detected else 'NO'}")
+            print(f"    • Application Status: {investor_info['application_status']}")
+            
+            updated_investors[user_brokerid] = investor_info
+
+    # Save updated_investors.json
+    try:
+        with open(updated_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(updated_investors, f, indent=4)
+    except Exception as e:
+        print(f"\n❌ Failed to save updated_investors.json: {e}")
+    
+    # Save issues_investors.json
+    try:
+        with open(issues_investors_path, 'w', encoding='utf-8') as f:
+            json.dump(issues_investors, f, indent=4)
+    except Exception as e:
+        print(f"\n❌ Failed to save issues_investors.json: {e}")
+    
+    print("\n" + "="*80)
+    print("✅ INVESTOR INFORMATION UPDATE COMPLETE")
+    print("="*80)
+    
+    return updated_investors
+
 def history_closed_orders_removal_in_pendingorders(inv_id=None):
     """
     Scans history for the last 48 hours. If a position was closed, 
@@ -4647,11 +7260,6 @@ def update_investor_info(inv_id=None):
             print(f"  ❌ Path not found: {inv_root}")
             continue
         
-        pending_folders = list(inv_root.rglob("*/pending_orders"))
-        if not pending_folders:
-            print(f"  ⚠️  No pending_orders folders found")
-            continue
-        
         # Initialize aggregated data
         total_authorized_pnl = 0.0
         authorized_closed_trades_list = []
@@ -4669,60 +7277,66 @@ def update_investor_info(inv_id=None):
         unauthorized_withdrawals_list = []
         authorized_tickets = set()
         
-        for pending_folder in pending_folders:
-            activities_path = pending_folder / "activities.json"
-            if activities_path.exists():
-                try:
-                    with open(activities_path, 'r', encoding='utf-8') as f:
-                        activities = json.load(f)
-                    
-                    # Check authorization status using same logic as place_usd_orders
-                    unauthorized_detected = activities.get('unauthorized_action_detected', False)
-                    bypass_active = activities.get('bypass_restriction', False)
-                    autotrading_active = activities.get('activate_autotrading', False)
-                    
-                    if unauthorized_detected:
-                        unauthorized_trades = activities.get('unauthorized_trades', {})
-                        if unauthorized_trades:
-                            unauthorized_type.add('trades')
-                            for ticket_key, trade in unauthorized_trades.items():
-                                unauthorized_trades_list.append({
-                                    'ticket': trade.get('ticket'),
-                                    'symbol': trade.get('symbol'),
-                                    'type': trade.get('type'),
-                                    'volume': trade.get('volume'),
-                                    'profit': round(float(trade.get('profit', 0)), 2),
-                                    'time': trade.get('time'),
-                                    'reason': trade.get('reason')
-                                })
-                        unauthorized_withdrawals = activities.get('unauthorized_withdrawals', {})
-                        if unauthorized_withdrawals:
-                            unauthorized_type.add('withdrawal')
-                            for wd_key, withdrawal in unauthorized_withdrawals.items():
-                                unauthorized_withdrawals_list.append({
-                                    'ticket': withdrawal.get('ticket'),
-                                    'amount': withdrawal.get('amount'),
-                                    'time': withdrawal.get('time'),
-                                    'comment': withdrawal.get('comment')
-                                })
-                    
-                    if not execution_start_date:
-                        execution_start_date = activities.get('execution_start_date')
-                except Exception as e:
-                    print(f"    ⚠️  Error reading activities.json: {e}")
-            
-            history_path = pending_folder / "tradeshistory.json"
-            if history_path.exists():
-                try:
-                    with open(history_path, 'r', encoding='utf-8') as f:
-                        authorized_trades = json.load(f)
-                    for trade in authorized_trades:
-                        if 'ticket' in trade and trade['ticket']:
-                            authorized_tickets.add(int(trade['ticket']))
-                    print(f"    📋 Found {len(authorized_tickets)} authorized tickets in tradeshistory.json")
-                except Exception as e:
-                    print(f"    ⚠️  Error reading tradeshistory.json: {e}")
+        # Look for activities.json directly in investor root folder
+        activities_path = inv_root / "activities.json"
+        if activities_path.exists():
+            try:
+                with open(activities_path, 'r', encoding='utf-8') as f:
+                    activities = json.load(f)
+                
+                # Check authorization status using same logic as place_usd_orders
+                unauthorized_detected = activities.get('unauthorized_action_detected', False)
+                bypass_active = activities.get('bypass_restriction', False)
+                autotrading_active = activities.get('activate_autotrading', False)
+                
+                if unauthorized_detected:
+                    unauthorized_trades = activities.get('unauthorized_trades', {})
+                    if unauthorized_trades:
+                        unauthorized_type.add('trades')
+                        for ticket_key, trade in unauthorized_trades.items():
+                            unauthorized_trades_list.append({
+                                'ticket': trade.get('ticket'),
+                                'symbol': trade.get('symbol'),
+                                'type': trade.get('type'),
+                                'volume': trade.get('volume'),
+                                'profit': round(float(trade.get('profit', 0)), 2),
+                                'time': trade.get('time'),
+                                'reason': trade.get('reason')
+                            })
+                    unauthorized_withdrawals = activities.get('unauthorized_withdrawals', {})
+                    if unauthorized_withdrawals:
+                        unauthorized_type.add('withdrawal')
+                        for wd_key, withdrawal in unauthorized_withdrawals.items():
+                            unauthorized_withdrawals_list.append({
+                                'ticket': withdrawal.get('ticket'),
+                                'amount': withdrawal.get('amount'),
+                                'time': withdrawal.get('time'),
+                                'comment': withdrawal.get('comment')
+                            })
+                
+                execution_start_date = activities.get('execution_start_date')
+                print(f"    📋 Found activities.json with execution_start_date: {execution_start_date}")
+            except Exception as e:
+                print(f"    ⚠️  Error reading activities.json: {e}")
+        else:
+            print(f"    ⚠️  activities.json not found in {inv_root}")
+        
+        # Look for tradeshistory.json directly in investor root folder
+        history_path = inv_root / "tradeshistory.json"
+        if history_path.exists():
+            try:
+                with open(history_path, 'r', encoding='utf-8') as f:
+                    authorized_trades = json.load(f)
+                for trade in authorized_trades:
+                    if 'ticket' in trade and trade['ticket']:
+                        authorized_tickets.add(int(trade['ticket']))
+                print(f"    📋 Found {len(authorized_tickets)} authorized tickets in tradeshistory.json")
+            except Exception as e:
+                print(f"    ⚠️  Error reading tradeshistory.json: {e}")
+        else:
+            print(f"    ⚠️  tradeshistory.json not found in {inv_root}")
 
+        # Fallback to accountmanagement.json if execution_start_date not found
         if not execution_start_date:
             acc_mgmt_path = inv_root / "accountmanagement.json"
             if acc_mgmt_path.exists():
@@ -4730,6 +7344,7 @@ def update_investor_info(inv_id=None):
                     with open(acc_mgmt_path, 'r', encoding='utf-8') as f:
                         acc_mgmt = json.load(f)
                     execution_start_date = acc_mgmt.get('execution_start_date')
+                    print(f"    📋 Found execution_start_date in accountmanagement.json: {execution_start_date}")
                 except: pass
         
         if execution_start_date:
