@@ -18,6 +18,8 @@ import pytz
 import shutil
 from collections import defaultdict
 from pathlib import Path
+from multiprocessing.pool import ThreadPool
+from functools import partial
 
 
 DEV_PATH = r'C:\xampp\htdocs\chronedge\synarex\usersdata\developers'
@@ -3511,6 +3513,7 @@ def entry_point_of_interest(broker_name):
     def identify_selected(target_data_tf, new_key, poi_config):
         """
         Filters pattern records based on extreme or non-extreme values of a specific define_n.
+        Now checks pattern_entry candles to determine which swing types to process.
         Config format: 
             "multiple_selection": "define_3_extreme" or "define_3_non_extreme"
             "max_selection": 2 (optional) - limits to at most N patterns with the target define_n
@@ -3550,7 +3553,28 @@ def entry_point_of_interest(broker_name):
         if mode == "non":
             mode = "non_extreme"
 
-        # 1. Collect all patterns containing the target definition and their prices
+        # Initialize patterns_to_keep as empty list at the beginning
+        patterns_to_keep = []
+        
+        # STEP 1: Find all pattern_entry candles and determine which swing types exist
+        pattern_entry_swing_types = set()
+        pattern_entry_candles = {}
+        
+        for p_name, family in patterns.items():
+            # Find the candle with pattern_entry: True
+            pattern_entry_candle = next((c for c in family if c.get("pattern_entry") is True), None)
+            
+            if pattern_entry_candle:
+                swing_type = pattern_entry_candle.get("swing_type", "").lower()
+                if swing_type:
+                    pattern_entry_swing_types.add(swing_type)
+                    pattern_entry_candles[p_name] = {
+                        "swing_type": swing_type,
+                        "candle": pattern_entry_candle
+                    }
+
+        # STEP 2: If no pattern_entry candles found, process all patterns (original behavior)
+        # Otherwise, only process patterns that match the swing types found in pattern_entry candles
         eligible_patterns = []
         
         for p_name, family in patterns.items():
@@ -3558,7 +3582,13 @@ def entry_point_of_interest(broker_name):
             target_candle = next((c for c in family if c.get(target_define_key) is True), None)
             
             if target_candle:
+                # Determine swing type from target_candle
                 swing_type = target_candle.get("swing_type", "").lower()
+                
+                # If we have pattern_entry candles, only include patterns with matching swing types
+                if pattern_entry_swing_types and swing_type not in pattern_entry_swing_types:
+                    continue
+                
                 # Determine which price to look at based on swing type
                 if "high" in swing_type:
                     price = target_candle.get("high")
@@ -3578,49 +3608,59 @@ def entry_point_of_interest(broker_name):
         if not eligible_patterns:
             return target_data_tf
 
-        # Determine the swing type category (all should be same, but we'll verify)
-        first_swing = eligible_patterns[0]["swing_type"]
-        is_high_type = "high" in first_swing
-        
-        # 2. Sort all patterns by how extreme they are (most extreme first)
-        if is_high_type:
-            if mode == "extreme":
-                # For highs in extreme mode: highest price is most extreme
-                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
-            else:  # non_extreme
-                # For highs in non-extreme mode: lowest price is most extreme
-                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
-        else:
-            if mode == "extreme":
-                # For lows in extreme mode: lowest price is most extreme
-                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"])
-            else:  # non_extreme
-                # For lows in non-extreme mode: highest price is most extreme
-                sorted_patterns = sorted(eligible_patterns, key=lambda x: x["price"], reverse=True)
+        # Group patterns by swing_type
+        patterns_by_type = {}
+        for p in eligible_patterns:
+            swing_type = p["swing_type"]
+            if swing_type not in patterns_by_type:
+                patterns_by_type[swing_type] = []
+            patterns_by_type[swing_type].append(p)
 
-        # 3. Apply max_selection logic
-        patterns_to_keep = []
-        
-        if max_selection > 0 and len(sorted_patterns) > max_selection:
-            # We need to limit to at most max_selection patterns
+        # Process each swing type independently
+        for swing_type, type_patterns in patterns_by_type.items():
+            # Determine the swing type category
+            is_high_type = "high" in swing_type
             
-            # Take the top max_selection patterns
-            top_n_patterns = sorted_patterns[:max_selection]
-            
-            # Get the price of the last pattern we're including
-            last_price = top_n_patterns[-1]["price"]
-            
-            # Include any additional patterns at the same price level as the last included
-            for p in sorted_patterns[max_selection:]:
-                if p["price"] == last_price:
-                    top_n_patterns.append(p)
-                else:
-                    break
-            
-            patterns_to_keep = [p["name"] for p in top_n_patterns]
-        else:
-            # No max_selection or we have fewer than max - keep all patterns
-            patterns_to_keep = [p["name"] for p in sorted_patterns]
+            # Sort patterns for this swing type by how extreme they are (most extreme first)
+            if is_high_type:
+                if mode == "extreme":
+                    # For highs in extreme mode: highest price is most extreme
+                    sorted_patterns = sorted(type_patterns, key=lambda x: x["price"], reverse=True)
+                else:  # non_extreme
+                    # For highs in non-extreme mode: lowest price is most extreme
+                    sorted_patterns = sorted(type_patterns, key=lambda x: x["price"])
+            else:
+                if mode == "extreme":
+                    # For lows in extreme mode: lowest price is most extreme
+                    sorted_patterns = sorted(type_patterns, key=lambda x: x["price"])
+                else:  # non_extreme
+                    # For lows in non-extreme mode: highest price is most extreme
+                    sorted_patterns = sorted(type_patterns, key=lambda x: x["price"], reverse=True)
+
+            # Apply max_selection logic for this swing type
+            if max_selection > 0 and len(sorted_patterns) > max_selection:
+                # We need to limit to at most max_selection patterns for this swing type
+                
+                # Take the top max_selection patterns
+                top_n_patterns = sorted_patterns[:max_selection]
+                
+                # Get the price of the last pattern we're including
+                last_price = top_n_patterns[-1]["price"]
+                
+                # Include any additional patterns at the same price level as the last included
+                for p in sorted_patterns[max_selection:]:
+                    if p["price"] == last_price:
+                        top_n_patterns.append(p)
+                    else:
+                        break
+                
+                patterns_to_keep.extend([p["name"] for p in top_n_patterns])
+            else:
+                # No max_selection or we have fewer than max - keep all patterns for this swing type
+                patterns_to_keep.extend([p["name"] for p in sorted_patterns])
+
+        # Remove duplicate pattern names (in case a pattern appears in multiple swing types - shouldn't happen)
+        patterns_to_keep = list(set(patterns_to_keep))
 
         # 4. Remove all patterns that aren't in our keep list
         patterns_to_remove = [p_name for p_name in patterns.keys() if p_name not in patterns_to_keep]
@@ -3630,7 +3670,7 @@ def entry_point_of_interest(broker_name):
                 del patterns[p_name]
 
         return target_data_tf
-
+    
     def draw_definition_tools(img, target_data_tf, pattern_key, identify_config):
         """
         Draws visual markers for definitions as HORIZONTAL LINES with optional text labels.
@@ -5707,6 +5747,8 @@ def entry_point_of_interest(broker_name):
             log(f"✅ PROCESSED {new_folder_name} {sync_count} ENTRIES POI")
             
         return sync_count
+    
+        import multiprocessing
 
     def main_logic():
         """Main logic for processing entry points of interest."""
@@ -10339,5 +10381,5 @@ def main():
     print("\n[SUCCESS] All developer pipelines completed.")
 
 if __name__ == "__main__":
-    main()
+    single()
 

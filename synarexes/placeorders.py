@@ -8059,6 +8059,6 @@ def place_demo_orders_parallel():
     return successful > 0
 
 if __name__ == "__main__":
-    place_demo_orders_parallel()
+    place_orders_parallel()
 
 
